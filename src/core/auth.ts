@@ -1,9 +1,8 @@
 // 登录态与 Cookie 管理（方案 5.5，M0 V4 已验证链路）：
-//   扫码 803 → 网关验证后落盘 .cookie；官方登录窗口 + Mineradio 迁移 + 手动粘贴。
+//   扫码 803 → 网关验证后落盘 .cookie；官方登录窗口 + 手动粘贴。
 //   凭据仅存本机插件目录，不进笔记/日志/git。
 import { Plugin } from 'obsidian';
 import * as fs from 'fs';
-import * as path from 'path';
 import { ServerManager } from './server-manager';
 import { ServerClient } from './server-client';
 import { writeCredentialFile } from './credential-file';
@@ -103,38 +102,6 @@ export class Auth {
     try {
       fs.unlinkSync(this.cookieFile());
     } catch (_) {}
-  }
-
-  // —— Mineradio Cookie 迁移（本机已登录时最稳，M0 实测识别 VIP 账号）——
-  findMineradioCookie(): string | null {
-    const candidates = [
-      path.join(process.env.APPDATA || '', 'mineradio/.cookie'),
-      path.join(process.env.USERPROFILE || '', 'AppData/Roaming/mineradio/.cookie'),
-    ];
-    for (const c of candidates) {
-      try {
-        if (fs.existsSync(c)) return c;
-      } catch (_) {}
-    }
-    return null;
-  }
-
-  async migrateMineradio(): Promise<{ ok: boolean; detail: string }> {
-    const src = this.findMineradioCookie();
-    if (!src) return { ok: false, detail: '未找到 %APPDATA%/mineradio/.cookie' };
-    const raw = fs.readFileSync(src, 'utf8').trim();
-    if (!raw) return { ok: false, detail: 'Mineradio Cookie 文件为空' };
-    const parsed = raw.startsWith('{') ? JSON.parse(raw) : { cookie: raw };
-    const cookie = parsed.cookie || raw;
-    try {
-      await this.saveCookie(String(cookie));
-    } catch (e) {
-      return { ok: false, detail: `Cookie 写入失败：${(e as Error).message}` };
-    }
-    const st = await this.getStatus();
-    return st.loggedIn
-      ? { ok: true, detail: `已迁移并验证登录：${st.nick}（${st.userId}）` }
-      : { ok: false, detail: 'Cookie 已写入但登录态无效（可能已过期）' };
   }
 
   // —— 扫码（UI 在 QrLoginModal）——

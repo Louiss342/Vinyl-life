@@ -5,6 +5,7 @@ import { App, PluginSettingTab, Setting } from 'obsidian';
 import type VinylLifePlugin from './main';
 import { QrLoginModal, qqQrProvider } from './views/qr-login-modal';
 import { WebLoginModal, qqWebProvider } from './views/web-login-modal';
+import { StatsModal } from './views/stats-modal';
 import { DiscDirection, DISC_DIRECTIONS, SpinSpeed, SPIN_SPEEDS } from './core/disc-motion';
 import { notice } from './util';
 import { Lang, LANGUAGES, t, tf } from './core/i18n';
@@ -57,8 +58,9 @@ export interface VinylSettings {
   /** 每张专辑记住自己的自定义队列顺序（专辑笔记路径 → trackKey 顺序）。
    *  只影响「下次播这张专辑时的排列」，不是「重启后恢复整条队列」 */
   queueOrder: Record<string, string[]>;
-  /** 调试命令（通用标签页）：打开后命令面板才注册登录 / 退出 / 迁移 / 自检等维护命令。
-   *  默认关闭 —— 日常只需要那几条常用命令；改开关后需重载插件生效 */
+  /** 调试命令（通用标签页）：打开后命令面板才注册登录 / 退出这类维护命令
+   *  （设置页里的按钮已覆盖其余日常操作）。默认关闭 —— 日常只需要那几条常用命令；
+   *  改开关后需重载插件生效 */
   debugCommands: boolean;
 }
 
@@ -195,7 +197,7 @@ export class VinylSettingTab extends PluginSettingTab {
           this.display(); // 设置面板自身立即按新语言重绘（否则要重开标签页才变）
         });
       });
-    // 命令面板瘦身：维护类命令（登录 / 退出 / 迁移 / 自检…）默认不注册。
+    // 命令面板瘦身：维护类命令（登录 / 退出）默认不注册。
     // 注册发生在 onload → 改完开关重载插件（或重开 Obsidian）才生效，描述里已写明。
     new Setting(c)
       .setName(t('settings.debugCommands'))
@@ -245,6 +247,13 @@ export class VinylSettingTab extends PluginSettingTab {
             this.plugin.settings.albumNoteTemplate = v.trim();
             await this.plugin.saveSettings();
           })
+      )
+      // 原「创建专辑模板文件」命令的落点：写一份可编辑模板并回填上面的路径
+      .addButton((b) =>
+        b.setButtonText(t('settings.generateTemplate')).onClick(async () => {
+          await this.plugin.createAlbumTemplate();
+          this.display(); // 路径已被回填，重绘让输入框显示新值
+        })
       );
 
     this.section(c, t('settings.section.playback'));
@@ -313,6 +322,12 @@ export class VinylSettingTab extends PluginSettingTab {
           plays: stats.totalPlays,
           albums: Object.keys(stats.albums).length,
           tracks: Object.keys(stats.tracks).length,
+        })
+      )
+      // 原「显示播放统计」命令的落点：弹窗查看每张专辑 / 每首曲目的明细
+      .addButton((b) =>
+        b.setButtonText(t('settings.viewStats')).onClick(() => {
+          new StatsModal(this.app, this.plugin.settings.stats).open();
         })
       )
       .addButton((b) =>

@@ -35,7 +35,7 @@ the local gateway process described below.
 | Source | Setup | Notes |
 | --- | --- | --- |
 | **Local audio** | None | Files inside the vault, or absolute paths outside the vault. No backend process, works fully offline. |
-| **NetEase Cloud Music** | QR code login · browser login on the official page · paste Cookie manually · migrate the Cookie from Mineradio | Requires Node.js (see below). |
+| **NetEase Cloud Music** | QR code login · browser login on the official page · paste Cookie manually | Requires Node.js (see below). |
 | **QQ Music** | QR code login · browser login on the official page · paste Cookie manually | Requires Node.js (see below). |
 
 Browser login opens the provider's own login page in an Electron window (QR code or
@@ -267,8 +267,6 @@ pre-releases.
 
 - The local gateway reuses a small number of endpoint modules from
   [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi) (MIT).
-- No code from Mineradio is included in this plugin. Mineradio is only supported as an optional
-  Cookie import path for users migrating from it.
 
 ## License
 
@@ -283,7 +281,7 @@ pre-releases.
 **三个音源**（都使用**你自己的**账号登录，插件不携带任何作者凭据）：
 
 - **本地音频** —— vault 内文件或库外绝对路径，无后端、可离线播放。
-- **网易云音乐** —— 扫码登录 / 官方登录页浏览器登录 / 手动粘贴 Cookie / 从 Mineradio 迁移。
+- **网易云音乐** —— 扫码登录 / 官方登录页浏览器登录 / 手动粘贴 Cookie。
 - **QQ 音乐** —— 扫码登录 / 官方登录页浏览器登录 / 手动粘贴 Cookie。
 
 **主要功能**：专辑墙（卡片网格、黑胶弹出动效、音源角标、播放高亮、搜索/排序/筛选/卡片属性/导入工具栏）；播放器（黑胶转盘、唱臂姿态、队列、进度、音量，可停靠侧栏、主区或独立弹出窗口）；黑胶交接动效；专辑链接一键建笔记并代理下载封面，本地音频拖拽入库（复制进 vault 或外链引用；**选/拖一个文件夹即整张专辑导入**，按文件夹名建专辑并保留子目录结构 `audio/<专辑>/CD1/01.flac`）；播放中一键在专辑笔记追加时间戳感想；播放统计写入插件 `data.json`（不写笔记）；播放器配色、唱片颜色、转速、专辑墙列数等外观设置。

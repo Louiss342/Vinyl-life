@@ -8,7 +8,7 @@ import { NeteaseService } from './netease';
 import { QqService } from './qq';
 import { buildAlbumQueue, BuildQueueResult, ActiveSource, sourceLabel } from './queue';
 import type { VinylSettings } from '../settings';
-import { fmtTime, notice, sleep } from '../util';
+import { notice } from '../util';
 
 export type PlayerStatus = 'idle' | 'loading' | 'playing' | 'paused' | 'error';
 
@@ -376,25 +376,6 @@ export class PlaybackEngine {
         if (r.level) this.levelCache.set(key, r.level);
         return r.url;
       }
-    }
-  }
-
-  // 试播探针（自检用，不动当前队列）
-  async probePlay(track: Track, ms = 1200): Promise<{ ok: boolean; detail: string }> {
-    try {
-      const url = await this.resolveUrl(track);
-      const a = new Audio(url);
-      a.volume = 0.3;
-      await a.play();
-      await sleep(ms);
-      const ok = !a.paused && a.currentTime > 0.15;
-      const detail = `currentTime=${a.currentTime.toFixed(2)}s, duration=${
-        isFinite(a.duration) ? fmtTime(a.duration) : 'N/A'
-      }`;
-      a.pause();
-      return { ok, detail };
-    } catch (e) {
-      return { ok: false, detail: String((e as Error).message || e) };
     }
   }
 

@@ -451,8 +451,8 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   },
   'settings.debugCommands': { zh: '调试命令', en: 'Debug commands' },
   'settings.debugCommandsDesc': {
-    zh: '在命令面板里额外显示自检、登录、退出、迁移等维护命令（打开后需重载插件才生效）；日常使用无需开启。',
-    en: 'Also list maintenance commands (self-test, sign-in, sign-out, migration…) in the command palette (reload the plugin after turning this on); not needed for everyday use.',
+    zh: '在命令面板里额外显示登录 / 退出等维护命令（打开后需重载插件才生效）；日常使用无需开启。',
+    en: 'Also list maintenance commands (sign-in, sign-out…) in the command palette (reload the plugin after turning this on); not needed for everyday use.',
   },
   'settings.path': { zh: '路径', en: 'Paths' },
   'settings.albumFolder': { zh: '专辑文件夹', en: 'Album folder' },
@@ -472,6 +472,7 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     zh: '例如：Vinyl Life/模板/专辑笔记模板.md',
     en: 'e.g. Vinyl Life/模板/专辑笔记模板.md',
   },
+  'settings.generateTemplate': { zh: '生成模板文件', en: 'Generate template file' },
   'settings.section.playback': { zh: '播放', en: 'Playback' },
   'settings.defaultSource': { zh: '默认音源', en: 'Default source' },
   'settings.defaultSourceDesc': { zh: '笔记里的 source 字段优先', en: 'The source field in the note wins' },
@@ -503,6 +504,7 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     en: '{plays} plays · {albums} albums · {tracks} tracks (stored in the plugin data.json)',
   },
   'settings.clearStats': { zh: '清除统计', en: 'Clear stats' },
+  'settings.viewStats': { zh: '查看统计…', en: 'View stats…' },
 
   // —— 设置面板：外观 ——
   'settings.section.shelf': { zh: '专辑墙', en: 'Album shelf' },
@@ -591,9 +593,7 @@ export const DICT: Record<string, { zh: string; en: string }> = {
 
   // —— 命令名（命令面板 / ribbon 提示） ——
   'cmd.openShelf': { zh: '打开专辑墙', en: 'Open album shelf' },
-  'cmd.openShelfSidebar': { zh: '在侧栏打开专辑墙', en: 'Open album shelf in the sidebar' },
   'cmd.openPlayer': { zh: '打开播放器', en: 'Open player' },
-  'cmd.popoutPlayer': { zh: '弹出播放器窗口', en: 'Open the player in a popout window' },
   'cmd.neteaseLogin': { zh: '网易云扫码登录', en: 'NetEase QR sign-in' },
   'cmd.neteaseWebLogin': {
     zh: '网易云浏览器登录（官方登录页）',
@@ -606,41 +606,11 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   },
   'cmd.qqLogout': { zh: '退出 QQ 音乐登录', en: 'Sign out of QQ Music' },
   'cmd.neteaseLogout': { zh: '退出网易云登录', en: 'Sign out of NetEase' },
-  'cmd.migrateCookie': {
-    zh: '从 Mineradio 迁移登录 Cookie',
-    en: 'Migrate the sign-in cookie from Mineradio',
-  },
-  'cmd.m1SelfTest': {
-    zh: 'M1 自检：双源队列 + 播放验证',
-    en: 'M1 self-test: dual-source queue + playback',
-  },
-  'cmd.m2SelfTest': {
-    zh: 'M2 自检：专辑墙数据 + 音源角标',
-    en: 'M2 self-test: shelf data + source badges',
-  },
-  'cmd.m3SelfTest': { zh: 'M3 自检：交接状态机验证', en: 'M3 self-test: handoff state machine' },
   'cmd.importAlbum': { zh: '导入专辑', en: 'Import album' },
   'cmd.importLocal': { zh: '导入本地音频', en: 'Import local audio' },
-  'cmd.appendNote': {
-    zh: '在专辑笔记追加此刻感想',
-    en: 'Append current thoughts to the album note',
-  },
   'cmd.insertNowPlaying': {
     zh: '插入此刻正在听的曲目',
     en: 'Insert the currently playing track',
-  },
-  'cmd.showStats': { zh: '显示播放统计', en: 'Show playback stats' },
-  'cmd.m4SelfTest': {
-    zh: 'M4 自检：导入 + 感想 + 统计验证',
-    en: 'M4 self-test: import + notes + stats',
-  },
-  'cmd.qqSelfTest': {
-    zh: 'M5 自检：QQ 音乐源（登录 + 专辑播放）',
-    en: 'M5 self-test: QQ Music source (sign-in + playback)',
-  },
-  'cmd.createTemplate': {
-    zh: '创建本地专辑模板文件（可编辑）',
-    en: 'Create an editable local album template file',
   },
   'cmd.ribbonShelf': { zh: 'Vinyl Life 专辑墙', en: 'Vinyl Life album shelf' },
 
@@ -696,7 +666,6 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   },
   'notice.neteaseLoggedOut': { zh: '已退出网易云登录', en: 'Signed out of NetEase' },
   'notice.qqLoggedOut': { zh: '已退出 QQ 音乐登录', en: 'Signed out of QQ Music' },
-  'notice.migrateFailed': { zh: '迁移失败：{detail}', en: 'Migration failed: {detail}' },
 
   // —— util：用户可见的通用提示 ——
   'util.skippedFormats': {

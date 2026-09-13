@@ -1,7 +1,6 @@
 // Vinyl Life —— 主入口（M4：导入+增强 + M3 交接动效 + M2 专辑墙 + M1 双源播放底座）
 // 本地源（零后端）+ 网易云源（懒加载 Node 网关，M0 已验证）统一为 Track 队列。
-import { Plugin, Notice, TFile, MarkdownView, normalizePath } from 'obsidian';
-import * as fs from 'fs';
+import { Plugin, TFile, MarkdownView, normalizePath } from 'obsidian';
 import { VinylSettings, DEFAULT_SETTINGS, VinylSettingTab, normalizeQueueOrder } from './settings';
 import { ServerManager } from './core/server-manager';
 import { ServerClient } from './core/server-client';
@@ -19,14 +18,10 @@ import { HandoffController } from './animation/handoff';
 import { QrLoginModal, qqQrProvider } from './views/qr-login-modal';
 import {
   AlbumInfo,
-  buildAlbumInfo,
-  parseFrontmatterSimple,
   getAlbumInfo,
   findAlbumNotes,
-  detectAlbumSources,
   setAlbumTemplatePath,
 } from './core/album-index';
-import { buildAlbumQueue, QueueDeps } from './core/queue';
 import { normalizeShelfProps, normalizeShelfPropLabels } from './core/shelf-props';
 import { DISC_DIRECTIONS, SPIN_SPEEDS } from './core/disc-motion';
 import { normalizeDeckStyle, normalizeRecordColor } from './core/appearance';
@@ -42,7 +37,6 @@ import {
 } from './util';
 import {
   ImportContext,
-  importNeteaseAlbum,
   importLocalAudio,
   createAlbumFromFiles,
   DEFAULT_ALBUM_TEMPLATE,
@@ -51,18 +45,9 @@ import { AlbumImportModal, LocalImportModal } from './views/import-modal';
 import { DeleteAlbumModal } from './views/delete-album-modal';
 import { collectAlbumDeleteTargets, deleteAlbumAssets } from './delete';
 import { WebLoginModal, qqWebProvider } from './views/web-login-modal';
-import { StatsModal } from './views/stats-modal';
 import { setLanguage, t, tf } from './core/i18n';
 import { ensureStats, recordTrackPlay } from './core/stats';
 import { Track, trackKey } from './core/track';
-
-const SELF_TEST_LOG = '专辑墙/M1-自检日志.md';
-const SHELF_TEST_LOG = '专辑墙/M2-自检日志.md';
-const HANDOFF_TEST_LOG = '专辑墙/M3-自检日志.md';
-const IMPORT_TEST_LOG = '专辑墙/M4-自检日志.md';
-const QQ_TEST_LOG = '专辑墙/M5-自检日志.md';
-const SELF_TEST_DIR = '专辑墙/tmp-m1-test';
-const SELF_TEST_EXT = 'D:/Music/vinyl-note-spike.wav';
 
 // wikilink 里不能安全出现的字符：|（别名分隔）与 [ ]（链接定界）、换行。
 // 专辑名理论上可能含「]]」，路径也可能被手改成怪样子 —— 这类值一律不硬塞进链接。
@@ -145,8 +130,8 @@ export default class VinylLifePlugin extends Plugin {
     // 图标与播放器视图一致（disc-3），方便一眼认出是 Vinyl Life
     this.addRibbonIcon('disc-3', t('cmd.ribbonShelf'), () => this.openShelf());
     // 命令面板瘦身：日常 5 条常驻（open-shelf / open-player / import-netease / import-local /
-    // insert-now-playing）；登录、退出、迁移、侧栏与独立窗口落位、自检等维护命令一律收进
-    // registerDebugCommands()，仅当「设置 → 通用 → 调试命令」打开时注册（改开关后需重载插件生效）。
+    // insert-now-playing）；登录 / 退出这类维护命令收进 registerDebugCommands()，
+    // 仅当「设置 → 通用 → 调试命令」打开时注册（改开关后需重载插件生效）。
     // 命令 id 与行为一律不变（改了会让已绑定的快捷键失效）
     this.addCommand({
       id: 'open-shelf',
@@ -179,20 +164,9 @@ export default class VinylLifePlugin extends Plugin {
     console.log('[vinyl] M4 导入+增强 · M3 交接动效 · M2 专辑墙 · M1 双源底座已加载');
   }
 
-  /** 维护类命令（默认不注册）：登录 / 退出 / 迁移 / 侧栏与独立窗口落位 / 追加感想 / 统计 /
-   *  模板生成 / 全部自检。触发条件见 onload 里的 settings.debugCommands。
+  /** 维护类命令（默认不注册）：登录 / 退出。触发条件见 onload 里的 settings.debugCommands。
    *  命令 id、名称与回调与从前完全一致——只是收进了这道门后面。 */
   registerDebugCommands() {
-    this.addCommand({
-      id: 'open-shelf-sidebar',
-      name: t('cmd.openShelfSidebar'),
-      callback: () => this.openShelf('sidebar'),
-    });
-    this.addCommand({
-      id: 'popout-player',
-      name: t('cmd.popoutPlayer'),
-      callback: () => this.openPlayer('window'),
-    });
     this.addCommand({
       id: 'netease-login',
       name: t('cmd.neteaseLogin'),
@@ -227,51 +201,6 @@ export default class VinylLifePlugin extends Plugin {
       id: 'netease-logout',
       name: t('cmd.neteaseLogout'),
       callback: () => this.logout(),
-    });
-    this.addCommand({
-      id: 'migrate-cookie',
-      name: t('cmd.migrateCookie'),
-      callback: () => this.migrate(),
-    });
-    this.addCommand({
-      id: 'append-listening-note',
-      name: t('cmd.appendNote'),
-      callback: () => this.appendListeningNote(),
-    });
-    this.addCommand({
-      id: 'show-stats',
-      name: t('cmd.showStats'),
-      callback: () => new StatsModal(this.app, this.settings.stats).open(),
-    });
-    this.addCommand({
-      id: 'create-album-template',
-      name: t('cmd.createTemplate'),
-      callback: () => void this.createAlbumTemplate(),
-    });
-    this.addCommand({
-      id: 'm1-selftest',
-      name: t('cmd.m1SelfTest'),
-      callback: () => this.runM1SelfTest(),
-    });
-    this.addCommand({
-      id: 'm2-selftest',
-      name: t('cmd.m2SelfTest'),
-      callback: () => this.runM2SelfTest(),
-    });
-    this.addCommand({
-      id: 'm3-selftest',
-      name: t('cmd.m3SelfTest'),
-      callback: () => this.runM3SelfTest(),
-    });
-    this.addCommand({
-      id: 'm4-selftest',
-      name: t('cmd.m4SelfTest'),
-      callback: () => this.runM4SelfTest(),
-    });
-    this.addCommand({
-      id: 'qq-selftest',
-      name: t('cmd.qqSelfTest'),
-      callback: () => this.runQqSelfTest(),
     });
   }
 
@@ -598,12 +527,12 @@ export default class VinylLifePlugin extends Plugin {
     }, 5000);
   }
 
-  // —— 专辑墙落位（主区 / 侧栏）——
-  async openShelf(location?: 'tab' | 'sidebar') {
+  // —— 专辑墙落位（主区：命令 / ribbon 都开在主区标签页）——
+  async openShelf() {
     const { workspace } = this.app;
     let leaf = workspace.getLeavesOfType(SHELF_VIEW_TYPE)[0];
     if (!leaf) {
-      leaf = location === 'sidebar' ? workspace.getRightLeaf(false) ?? workspace.getLeaf('tab') : workspace.getLeaf('tab');
+      leaf = workspace.getLeaf('tab');
       await leaf.setViewState({ type: SHELF_VIEW_TYPE, active: true });
     }
     workspace.revealLeaf(leaf);
@@ -651,545 +580,5 @@ export default class VinylLifePlugin extends Plugin {
   async logoutQq() {
     await this.qqAuth.clear();
     notice(t('notice.qqLoggedOut'));
-  }
-
-  async migrate() {
-    const r = await this.auth.migrateMineradio();
-    notice(r.ok ? r.detail : tf('notice.migrateFailed', { detail: r.detail }));
-  }
-
-  // ============ M1 自检套件 ============
-  // 验收标准：本地（vault + 外链）与网易云曲都能进队列播放；Cookie 落盘。
-  async runM1SelfTest() {
-    const lines: string[] = [];
-    const log = (test: string, ok: boolean, detail: string) => {
-      lines.push(
-        `- [${new Date().toLocaleTimeString('zh-CN', { hour12: false })}] **${test}** ${
-          ok ? '✅' : '❌'
-        } ${detail}`
-      );
-      console.log(`[vinyl-m1] ${test} ${ok ? 'PASS' : 'FAIL'} ${detail}`);
-    };
-    const writeLog = async () => {
-      try {
-        const header =
-          '# M1 自检日志\n\n> 由插件「M1 自检」命令生成。验收标准见 [[M1-结论]]。\n\n';
-        await this.app.vault.adapter.write(SELF_TEST_LOG, header + lines.join('\n') + '\n');
-      } catch (e) {
-        console.error('[vinyl-m1] 日志写入失败', e);
-      }
-    };
-
-    new Notice('Vinyl Life M1 自检开始…');
-    const t0 = Date.now();
-
-    // 0. Cookie 落盘检查
-    const bytes = this.auth.cookieBytes();
-    log(
-      'COOKIE',
-      bytes > 0 && this.auth.hasLocalCookie(),
-      `.cookie ${bytes} 字节，MUSIC_U=${this.auth.hasLocalCookie() ? '存在' : '缺失'}`
-    );
-
-    // 1. 本地 vault 音轨 → 队列 → 播放
-    try {
-      const note = await this.writeTempAlbumNote({
-        title: '__m1-test-vault',
-        body: 'tags: [album]\naudioFolder: "[[Vinyl Life/audio/spike]]"\n',
-      });
-      const fm = parseFrontmatterSimple(await this.app.vault.read(note));
-      const album = buildAlbumInfo(this.app, note, fm);
-      const res = await buildAlbumQueue(album, this.queueDeps());
-      const ok = res.resolvedSource === 'local' && res.tracks.length > 0;
-      log(
-        'LOCAL-VAULT',
-        ok,
-        `队列 ${res.tracks.length} 曲（${res.tracks.map((t) => t.title).join(', ')}）`
-      );
-      if (ok) {
-        const p = await this.engine.probePlay(res.tracks[0], 1200);
-        log('LOCAL-VAULT-PLAY', p.ok, p.detail);
-      }
-    } catch (e) {
-      log('LOCAL-VAULT', false, `异常: ${e}`);
-    }
-
-    // 2. 外链绝对路径 → 队列 → 播放
-    try {
-      if (fs.existsSync(SELF_TEST_EXT)) {
-        const note = await this.writeTempAlbumNote({
-          title: '__m1-test-ext',
-          body: 'tags: [album]\naudio:\n  - "D:/Music/vinyl-note-spike.wav"\n',
-        });
-        const fm = parseFrontmatterSimple(await this.app.vault.read(note));
-        const album = buildAlbumInfo(this.app, note, fm);
-        const res = await buildAlbumQueue(album, this.queueDeps());
-        const ok =
-          res.resolvedSource === 'local' &&
-          res.tracks.length > 0 &&
-          res.tracks[0].source === 'local-external';
-        log(
-          'LOCAL-EXT',
-          ok,
-          `队列 ${res.tracks.length} 曲，source=${res.tracks[0]?.source}`
-        );
-        if (ok) {
-          const p = await this.engine.probePlay(res.tracks[0], 1200);
-          log('LOCAL-EXT-PLAY', p.ok, p.detail);
-        }
-      } else {
-        log('LOCAL-EXT', false, `测试文件不存在：${SELF_TEST_EXT}`);
-      }
-    } catch (e) {
-      log('LOCAL-EXT', false, `异常: ${e}`);
-    }
-
-    // 3. 网易云专辑（Abbey Road 真实笔记，auto 策略 → 本地无 → 网易云）
-    try {
-      const note = this.app.vault.getAbstractFileByPath('Vinyl Life/Vinyl Note/Abbey Road.md');
-      if (note instanceof TFile) {
-        const album = getAlbumInfo(this.app, note);
-        if (!album) {
-          log('NETEASE', false, 'Abbey Road 笔记未索引或缺少 album 标签');
-        } else {
-          const res = await buildAlbumQueue(album, this.queueDeps());
-          const ok = res.resolvedSource === 'netease' && res.tracks.length > 0;
-          log(
-            'NETEASE',
-            ok,
-            `队列 ${res.tracks.length} 曲${ok ? `（首曲：${res.tracks[0].title}）` : `（${res.reason}）`}`
-          );
-          if (ok) {
-            const p = await this.engine.probePlay(res.tracks[0], 1500);
-            log('NETEASE-PLAY', p.ok, p.detail);
-          }
-        }
-      } else {
-        log('NETEASE', false, '找不到 Abbey Road 笔记');
-      }
-    } catch (e) {
-      log('NETEASE', false, `异常: ${e}`);
-    }
-
-    // 4. 登录态
-    const st = await this.auth.getStatus();
-    log(
-      'LOGIN',
-      st.loggedIn,
-      st.loggedIn
-        ? `nick=${st.nick}, userId=${st.userId}${st.vipType === 11 ? ', VIP' : ''}`
-        : '未登录（Cookie 缺失或已过期）'
-    );
-
-    // 5. 清理临时笔记
-    await this.removeTempAlbumNotes();
-
-    lines.push(`- 总耗时 ${Date.now() - t0}ms`);
-    await writeLog();
-    new Notice('M1 自检完成，结果见 专辑墙/M1-自检日志.md');
-  }
-
-  // ============ M2 自检套件 ============
-  // 验收标准：卡片视觉对齐（人工确认）；点击不跳外链（= loadAlbum + openPlayer，引擎链路 M1 已验证）；
-  // 音源角标正确（本命令逐张核对 + 三种临时笔记形态验证）。
-  async runM2SelfTest() {
-    const lines: string[] = [];
-    const log = (test: string, ok: boolean, detail: string) => {
-      lines.push(
-        `- [${new Date().toLocaleTimeString('zh-CN', { hour12: false })}] **${test}** ${
-          ok ? '✅' : '❌'
-        } ${detail}`
-      );
-      console.log(`[vinyl-m2] ${test} ${ok ? 'PASS' : 'FAIL'} ${detail}`);
-    };
-    const writeLog = async () => {
-      try {
-        const header =
-          '# M2 自检日志\n\n> 由插件「M2 自检」命令生成。验收标准见 [[M2-结论]]。\n\n';
-        await this.app.vault.adapter.write(SHELF_TEST_LOG, header + lines.join('\n') + '\n');
-      } catch (e) {
-        console.error('[vinyl-m2] 日志写入失败', e);
-      }
-    };
-
-    new Notice('Vinyl Life M2 自检开始…');
-
-    // 0. 扫描专辑笔记
-    const files = findAlbumNotes(this.app);
-    log('SHELF-SCAN', files.length > 0, `tags:[album] 专辑笔记 ${files.length} 张`);
-
-    // 1. 逐张角标
-    let badged = 0;
-    for (const f of files) {
-      const album = getAlbumInfo(this.app, f);
-      if (!album) continue;
-      const src = detectAlbumSources(this.app, album);
-      const badges = `${src.local ? '[本地]' : ''}${src.netease ? '[网易云]' : ''}${
-        !src.local && !src.netease ? '[收藏·]' : ''
-      }`;
-      log(
-        'BADGE',
-        true,
-        `${album.title}: ${badges} (neteaseId=${album.neteaseId ?? '-'}, audioFolder=${
-          album.audioFolderRef ?? '-'
-        }, audio 列表 ${album.audioRefs.length} 项)`
-      );
-      badged++;
-    }
-    log('BADGE-COUNT', badged === files.length, `共核对 ${badged}/${files.length} 张角标`);
-
-    // 2. 临时笔记三形态：仅本地（audioFolder）/ 仅外链 / 本地+网易云双源
-    const testCase = async (
-      name: string,
-      body: string,
-      expect: { local: boolean; netease: boolean }
-    ) => {
-      try {
-        const note = await this.writeTempAlbumNote({ title: `__m2-test-${name}`, body });
-        const fm = parseFrontmatterSimple(await this.app.vault.read(note));
-        const album = buildAlbumInfo(this.app, note, fm);
-        const src = detectAlbumSources(this.app, album);
-        const ok = src.local === expect.local && src.netease === expect.netease;
-        log(
-          `BADGE-${name.toUpperCase()}`,
-          ok,
-          `本地=${src.local}（期望 ${expect.local}）, 网易云=${src.netease}（期望 ${expect.netease}）`
-        );
-      } catch (e) {
-        log(`BADGE-${name.toUpperCase()}`, false, `异常: ${e}`);
-      }
-    };
-    await testCase('local', 'tags: [album]\naudioFolder: "[[Vinyl Life/audio/spike]]"\n', {
-      local: true,
-      netease: false,
-    });
-    await testCase('ext', 'tags: [album]\naudio:\n  - "D:/Music/vinyl-note-spike.wav"\n', {
-      local: true,
-      netease: false,
-    });
-    await testCase(
-      'both',
-      'tags: [album]\nnetease: "https://music.163.com/#/album?id=437968"\naudioFolder: "[[Vinyl Life/audio/spike]]"\n',
-      { local: true, netease: true }
-    );
-    await testCase('collect', 'tags: [album]\n', { local: false, netease: false });
-
-    // 3. 清理
-    await this.removeTempAlbumNotes();
-    await writeLog();
-    new Notice('M2 自检完成，结果见 专辑墙/M2-自检日志.md');
-  }
-
-  // ============ M3 自检套件 ============
-  // 验收标准：点击 → 播放器出现 + 落盘 + 播放，状态机正确（IDLE→HANDOFF→PLAYING）。
-  // 本命令验证状态机两条路径：成功交接（本地音轨）与失败回落（无音源）；墙上动画为视觉项，人工确认。
-  async runM3SelfTest() {
-    const lines: string[] = [];
-    const log = (test: string, ok: boolean, detail: string) => {
-      lines.push(
-        `- [${new Date().toLocaleTimeString('zh-CN', { hour12: false })}] **${test}** ${
-          ok ? '✅' : '❌'
-        } ${detail}`
-      );
-      console.log(`[vinyl-m3] ${test} ${ok ? 'PASS' : 'FAIL'} ${detail}`);
-    };
-    const writeLog = async () => {
-      try {
-        const header =
-          '# M3 自检日志\n\n> 由插件「M3 自检」命令生成。验收标准见 [[M3-结论]]。\n\n';
-        await this.app.vault.adapter.write(HANDOFF_TEST_LOG, header + lines.join('\n') + '\n');
-      } catch (e) {
-        console.error('[vinyl-m3] 日志写入失败', e);
-      }
-    };
-
-    new Notice('Vinyl Life M3 自检开始…');
-
-    // 0. 初始状态
-    log('STATE-INIT', this.handoff.getState() === 'idle', `初始状态 = ${this.handoff.getState()}`);
-
-    // 1. 成功交接：临时专辑（本地 vault 音轨）→ handoff → playing + 队列 + 播放器打开
-    try {
-      const note = await this.writeTempAlbumNote({
-        title: '__m3-test',
-        body: 'tags: [album]\naudioFolder: "[[Vinyl Life/audio/spike]]"\n',
-      });
-      const fm = parseFrontmatterSimple(await this.app.vault.read(note));
-      const album = buildAlbumInfo(this.app, note, fm);
-      await this.handoff.handoff(album, null); // 自检无卡片元素 → 跳过墙上动画，验证状态机与链路
-      const snap = this.engine.snapshot();
-      const playerOpen = this.app.workspace.getLeavesOfType(PLAYER_VIEW_TYPE).length > 0;
-      const ok =
-        this.handoff.getState() === 'playing' && snap.queue.length > 0 && playerOpen;
-      log(
-        'HANDOFF-OK',
-        ok,
-        `state=${this.handoff.getState()}（期望 playing）, 队列=${snap.queue.length} 曲, 播放器已打开=${playerOpen}`
-      );
-      if (ok) {
-        const p = await this.engine.probePlay(snap.queue[0], 1200);
-        log('HANDOFF-PLAY', p.ok, p.detail);
-      }
-    } catch (e) {
-      log('HANDOFF-OK', false, `异常: ${e}`);
-    }
-
-    // 2. 失败回落：无音源专辑 → handoff → idle
-    try {
-      const note = await this.writeTempAlbumNote({
-        title: '__m3-test-empty',
-        body: 'tags: [album]\n',
-      });
-      const fm = parseFrontmatterSimple(await this.app.vault.read(note));
-      const album = buildAlbumInfo(this.app, note, fm);
-      await this.handoff.handoff(album, null);
-      log(
-        'HANDOFF-EMPTY',
-        this.handoff.getState() === 'idle',
-        `无音源交接后 state=${this.handoff.getState()}（期望 idle）`
-      );
-    } catch (e) {
-      log('HANDOFF-EMPTY', false, `异常: ${e}`);
-    }
-
-    // 3. 清理
-    await this.removeTempAlbumNotes();
-    await writeLog();
-    new Notice('M3 自检完成，结果见 专辑墙/M3-自检日志.md');
-  }
-
-  // ============ M4 自检套件 ============
-  // 验收标准：网易云专辑一键建笔记+封面（以去重路径验证，不实际新建）；本地导入两模式；
-  // 感想可追加；统计记录。
-  async runM4SelfTest() {
-    const lines: string[] = [];
-    const log = (test: string, ok: boolean, detail: string) => {
-      lines.push(
-        `- [${new Date().toLocaleTimeString('zh-CN', { hour12: false })}] **${test}** ${
-          ok ? '✅' : '❌'
-        } ${detail}`
-      );
-      console.log(`[vinyl-m4] ${test} ${ok ? 'PASS' : 'FAIL'} ${detail}`);
-    };
-    const writeLog = async () => {
-      try {
-        const header =
-          '# M4 自检日志\n\n> 由插件「M4 自检」命令生成。验收标准见 [[M4-结论]]。\n\n';
-        await this.app.vault.adapter.write(IMPORT_TEST_LOG, header + lines.join('\n') + '\n');
-      } catch (e) {
-        console.error('[vinyl-m4] 日志写入失败', e);
-      }
-    };
-
-    new Notice('Vinyl Life M4 自检开始…');
-    const cleanupDirs: string[] = [];
-
-    // 0. 统计：recordPlay 计数
-    try {
-      const before = this.settings.stats.totalPlays;
-      this.recordPlay(
-        { source: 'local-external', path: 'D:/fake-self-test.wav', title: '统计自检' },
-        '专辑墙/tmp-m1-test/__m4-fake.md',
-        '__m4-fake'
-      );
-      const ok = this.settings.stats.totalPlays === before + 1;
-      log('STATS', ok, `totalPlays ${before} → ${this.settings.stats.totalPlays}（防抖 5s 落盘 data.json）`);
-    } catch (e) {
-      log('STATS', false, `异常: ${e}`);
-    }
-
-    // 1. 本地导入 - 复制进 vault
-    try {
-      const note = await this.writeTempAlbumNote({
-        title: '__m4-test-copy',
-        body: 'tags: [album]\n',
-      });
-      const fm = parseFrontmatterSimple(await this.app.vault.read(note));
-      const album = buildAlbumInfo(this.app, note, fm);
-      const spike = this.app.vault.getAbstractFileByPath('Vinyl Life/audio/spike/spike-test.wav');
-      if (spike instanceof TFile) {
-        const buf = await this.app.vault.readBinary(spike);
-        const file = new File([buf], 'm4-copy-test.wav', { type: 'audio/wav' });
-        const res = await importLocalAudio(this.importCtx(), album, [file], 'copy');
-        const content = await this.app.vault.read(note);
-        const ok = res.added.length === 1 && content.includes('audioFolder');
-        log(
-          'IMPORT-COPY',
-          ok,
-          `新增 ${res.added.length} 个文件，frontmatter audioFolder=${content.includes('audioFolder') ? '已写入' : '缺失'}`
-        );
-        cleanupDirs.push('Vinyl Life/audio/__m4-test-copy');
-      } else {
-        log('IMPORT-COPY', false, '找不到测试音频 spike-test.wav');
-      }
-    } catch (e) {
-      log('IMPORT-COPY', false, `异常: ${e}`);
-    }
-
-    // 2. 本地导入 - 外链绝对路径
-    try {
-      const note = await this.writeTempAlbumNote({
-        title: '__m4-test-link',
-        body: 'tags: [album]\n',
-      });
-      const fm = parseFrontmatterSimple(await this.app.vault.read(note));
-      const album = buildAlbumInfo(this.app, note, fm);
-      const file = new File(['x'], 'm4-link-test.wav');
-      (file as any).path = SELF_TEST_EXT;
-      const res = await importLocalAudio(this.importCtx(), album, [file], 'link');
-      const content = await this.app.vault.read(note);
-      const ok = res.added.length === 1 && content.includes(SELF_TEST_EXT);
-      log(
-        'IMPORT-LINK',
-        ok,
-        `外链写入 ${res.added.length} 条，frontmatter audio 列表=${content.includes(SELF_TEST_EXT) ? '已写入' : '缺失'}`
-      );
-    } catch (e) {
-      log('IMPORT-LINK', false, `异常: ${e}`);
-    }
-
-    // 3. 网易云导入 - 去重路径（437968 已存在 Abbey Road，验证解析/网关/查重，不新建笔记）
-    try {
-      const res = await importNeteaseAlbum(this.importCtx(), 'https://music.163.com/#/album?id=437968');
-      const ok = !res.ok && !!res.file && res.detail.includes('已存在');
-      log(
-        'IMPORT-NETEASE-DUP',
-        ok,
-        `去重命中：${res.detail}${res.file ? ` → ${res.file.path}` : ''}`
-      );
-    } catch (e) {
-      log('IMPORT-NETEASE-DUP', false, `异常: ${e}`);
-    }
-
-    // 4. 感想追加：临时专辑进队列 → 追加 → 验证内容
-    try {
-      const note = await this.writeTempAlbumNote({
-        title: '__m4-test-note',
-        body: 'tags: [album]\naudioFolder: "[[Vinyl Life/audio/spike]]"\n',
-      });
-      const fm = parseFrontmatterSimple(await this.app.vault.read(note));
-      const album = buildAlbumInfo(this.app, note, fm);
-      await this.engine.loadAlbum(album);
-      await this.appendListeningNote();
-      const content = await this.app.vault.read(note);
-      const ok = content.includes('正在听');
-      log('NOTE-APPEND', ok, `笔记末尾感想条目=${ok ? '已追加' : '缺失'}`);
-    } catch (e) {
-      log('NOTE-APPEND', false, `异常: ${e}`);
-    }
-
-    // 5. 清理
-    await this.removeTempAlbumNotes();
-    for (const dir of cleanupDirs) {
-      try {
-        const folder = this.app.vault.getAbstractFileByPath(dir);
-        if (folder) await this.app.vault.delete(folder, true);
-      } catch (_) {}
-    }
-    await writeLog();
-    new Notice('M4 自检完成，结果见 专辑墙/M4-自检日志.md');
-  }
-
-  // ============ M5 自检套件（QQ 音乐源） ============
-  // 验收标准：.qq-cookie 存在且登录态可查；绑定 QQ 的专辑可建队列并实际播放。
-  async runQqSelfTest() {
-    const lines: string[] = [];
-    const log = (test: string, ok: boolean, detail: string) => {
-      lines.push(
-        `- [${new Date().toLocaleTimeString('zh-CN', { hour12: false })}] **${test}** ${
-          ok ? '✅' : '❌'
-        } ${detail}`
-      );
-      console.log(`[vinyl-m5] ${test} ${ok ? 'PASS' : 'FAIL'} ${detail}`);
-    };
-    const writeLog = async () => {
-      try {
-        const header = '# M5 自检日志\n\n> 由插件「M5 自检」命令生成。验收标准见 [[M5-结论]]。\n\n';
-        await this.app.vault.adapter.write(QQ_TEST_LOG, header + lines.join('\n') + '\n');
-      } catch (e) {
-        console.error('[vinyl-m5] 日志写入失败', e);
-      }
-    };
-
-    new Notice('Vinyl Life M5 自检开始…');
-
-    // 0. 凭据与登录态
-    const bytes = this.qqAuth.cookieBytes();
-    log(
-      'COOKIE',
-      bytes > 0 && this.qqAuth.hasLocalCookie(),
-      `.qq-cookie ${bytes} 字节，qm_keyst=${this.qqAuth.hasLocalCookie() ? '存在' : '缺失'}`
-    );
-    const st = await this.qqAuth.getStatus();
-    log(
-      'LOGIN',
-      st.loggedIn,
-      st.loggedIn ? `nick=${st.nick}, uin=${st.userId}` : '未登录（Cookie 缺失或已失效）'
-    );
-
-    // 1. 绑定 QQ 的专辑：角标 → 队列 → 试播
-    try {
-      const bound = findAlbumNotes(this.app)
-        .map((f) => getAlbumInfo(this.app, f))
-        .filter((a): a is AlbumInfo => !!a && !!a.qqId);
-      log('ALBUM-SCAN', true, `绑定 QQ 音乐的专辑 ${bound.length} 张`);
-      if (bound.length) {
-        const album = bound[0];
-        const src = detectAlbumSources(this.app, album);
-        log('BADGE', src.qq, `「${album.title}」角标 qq=${src.qq}`);
-        const res = await buildAlbumQueue(album, this.queueDeps());
-        const ok = res.resolvedSource === 'qq' && res.tracks.length > 0;
-        log(
-          'QUEUE',
-          ok,
-          ok
-            ? `队列 ${res.tracks.length} 曲（首曲：${res.tracks[0].title}）`
-            : `未解析为 QQ 队列（${res.reason || res.resolvedSource}）`
-        );
-        if (ok) {
-          const p = await this.engine.probePlay(res.tracks[0], 1500);
-          log('PLAY', p.ok, p.detail);
-        }
-      } else {
-        log('ALBUM-SCAN', false, '未找到绑定 QQ 音乐（qqId / qq 链接）的专辑笔记，先加一张再跑本自检');
-      }
-    } catch (e) {
-      log('QUEUE', false, `异常: ${e}`);
-    }
-
-    await writeLog();
-    new Notice('M5 自检完成，结果见 专辑墙/M5-自检日志.md');
-  }
-
-  private queueDeps(): QueueDeps {
-    return {
-      local: this.local,
-      netease: this.netease,
-      qq: this.qq,
-      defaultSource: this.settings.defaultSource,
-    };
-  }
-
-  private tempNotePaths: string[] = [];
-
-  private async writeTempAlbumNote(opt: { title: string; body: string }): Promise<TFile> {
-    const p = `${SELF_TEST_DIR}/${opt.title}.md`;
-    await this.app.vault.adapter.write(p, `---\n${opt.body}---\n`);
-    const f = this.app.vault.getAbstractFileByPath(p);
-    if (!(f instanceof TFile)) throw new Error('临时笔记创建失败: ' + p);
-    this.tempNotePaths.push(p);
-    return f;
-  }
-
-  private async removeTempAlbumNotes() {
-    for (const p of this.tempNotePaths) {
-      try {
-        await this.app.vault.adapter.remove(p);
-      } catch (_) {}
-    }
-    this.tempNotePaths = [];
-    try {
-      await this.app.vault.adapter.rmdir(SELF_TEST_DIR, true);
-    } catch (_) {}
   }
 }

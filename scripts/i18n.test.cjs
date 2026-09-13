@@ -659,26 +659,23 @@ const KEPT_COMMANDS = [
   'import-local',
   'insert-now-playing',
 ];
-// 只应出现在调试门后的那批
+// 只应出现在调试门后的那批（登录 / 退出 —— 设置面板按钮没覆盖到的维护命令）
 const DEBUG_COMMANDS = [
-  'open-shelf-sidebar', 'popout-player',
   'netease-login', 'netease-web-login', 'qq-login', 'qq-browser-login',
-  'qq-logout', 'netease-logout', 'migrate-cookie',
-  'append-listening-note', 'show-stats', 'create-album-template',
-  'm1-selftest', 'm2-selftest', 'm3-selftest', 'm4-selftest', 'qq-selftest',
+  'qq-logout', 'netease-logout',
 ];
 
-test('main：命令面板瘦身 — 默认（debugCommands 关闭）只注册那 5 条日常命令', async () => {
+test('main：命令面板 — 默认恰好注册那 5 条日常命令（一条不多一条不少）', async () => {
   const plugin = makePlugin(); // loadData → {}：走 DEFAULT_SETTINGS.debugCommands = false
   await plugin.onload();
   assert.deepEqual(
     plugin.commands.map((c) => c.id),
     KEPT_COMMANDS,
-    '非 debug 时命令列表应当只有这 5 条（多一条都算没裁干净）'
+    '非 debug 时命令列表应当恰好是这 5 条（多一条都算没裁干净）'
   );
 });
 
-test('main：打开「调试命令」后补齐登录 / 退出 / 迁移 / 自检（id 与回调都在）', async () => {
+test('main：打开「调试命令」后补齐登录 / 退出（id 与回调都在）', async () => {
   const plugin = makePlugin({ data: { debugCommands: true } });
   await plugin.onload();
   const ids = plugin.commands.map((c) => c.id);
@@ -687,7 +684,7 @@ test('main：打开「调试命令」后补齐登录 / 退出 / 迁移 / 自检�
   assert.equal(
     ids.length,
     KEPT_COMMANDS.length + DEBUG_COMMANDS.length,
-    '调试模式下命令数 = 5 + 17（别重复注册）'
+    '调试模式下命令数 = 5 + 6（别重复注册）'
   );
   for (const c of plugin.commands) {
     assert.equal(typeof c.callback, 'function', `${c.id} 缺回调`);
