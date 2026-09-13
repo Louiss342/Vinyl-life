@@ -57,6 +57,9 @@ export interface VinylSettings {
   /** 每张专辑记住自己的自定义队列顺序（专辑笔记路径 → trackKey 顺序）。
    *  只影响「下次播这张专辑时的排列」，不是「重启后恢复整条队列」 */
   queueOrder: Record<string, string[]>;
+  /** 调试命令（通用标签页）：打开后命令面板才注册登录 / 退出 / 迁移 / 自检等维护命令。
+   *  默认关闭 —— 日常只需要那几条常用命令；改开关后需重载插件生效 */
+  debugCommands: boolean;
 }
 
 export const DEFAULT_SETTINGS: VinylSettings = {
@@ -79,6 +82,7 @@ export const DEFAULT_SETTINGS: VinylSettings = {
   shelfPropLabels: {},
   stats: EMPTY_STATS,
   queueOrder: {},
+  debugCommands: false,
 };
 
 /** data.json → queueOrder。脏数据一律丢弃：非对象容器 / 非数组值 / 数组里的非字符串项；
@@ -191,6 +195,17 @@ export class VinylSettingTab extends PluginSettingTab {
           this.display(); // 设置面板自身立即按新语言重绘（否则要重开标签页才变）
         });
       });
+    // 命令面板瘦身：维护类命令（登录 / 退出 / 迁移 / 自检…）默认不注册。
+    // 注册发生在 onload → 改完开关重载插件（或重开 Obsidian）才生效，描述里已写明。
+    new Setting(c)
+      .setName(t('settings.debugCommands'))
+      .setDesc(t('settings.debugCommandsDesc'))
+      .addToggle((tg) =>
+        tg.setValue(this.plugin.settings.debugCommands).onChange(async (v) => {
+          this.plugin.settings.debugCommands = v;
+          await this.plugin.saveSettings();
+        })
+      );
 
     this.section(c, t('settings.path'));
     new Setting(c)

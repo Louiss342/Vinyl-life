@@ -557,3 +557,208 @@ test('播放器：切语言后音质读数与来源角标按新语言重算（�
   assert.equal(view.els.qualityEl.textContent, '网易云 · 较高', '切回中文复原');
   assert.equal(badge.textContent, '网易云');
 });
+
+// ============ 命令面板瘦身 + 插入此刻正在听（驱动 main.ts 真实代码） ============
+// main.ts 的 onload / insertNowPlaying 需要整个 Obsidian App 才能跑，这里按「用到什么补什么」搭桩：
+// Plugin 基类只给 app / manifest，vault 只给 adapter.getBasePath 与建目录，Audio 只给 addEventListener
+// （PlaybackEngine 构造时挂监听），workspace 只给 getActiveViewOfType（假编辑器）。
+// 够驱动命令注册与插入这两条路径，但**不是**完整 App 模拟：不覆盖视图渲染、真实 vault 与设置面板。
+let mainBundle = null;
+function mainModule() {
+  if (mainBundle) return mainBundle;
+  const src = esbuild.buildSync({
+    entryPoints: [path.join(__dirname, '../src/main.ts')],
+    bundle: true,
+    write: false,
+    format: 'cjs',
+    platform: 'node',
+    external: ['obsidian', 'electron', '@electron/remote'],
+  }).outputFiles[0].text;
+
+  class Plugin {
+    constructor(app, manifest) {
+      this.app = app;
+      this.manifest = manifest;
+    }
+  }
+  class MarkdownView {}
+  const mod2 = { exports: {} };
+  vm.runInNewContext(src, {
+    module: mod2,
+    exports: mod2.exports,
+    require: (name) => {
+      if (name === 'obsidian') {
+        return {
+          App: class {},
+          ItemView: class {},
+          MarkdownView,
+          Modal: class {},
+          Notice: class {},
+          Plugin,
+          PluginSettingTab: class {},
+          Setting: class {},
+          TFile: class {},
+          TFolder: class {},
+          FuzzySuggestModal: class {},
+          normalizePath: (p) => p,
+          setIcon: () => {},
+        };
+      }
+      return require(name);
+    },
+    console,
+    Buffer,
+    process,
+    setTimeout,
+    clearTimeout,
+    setInterval,
+    clearInterval,
+    window: { setTimeout: () => 0, clearTimeout: () => {}, setInterval: () => 0, clearInterval: () => {} },
+    document: { createElement: () => ({ style: {} }) },
+    Audio: class { addEventListener() {} },
+  });
+  mainBundle = mod2.exports;
+  return mainBundle;
+}
+
+/** 造一个插件实例：命令进 plugin.commands，loadData 返回给定 data（模拟 data.json） */
+function makePlugin({ view = null, data = {}, snapshot = null } = {}) {
+  const VinylLifePlugin = mainModule().default;
+  const app = {
+    vault: {
+      adapter: { getBasePath: () => process.cwd() },
+      getAbstractFileByPath: () => null,
+      createFolder: async () => {},
+    },
+    workspace: {
+      getLeavesOfType: () => [],
+      getActiveViewOfType: () => view,
+    },
+  };
+  const plugin = new VinylLifePlugin(app, { id: 'vinyl-life', dir: 'plugins/vinyl-life' });
+  plugin.commands = [];
+  plugin.addCommand = (c) => {
+    plugin.commands.push(c);
+    return c;
+  };
+  plugin.registerView = () => {};
+  plugin.addRibbonIcon = () => {};
+  plugin.addSettingTab = () => {};
+  plugin.register = () => {};
+  plugin.loadData = async () => data;
+  plugin.saveData = async () => {};
+  if (snapshot) plugin.engine = { snapshot };
+  return plugin;
+}
+
+// 日常常驻的 5 条（id 不能改：改了已绑定的快捷键就失效）
+const KEPT_COMMANDS = [
+  'open-shelf',
+  'open-player',
+  'import-netease',
+  'import-local',
+  'insert-now-playing',
+];
+// 只应出现在调试门后的那批
+const DEBUG_COMMANDS = [
+  'open-shelf-sidebar', 'popout-player',
+  'netease-login', 'netease-web-login', 'qq-login', 'qq-browser-login',
+  'qq-logout', 'netease-logout', 'migrate-cookie',
+  'append-listening-note', 'show-stats', 'create-album-template',
+  'm1-selftest', 'm2-selftest', 'm3-selftest', 'm4-selftest', 'qq-selftest',
+];
+
+test('main：命令面板瘦身 — 默认（debugCommands 关闭）只注册那 5 条日常命令', async () => {
+  const plugin = makePlugin(); // loadData → {}：走 DEFAULT_SETTINGS.debugCommands = false
+  await plugin.onload();
+  assert.deepEqual(
+    plugin.commands.map((c) => c.id),
+    KEPT_COMMANDS,
+    '非 debug 时命令列表应当只有这 5 条（多一条都算没裁干净）'
+  );
+});
+
+test('main：打开「调试命令」后补齐登录 / 退出 / 迁移 / 自检（id 与回调都在）', async () => {
+  const plugin = makePlugin({ data: { debugCommands: true } });
+  await plugin.onload();
+  const ids = plugin.commands.map((c) => c.id);
+  assert.deepEqual(ids.slice(0, KEPT_COMMANDS.length), KEPT_COMMANDS, '常用 5 条照旧');
+  for (const id of DEBUG_COMMANDS) assert.ok(ids.includes(id), `调试模式下应注册 ${id}`);
+  assert.equal(
+    ids.length,
+    KEPT_COMMANDS.length + DEBUG_COMMANDS.length,
+    '调试模式下命令数 = 5 + 17（别重复注册）'
+  );
+  for (const c of plugin.commands) {
+    assert.equal(typeof c.callback, 'function', `${c.id} 缺回调`);
+    assert.ok(String(c.name || '').trim().length > 0, `${c.id} 缺显示名`);
+  }
+});
+
+test('main：调试开关只认布尔 true（data.json 被手改成字符串不生效）', async () => {
+  const plugin = makePlugin({ data: { debugCommands: 'true' } });
+  await plugin.onload();
+  assert.deepEqual(
+    plugin.commands.map((c) => c.id),
+    KEPT_COMMANDS,
+    '字符串 "true" 不该被当成开启'
+  );
+});
+
+// —— 插入此刻正在听：假编辑器收集插入内容 + 假 engine.snapshot（含 albumNotePath）——
+function insertedLine(over = {}) {
+  const lines = [];
+  const plugin = makePlugin({
+    view: { editor: { replaceSelection: (s) => lines.push(s) } },
+    snapshot: () => ({
+      current: { source: 'local-vault', path: 'a.flac', title: over.track ?? '无地自容' },
+      albumNotePath: over.albumNotePath,
+      albumTitle: over.albumTitle ?? '',
+    }),
+  });
+  plugin.insertNowPlaying();
+  assert.equal(lines.length, 1, '应当且只插入一次');
+  return lines[0];
+}
+
+test('main：insertNowPlaying — 专辑名做成 [[路径|专辑名]]，曲名保持纯文本', () => {
+  const line = insertedLine({
+    albumNotePath: 'Vinyl Life/Vinyl Note/黑豹乐队.md',
+    albumTitle: '黑豹乐队',
+  });
+  assert.equal(
+    line,
+    '此刻正在听《[[Vinyl Life/Vinyl Note/黑豹乐队.md|黑豹乐队]]》的《无地自容》\n',
+    '专辑名走带别名的 wikilink（源码模式不至于太长，阅读时显示专辑名）'
+  );
+  assert.equal(line.includes('[[无地自容'), false, '曲名不加链接（只要求专辑名可点）');
+});
+
+test('main：insertNowPlaying — 没有专辑笔记路径时退化成纯专辑名（不生成 [[|名]]）', () => {
+  const line = insertedLine({ albumTitle: '黑豹乐队' }); // 收藏类队列：只有曲目自带的专辑名
+  assert.equal(line, '此刻正在听《黑豹乐队》的《无地自容》\n');
+  assert.equal(line.includes('[['), false, '没有路径就退回纯标题');
+});
+
+test('main：insertNowPlaying — 专辑名 / 路径含 wikilink 语法字符时不硬凑坏链接', () => {
+  // 别名含 | 会被当成别名分隔符 → 退回 [[路径]]（仍可点开笔记，显示名 = 笔记文件名）
+  assert.equal(
+    insertedLine({ albumNotePath: 'Vinyl Life/Vinyl Note/ACDC.md', albumTitle: 'AC|DC' }),
+    '此刻正在听《[[Vinyl Life/Vinyl Note/ACDC.md]]》的《无地自容》\n'
+  );
+  // 别名含 ]] 会提前关掉链接 → 同样退回 [[路径]]
+  assert.equal(
+    insertedLine({ albumNotePath: 'Vinyl Life/Vinyl Note/怪名.md', albumTitle: '怪名]]' }),
+    '此刻正在听《[[Vinyl Life/Vinyl Note/怪名.md]]》的《无地自容》\n'
+  );
+  // 路径本身不安全（含 ]]）→ 纯文本：宁可不能点，也不生成 [[|名]] / 半截链接
+  assert.equal(
+    insertedLine({ albumNotePath: 'Vinyl Life/Vinyl Note/怪]]名.md', albumTitle: '怪]]名' }),
+    '此刻正在听《怪]]名》的《无地自容》\n'
+  );
+  // 有路径没标题：[[路径|]] 是坏链接 → 退回 [[路径]]
+  assert.equal(
+    insertedLine({ albumNotePath: 'Vinyl Life/Vinyl Note/黑豹乐队.md' }),
+    '此刻正在听《[[Vinyl Life/Vinyl Note/黑豹乐队.md]]》的《无地自容》\n'
+  );
+});

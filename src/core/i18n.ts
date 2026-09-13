@@ -449,6 +449,11 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     zh: '界面语言（主要覆盖专辑墙：工具栏、排序筛选、空态、卡片菜单）。默认中文。',
     en: 'Interface language (shelf toolbar, sorting, filters, empty states, card menus). Chinese by default.',
   },
+  'settings.debugCommands': { zh: '调试命令', en: 'Debug commands' },
+  'settings.debugCommandsDesc': {
+    zh: '在命令面板里额外显示自检、登录、退出、迁移等维护命令（打开后需重载插件才生效）；日常使用无需开启。',
+    en: 'Also list maintenance commands (self-test, sign-in, sign-out, migration…) in the command palette (reload the plugin after turning this on); not needed for everyday use.',
+  },
   'settings.path': { zh: '路径', en: 'Paths' },
   'settings.albumFolder': { zh: '专辑文件夹', en: 'Album folder' },
   'settings.albumFolderDesc': {

@@ -64,6 +64,25 @@ const QQ_TEST_LOG = '专辑墙/M5-自检日志.md';
 const SELF_TEST_DIR = '专辑墙/tmp-m1-test';
 const SELF_TEST_EXT = 'D:/Music/vinyl-note-spike.wav';
 
+// wikilink 里不能安全出现的字符：|（别名分隔）与 [ ]（链接定界）、换行。
+// 专辑名理论上可能含「]]」，路径也可能被手改成怪样子 —— 这类值一律不硬塞进链接。
+const WIKILINK_UNSAFE = /[|[\]\r\n]/;
+
+/** 「插入此刻正在听」用：专辑名 → 可点击的 wikilink。
+ *  有专辑笔记路径时生成 [[路径|专辑名]]（带别名：源码模式不至于太长，阅读时显示专辑名）；
+ *  别名或路径含 wikilink 语法字符时不硬凑，逐级降级：
+ *    别名不安全（空 / 含 | [ ] 换行）→ [[路径]]（仍可点开笔记，显示名 = 笔记文件名）；
+ *    路径不安全或没有路径 → 纯专辑名（宁可不能点，也不生成 [[|名]] 这类坏链接）。 */
+function albumWikiLink(path: string | undefined, title: string): string {
+  const name = (title || '').trim();
+  const p = (path || '').trim();
+  const safePath = p && !WIKILINK_UNSAFE.test(p) ? p : '';
+  const safeName = name && !WIKILINK_UNSAFE.test(name) ? name : '';
+  if (safePath && safeName) return `[[${safePath}|${safeName}]]`;
+  if (safePath) return `[[${safePath}]]`;
+  return name;
+}
+
 export default class VinylLifePlugin extends Plugin {
   settings: VinylSettings = { ...DEFAULT_SETTINGS };
   server!: ServerManager;
@@ -125,20 +144,49 @@ export default class VinylLifePlugin extends Plugin {
     this.registerView(SHELF_VIEW_TYPE, (leaf) => new VinylShelfView(leaf, this));
     // 图标与播放器视图一致（disc-3），方便一眼认出是 Vinyl Life
     this.addRibbonIcon('disc-3', t('cmd.ribbonShelf'), () => this.openShelf());
+    // 命令面板瘦身：日常 5 条常驻（open-shelf / open-player / import-netease / import-local /
+    // insert-now-playing）；登录、退出、迁移、侧栏与独立窗口落位、自检等维护命令一律收进
+    // registerDebugCommands()，仅当「设置 → 通用 → 调试命令」打开时注册（改开关后需重载插件生效）。
+    // 命令 id 与行为一律不变（改了会让已绑定的快捷键失效）
     this.addCommand({
       id: 'open-shelf',
       name: t('cmd.openShelf'),
       callback: () => this.openShelf(),
     });
     this.addCommand({
-      id: 'open-shelf-sidebar',
-      name: t('cmd.openShelfSidebar'),
-      callback: () => this.openShelf('sidebar'),
-    });
-    this.addCommand({
       id: 'open-player',
       name: t('cmd.openPlayer'),
       callback: () => this.openPlayer(),
+    });
+    this.addCommand({
+      id: 'import-netease',
+      name: t('cmd.importAlbum'),
+      callback: () => this.openAlbumImport(),
+    });
+    this.addCommand({
+      id: 'import-local',
+      name: t('cmd.importLocal'),
+      callback: () => this.openLocalImport(),
+    });
+    this.addCommand({
+      id: 'insert-now-playing',
+      name: t('cmd.insertNowPlaying'),
+      callback: () => this.insertNowPlaying(),
+    });
+    if (this.settings.debugCommands) this.registerDebugCommands();
+    this.addSettingTab(new VinylSettingTab(this.app, this));
+
+    console.log('[vinyl] M4 导入+增强 · M3 交接动效 · M2 专辑墙 · M1 双源底座已加载');
+  }
+
+  /** 维护类命令（默认不注册）：登录 / 退出 / 迁移 / 侧栏与独立窗口落位 / 追加感想 / 统计 /
+   *  模板生成 / 全部自检。触发条件见 onload 里的 settings.debugCommands。
+   *  命令 id、名称与回调与从前完全一致——只是收进了这道门后面。 */
+  registerDebugCommands() {
+    this.addCommand({
+      id: 'open-shelf-sidebar',
+      name: t('cmd.openShelfSidebar'),
+      callback: () => this.openShelf('sidebar'),
     });
     this.addCommand({
       id: 'popout-player',
@@ -186,6 +234,21 @@ export default class VinylLifePlugin extends Plugin {
       callback: () => this.migrate(),
     });
     this.addCommand({
+      id: 'append-listening-note',
+      name: t('cmd.appendNote'),
+      callback: () => this.appendListeningNote(),
+    });
+    this.addCommand({
+      id: 'show-stats',
+      name: t('cmd.showStats'),
+      callback: () => new StatsModal(this.app, this.settings.stats).open(),
+    });
+    this.addCommand({
+      id: 'create-album-template',
+      name: t('cmd.createTemplate'),
+      callback: () => void this.createAlbumTemplate(),
+    });
+    this.addCommand({
       id: 'm1-selftest',
       name: t('cmd.m1SelfTest'),
       callback: () => this.runM1SelfTest(),
@@ -201,32 +264,6 @@ export default class VinylLifePlugin extends Plugin {
       callback: () => this.runM3SelfTest(),
     });
     this.addCommand({
-      // id 保持不变：改了会让已绑定的快捷键失效
-      id: 'import-netease',
-      name: t('cmd.importAlbum'),
-      callback: () => this.openAlbumImport(),
-    });
-    this.addCommand({
-      id: 'import-local',
-      name: t('cmd.importLocal'),
-      callback: () => this.openLocalImport(),
-    });
-    this.addCommand({
-      id: 'append-listening-note',
-      name: t('cmd.appendNote'),
-      callback: () => this.appendListeningNote(),
-    });
-    this.addCommand({
-      id: 'insert-now-playing',
-      name: t('cmd.insertNowPlaying'),
-      callback: () => this.insertNowPlaying(),
-    });
-    this.addCommand({
-      id: 'show-stats',
-      name: t('cmd.showStats'),
-      callback: () => new StatsModal(this.app, this.settings.stats).open(),
-    });
-    this.addCommand({
       id: 'm4-selftest',
       name: t('cmd.m4SelfTest'),
       callback: () => this.runM4SelfTest(),
@@ -236,14 +273,6 @@ export default class VinylLifePlugin extends Plugin {
       name: t('cmd.qqSelfTest'),
       callback: () => this.runQqSelfTest(),
     });
-    this.addCommand({
-      id: 'create-album-template',
-      name: t('cmd.createTemplate'),
-      callback: () => void this.createAlbumTemplate(),
-    });
-    this.addSettingTab(new VinylSettingTab(this.app, this));
-
-    console.log('[vinyl] M4 导入+增强 · M3 交接动效 · M2 专辑墙 · M1 双源底座已加载');
   }
 
   onunload() {
@@ -264,6 +293,8 @@ export default class VinylLifePlugin extends Plugin {
     this.settings.shelfPropLabels = normalizeShelfPropLabels(data?.shelfPropLabels);
     // 队列自定义顺序：非对象 / 非字符串数组一律丢弃（data.json 可能被手改或来自旧版本）
     this.settings.queueOrder = normalizeQueueOrder(data?.queueOrder);
+    // 调试命令开关：只认布尔 true（data.json 可能被手改成字符串，别让 "false" 也开启）
+    this.settings.debugCommands = data?.debugCommands === true;
     // 外观项归一（data.json 可能来自旧版本或被手改）
     if (!DISC_DIRECTIONS.includes(this.settings.discDirection)) {
       this.settings.discDirection = DEFAULT_SETTINGS.discDirection;
@@ -524,7 +555,8 @@ export default class VinylLifePlugin extends Plugin {
       return;
     }
     // 专辑名优先取专辑笔记标题（队列加载后一定有）；收藏类队列没有笔记标题时退回曲目自带的专辑名
-    const album = snap.albumTitle || track.album || '';
+    // 有专辑笔记路径时把它做成 wikilink（专辑名可点击打开笔记）；模板本身不变，链接在调用处拼好
+    const album = albumWikiLink(snap.albumNotePath, snap.albumTitle || track.album || '');
     const line = tf('notice.nowPlayingLine', { album, track: track.title });
     view.editor.replaceSelection(line + '\n');
   }
