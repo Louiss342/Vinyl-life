@@ -1057,6 +1057,7 @@ test('README：整版中英对照 —— 中文在上、英文在下，小节标
       '## 设置',
       '## 安装与开始使用',
       '## 在线音源与数据',
+      '## 开发与构建',
       '## 许可与致谢',
     ],
     '中文区小节清单（中文标题若有改动，这份期望值要同步）'
@@ -1075,6 +1076,7 @@ test('README：整版中英对照 —— 中文在上、英文在下，小节标
       '## Settings',
       '## Installation and getting started',
       '## Online sources and data',
+      '## Development',
       '## License and acknowledgements',
     ],
     '英文区小节清单（顺序与中文区一一对应）'

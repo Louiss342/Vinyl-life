@@ -148,6 +148,33 @@ Vinyl Life/
 
 登录凭据、设置和播放统计保存在本机插件目录中。可以在设置里退出账号、清除统计；分享插件文件时，不要附带自己的 Cookie 和登录数据。
 
+## 开发与构建
+
+需要 Node.js 18 或以上版本和 npm。
+
+```bash
+npm install
+npm run build
+npm run typecheck
+npm test
+```
+
+- `npm install`：安装依赖。
+- `npm run build`：构建，产出 `main.js`（插件本体）、`server.js`（本地网关，独立调试用）和 `src/core/gateway-bundle.ts`（构建生成物，勿手改）。
+- `npm run typecheck`：类型检查。它依赖 build 先生成 `src/core/gateway-bundle.ts`，两步顺序不能反。
+- `npm test`：跑测试，200 多项，纯 Node 环境，不需要 Obsidian。
+
+源码目录结构：
+
+- `src/core`：专辑索引、队列、播放引擎、本地源、网关管理与登录。
+- `src/views`：专辑墙、播放器与各类弹窗。
+- `src/animation`：交接动效。
+- `server/`：本地网关源码，构建时内联进 `main.js`。
+
+本地调试时，把 `main.js`、`manifest.json` 和 `styles.css` 放进 `<vault>/.obsidian/plugins/vinyl-life/`，重新加载 Obsidian 即可。
+
+发布时推送 tag，GitHub Actions 会自动构建并创建 Release，附上 `main.js`、`manifest.json` 和 `styles.css`。
+
 ## 许可与致谢
 
 [MIT](LICENSE) © 2026 Louiss342
@@ -289,6 +316,33 @@ NetEase Cloud Music and QQ Music are reached through unofficial APIs, and the pl
 The plugin collects no telemetry and uploads no playback statistics. Online features connect to the login, music, and image services of the music platform you choose, and the local gateway only listens on `127.0.0.1`. When a note uses a remote cover, the corresponding image URL is fetched as well.
 
 Login credentials, settings, and playback statistics are stored in the plugin folder on your own machine. You can sign out and clear the statistics in the settings; when you share plugin files, do not include your own cookies and login data.
+
+## Development
+
+Requires Node.js 18 or later and npm.
+
+```bash
+npm install
+npm run build
+npm run typecheck
+npm test
+```
+
+- `npm install`: install dependencies.
+- `npm run build`: build, producing `main.js` (the plugin itself), `server.js` (the local gateway, for standalone debugging), and `src/core/gateway-bundle.ts` (a generated file — do not edit it by hand).
+- `npm run typecheck`: type-check. It depends on `npm run build` having generated `src/core/gateway-bundle.ts` first, so the order cannot be reversed.
+- `npm test`: run the tests — 200+ of them, in plain Node, with no Obsidian required.
+
+Source layout:
+
+- `src/core`: album index, queue, playback engine, local source, gateway management, and sign-in.
+- `src/views`: album shelf, player, and the various modals.
+- `src/animation`: handoff animation.
+- `server/`: the local gateway source, inlined into `main.js` at build time.
+
+To debug locally, put `main.js`, `manifest.json`, and `styles.css` into `<vault>/.obsidian/plugins/vinyl-life/` and reload Obsidian.
+
+To release, push a tag: GitHub Actions builds the plugin and creates a Release automatically, with `main.js`, `manifest.json`, and `styles.css` attached.
 
 ## License and acknowledgements
 
