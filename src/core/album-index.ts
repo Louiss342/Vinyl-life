@@ -95,18 +95,79 @@ export function resolveCover(
 }
 
 // 主解析（同步，走 metadataCache）
-export function getAlbumInfo(app: App, file: TFile): AlbumInfo | null {
+export function getAlbumInfo(app: App, file: TFile, opts?: AlbumInfoOpts): AlbumInfo | null {
   const fm = app.metadataCache.getFileCache(file)?.frontmatter;
   if (!fm || !hasAlbumTag(fm)) return null;
-  return buildAlbumInfo(app, file, fm);
+  return buildAlbumInfo(app, file, fm, opts);
 }
 
-export function buildAlbumInfo(app: App, file: TFile, fm: any): AlbumInfo {
+export interface AlbumInfoOpts {
+  /** 封面目录（设置项）：用于自动识别「covers/<专辑名>.jpg」这类约定图片 */
+  coverFolder?: string;
+}
+
+// 约定封面文件名：放进专辑音频文件夹即被自动采用
+export const CONVENTION_COVER_NAMES = ['cover', 'folder', 'front'];
+const COVER_IMAGE_EXTS = ['jpg', 'jpeg', 'png', 'webp'];
+
+/**
+ * 自动识别封面（读时解析，不写笔记——放上文件就生效）：
+ *   ① 专辑音频文件夹内的 cover / folder / front / <专辑名>.<图片>
+ *   ② 封面目录下与专辑同名的图片（与「导入专辑」下载封面的命名一致）
+ */
+export function findConventionCover(
+  app: App,
+  file: TFile,
+  audioFolderRef: string | undefined,
+  coverFolder: string | undefined
+): TFile | null {
+  const tryFile = (p: string): TFile | null => {
+    const hit = app.vault.getAbstractFileByPath(p);
+    return hit instanceof TFile ? hit : null;
+  };
+  const title = file.basename;
+  // ① 音频文件夹（外链绝对路径不查：那是库外目录，交给 fs 的场景不在本模块）
+  const ref = String(audioFolderRef || '').trim();
+  const folder =
+    ref && !/^[a-zA-Z]:[\\/]/.test(ref) ? stripWikilink(ref).replace(/\/+$/, '') : '';
+  if (folder) {
+    for (const base of [...CONVENTION_COVER_NAMES, title]) {
+      for (const ext of COVER_IMAGE_EXTS) {
+        const hit = tryFile(normalizePath(`${folder}/${base}.${ext}`));
+        if (hit) return hit;
+      }
+    }
+  }
+  // ② 封面目录（同名优先）
+  if (coverFolder) {
+    for (const base of [title, ...CONVENTION_COVER_NAMES]) {
+      for (const ext of COVER_IMAGE_EXTS) {
+        const hit = tryFile(normalizePath(`${coverFolder}/${base}.${ext}`));
+        if (hit) return hit;
+      }
+    }
+  }
+  return null;
+}
+
+export function buildAlbumInfo(
+  app: App,
+  file: TFile,
+  fm: any,
+  opts?: AlbumInfoOpts
+): AlbumInfo {
   const source: AlbumSourcePref =
     fm.source === 'local' || fm.source === 'netease' || fm.source === 'qq'
       ? fm.source
       : 'auto';
   const coverRaw = fm.cover != null ? String(fm.cover) : undefined;
+  const audioFolderRef = fm.audioFolder != null ? String(fm.audioFolder) : undefined;
+  // 显式 cover 优先；没写封面时按约定自动认一个（不写回笔记）
+  let cover = resolveCover(app, coverRaw, file.path);
+  if (!cover) {
+    const auto = findConventionCover(app, file, audioFolderRef, opts?.coverFolder);
+    if (auto) cover = app.vault.getResourcePath(auto);
+  }
   return {
     file,
     path: file.path,
@@ -116,10 +177,10 @@ export function buildAlbumInfo(app: App, file: TFile, fm: any): AlbumInfo {
     genre: fm.genre != null ? String(fm.genre) : undefined,
     rating: fm.rating,
     coverRaw,
-    cover: resolveCover(app, coverRaw, file.path),
+    cover,
     neteaseId: parseNeteaseId(fm),
     qqId: parseQqAlbumMid(fm),
-    audioFolderRef: fm.audioFolder != null ? String(fm.audioFolder) : undefined,
+    audioFolderRef,
     audioRefs: Array.isArray(fm.audio)
       ? fm.audio.map(String)
       : fm.audio != null

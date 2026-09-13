@@ -22,6 +22,7 @@ import {
   toggleShelfProp,
 } from '../core/shelf-props';
 import { notice, isAudioFile } from '../util';
+import { SetCoverModal } from './set-cover-modal';
 
 export const SHELF_VIEW_TYPE = 'vinyl-shelf';
 
@@ -157,7 +158,9 @@ export class VinylShelfView extends ItemView {
 
   private loadEntries() {
     this.entries = findAlbumNotes(this.plugin.app)
-      .map((f) => getAlbumInfo(this.plugin.app, f))
+      .map((f) =>
+        getAlbumInfo(this.plugin.app, f, { coverFolder: this.plugin.settings.coverFolder })
+      )
       .filter((a): a is AlbumInfo => !!a)
       .map((album) => {
         const src = detectAlbumSources(this.plugin.app, album);
@@ -714,6 +717,12 @@ export class VinylShelfView extends ItemView {
         .setTitle('导入本地音频…')
         .setIcon('upload')
         .onClick(() => this.plugin.openLocalImport(album))
+    );
+    menu.addItem((it) =>
+      it
+        .setTitle('设置封面…')
+        .setIcon('image')
+        .onClick(() => new SetCoverModal(this.plugin.app, this.plugin, album).open())
     );
     if (album.neteaseId) {
       menu.addItem((it) =>

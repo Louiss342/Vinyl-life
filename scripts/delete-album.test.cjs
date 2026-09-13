@@ -178,6 +178,51 @@ test('安全：文件夹内混有非音频文件 → 只删音频、文件夹保
   assert.deepEqual(Array.from(t.sharedAudioPaths), []);
 });
 
+test('封面自动识别：音频文件夹内的约定图 / 封面目录同名图；显式 cover 优先', () => {
+  const h = setup();
+  // ① 音频文件夹里的 cover.jpg
+  const inside = h.addFile('Vinyl Life/audio/A/cover.jpg', {});
+  const noteA = h.addFile('Vinyl Life/Vinyl Note/A.md', {
+    tags: ['album'],
+    audioFolder: '[[Vinyl Life/audio/A]]',
+  });
+  assert.equal(
+    h.mod.buildAlbumInfo(h.app, noteA, noteA.fm, { coverFolder: 'Vinyl Life/covers' }).cover,
+    'app://local/' + inside.path,
+    '音频文件夹内的 cover.jpg 自动生效'
+  );
+
+  // ② 显式 cover 优先于约定图
+  const explicit = h.addFile('Vinyl Life/covers/explicit.jpg', {});
+  const noteB = h.addFile('Vinyl Life/Vinyl Note/B.md', {
+    tags: ['album'],
+    cover: '[[explicit.jpg]]',
+    audioFolder: '[[Vinyl Life/audio/A]]',
+  });
+  assert.equal(
+    h.mod.buildAlbumInfo(h.app, noteB, noteB.fm, { coverFolder: 'Vinyl Life/covers' }).cover,
+    'app://local/' + explicit.path,
+    'frontmatter 写了 cover 就不走自动识别'
+  );
+
+  // ③ 封面目录下与专辑同名的图片
+  const sameName = h.addFile('Vinyl Life/covers/C.jpg', {});
+  const noteC = h.addFile('Vinyl Life/Vinyl Note/C.md', { tags: ['album'] });
+  assert.equal(
+    h.mod.buildAlbumInfo(h.app, noteC, noteC.fm, { coverFolder: 'Vinyl Life/covers' }).cover,
+    'app://local/' + sameName.path,
+    'covers/ 下同名图片自动生效'
+  );
+
+  // ④ 什么都没有 → 无封面（卡片回落到 ♪ 占位）
+  const noteD = h.addFile('Vinyl Life/Vinyl Note/D.md', { tags: ['album'] });
+  assert.equal(
+    h.mod.buildAlbumInfo(h.app, noteD, noteD.fm, { coverFolder: 'Vinyl Life/covers' }).cover,
+    undefined,
+    '没有约定图时保持无封面'
+  );
+});
+
 test('保护：其他专辑引用同一文件夹 / 封面 → 不进可删列表', () => {
   const h = setup();
   const note = seedAlbumA(h);

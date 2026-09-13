@@ -307,7 +307,7 @@ export default class VinylLifePlugin extends Plugin {
 
   openLocalImport(presetAlbum?: AlbumInfo) {
     const albums = findAlbumNotes(this.app)
-      .map((f) => getAlbumInfo(this.app, f))
+      .map((f) => getAlbumInfo(this.app, f, { coverFolder: this.settings.coverFolder }))
       .filter((a): a is AlbumInfo => !!a)
       .sort((a, b) => a.title.localeCompare(b.title, 'zh-CN'));
     const snap = this.engine.snapshot();

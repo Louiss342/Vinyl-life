@@ -38,6 +38,13 @@ export function isAudioFile(name: string): boolean {
   return AUDIO_EXTENSIONS.includes(extOf(name));
 }
 
+/** 图片扩展名（封面自动识别 / 选择器过滤用） */
+export const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif', 'bmp'];
+
+export function isImageFile(name: string): boolean {
+  return IMAGE_EXTENSIONS.includes(extOf(name));
+}
+
 /** 拆分拖入 / 选中的文件：受支持的音频 / 因格式不支持而跳过的 */
 export function splitAudioFiles(files: File[]): { audio: File[]; skipped: File[] } {
   const audio: File[] = [];

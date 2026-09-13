@@ -88,6 +88,8 @@ function makeStub() {
           App: class {},
           ItemView,
           Menu: class {},
+          Modal: class {},
+          FuzzySuggestModal: class {},
           Notice: class {},
           Plugin: class {},
           TFile,

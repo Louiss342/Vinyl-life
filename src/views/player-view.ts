@@ -151,7 +151,9 @@ export class VinylPlayerView extends ItemView {
 
   refreshAlbums() {
     this.albums = findAlbumNotes(this.plugin.app)
-      .map((f) => getAlbumInfo(this.plugin.app, f))
+      .map((f) =>
+        getAlbumInfo(this.plugin.app, f, { coverFolder: this.plugin.settings.coverFolder })
+      )
       .filter((a): a is AlbumInfo => !!a)
       .sort((a, b) => a.title.localeCompare(b.title, 'zh-CN'));
   }

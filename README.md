@@ -81,6 +81,22 @@ begins, so the connection between "this note" and "this sound" stays visible.
 Play counts, last-played timestamps and last-played track are stored in the plugin's own
 `data.json`. Nothing is written into your notes, and nothing is sent anywhere.
 
+### Covers
+
+A cover can come from four places, in this order:
+
+1. **Your own image, chosen from the card menu** — right-click a card → *Set cover…* → pick an
+   image already in the vault, or a local image file (copied into the cover folder).
+2. **`cover:` in the note frontmatter** — a vault wikilink (`"[[]]"`), an `https://` URL, or a
+   colour like `#8b5cf6` (rendered as a solid block).
+3. **A conventional file next to the music** — `cover.jpg` / `folder.jpg` / `front.jpg` (also
+   `.jpeg` / `.png` / `.webp`) inside the album's audio folder, or a file named after the album.
+4. **`<album title>.jpg` in the cover folder** — the same naming the online import uses.
+
+Cases 3 and 4 need no action at all: drop the file in and the shelf picks it up on the next
+refresh (nothing is written to your notes). Locally imported albums start with a ♪ placeholder
+until one of these exists.
+
 ### Appearance
 
 Player colour scheme, record colour, turntable speed, album-shelf column count, and more
@@ -268,6 +284,12 @@ pre-releases.
 网易云 / QQ 音乐音源依赖一个本地网关进程。Obsidian 自带的二进制禁用了 `ELECTRON_RUN_AS_NODE`，因此**需要系统安装 Node.js（≥ 18，位于 PATH 或常见安装路径）**。网关源码在构建时内联进 `main.js`，首次使用在线音源时释放到系统临时目录运行。
 
 只用本地音频的话**不需要 Node.js**，插件也不会 spawn 任何进程。
+
+### 封面
+
+封面按以下顺序取用：① 卡片右键「设置封面…」选库内图片或本地图片（本地图片会复制进封面目录）；② 笔记 frontmatter 的 `cover:`（vault 内图片 / `https://` 链接 / 色值如 `#8b5cf6`）；③ **约定文件**——专辑音频文件夹里的 `cover.jpg` / `folder.jpg` / `front.jpg`（也支持 `.jpeg` / `.png` / `.webp`）或与专辑同名的图片；④ 封面目录下与专辑同名的图片（与在线导入的命名一致）。
+
+③④ 两步**零操作**：把图放进去，专辑墙下次刷新就会采用（不写笔记）。刚导入的本地专辑在这之前显示 ♪ 占位。
 
 ### 支持的音频格式
 

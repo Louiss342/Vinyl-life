@@ -1167,6 +1167,31 @@
   border-radius: 6px;
 }
 
+/* 设置封面弹窗 */
+.vinyl-set-cover {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 320px;
+}
+
+.vinyl-cover-preview {
+  width: 160px;
+  height: 160px;
+  margin: 0 auto;
+  overflow: hidden;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vinyl-cover-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 /* 浏览器登录弹窗 */
 .vinyl-web-steps {
   display: flex;
