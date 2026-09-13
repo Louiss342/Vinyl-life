@@ -230,6 +230,16 @@ test('本地导入：不支持的格式 / 已存在 分开计数（不再混为�
   assert.deepEqual(Array.from(res.skippedExisting), ['dup.wav'], '已存在单独成列');
 });
 
+test('从文件新建专辑：可指定专辑名（弹窗「新建专辑」路径）', async () => {
+  const h = setup();
+  const files = [new File(['x'], '01.flac'), new File(['x'], '02.flac')];
+  const album = await h.mod.createAlbumFromFiles(h.ctx, files, 'Abbey Road');
+  assert.equal(album?.title, 'Abbey Road', '专辑名以指定值为准');
+  assert.ok(h.files.has('Vinyl Life/Vinyl Note/Abbey Road.md'), '笔记落在专辑目录下');
+  const again = await h.mod.createAlbumFromFiles(h.ctx, files, 'Abbey Road');
+  assert.equal(again?.title, 'Abbey Road', '同名已存在 → 复用而不是报错');
+});
+
 test('导入专辑：目标目录不存在时自动创建（新装用户回归）', async () => {
   const h = setup();
   h.folders.clear(); // 模拟全新 vault：专辑 / 封面目录都还不存在

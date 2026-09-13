@@ -1122,6 +1122,51 @@
   flex-direction: column;
 }
 
+/* 本地导入：文件优先流程（① 选文件 → ② 目标 → ③ 落库方式） */
+.vinyl-import-section {
+  margin-bottom: 14px;
+}
+
+.vinyl-import-step {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.vinyl-import-choice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+  cursor: pointer;
+}
+
+.vinyl-import-choice.is-disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.vinyl-import-files {
+  margin-top: 6px;
+  word-break: break-all;
+  font-size: 0.9em;
+}
+
+.vinyl-import-status {
+  min-height: 1.4em;
+  margin-top: 8px;
+}
+
+.vinyl-import-album {
+  width: 100%;
+}
+
+/* 拖文件进弹窗时的落点高亮 */
+.vinyl-local-import.is-drop-active {
+  outline: 2px dashed var(--interactive-accent);
+  outline-offset: -8px;
+  border-radius: 6px;
+}
+
 /* 浏览器登录弹窗 */
 .vinyl-web-steps {
   display: flex;

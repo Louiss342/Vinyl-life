@@ -294,11 +294,12 @@ export async function importLocalAudio(
 
 export async function createAlbumFromFiles(
   ctx: ImportContext,
-  files: File[]
+  files: File[],
+  titleOverride?: string
 ): Promise<AlbumInfo | null> {
   const audioFiles = files.filter((f) => isAudioFile(f.name));
   if (!audioFiles.length) return null;
-  const title = baseName(audioFiles[0].name);
+  const title = (titleOverride || '').trim() || baseName(audioFiles[0].name);
   const notePath = normalizePath(
     `${ctx.settings().albumFolder}/${sanitizeFileName(title)}.md`
   );

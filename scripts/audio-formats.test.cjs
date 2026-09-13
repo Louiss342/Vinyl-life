@@ -71,3 +71,27 @@ test('splitAudioFiles / skippedFormatsText：不支持的文件会被明确报�
     '超过 3 个只列前 3 并加「等」'
   );
 });
+
+test('suggestAlbumTitle：同目录多文件 → 目录名；单文件 / 跨目录 → 文件名', () => {
+  const mk = (name, p) => (p ? { name, path: p } : { name });
+  assert.equal(
+    u.suggestAlbumTitle([
+      mk('01.flac', 'D:/Music/Abbey Road/01.flac'),
+      mk('02.flac', 'D:/Music/Abbey Road/02.flac'),
+    ]),
+    'Abbey Road',
+    '一张专辑一个文件夹 → 用目录名'
+  );
+  assert.equal(
+    u.suggestAlbumTitle([mk('song.mp3', 'D:/Music/song.mp3')]),
+    'song',
+    '单文件不用目录名（否则会猜成 Music）'
+  );
+  assert.equal(
+    u.suggestAlbumTitle([mk('a.flac', 'D:/A/a.flac'), mk('b.flac', 'D:/B/b.flac')]),
+    'a',
+    '跨目录 → 首个文件名'
+  );
+  assert.equal(u.suggestAlbumTitle([mk('x.flac')]), 'x', '没有 path 信息也不报错');
+  assert.equal(u.suggestAlbumTitle([mk('cover.jpg', 'D:/A/cover.jpg')]), '', '非音频不参与推断');
+});

@@ -46,6 +46,29 @@ export function splitAudioFiles(files: File[]): { audio: File[]; skipped: File[]
   return { audio, skipped };
 }
 
+/**
+ * 从所选文件推断专辑名：
+ *   多个文件来自同一目录 → 目录名（常见于「一张专辑一个文件夹」）；否则首个文件名。
+ *   单文件不用目录名，避免把 `D:/Music/xx.mp3` 猜成「Music」。
+ */
+export function suggestAlbumTitle(files: File[]): string {
+  const list = files.filter((f) => isAudioFile(f.name));
+  if (!list.length) return '';
+  const dirOf = (f: File): string => {
+    const p = (f as any).path;
+    if (typeof p !== 'string') return '';
+    const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+    return i > 0 ? p.slice(0, i) : '';
+  };
+  const dirs = list.map(dirOf);
+  const first = dirs[0];
+  if (list.length >= 2 && first && dirs.every((d) => d === first)) {
+    const seg = first.split(/[\\/]/).filter(Boolean).pop();
+    if (seg) return seg;
+  }
+  return baseName(list[0].name);
+}
+
 /** 跳过提示文案（最多列 3 个文件名，避免提示过长） */
 export function skippedFormatsText(names: string[]): string {
   const head = names.slice(0, 3).join('、');
