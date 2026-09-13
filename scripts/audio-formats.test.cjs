@@ -131,3 +131,31 @@ test('文件夹分析：根层音频 → 一张专辑；多个子目录 → 判�
   assert.equal(u.relDirOfPath('A/01.flac'), '', '根层文件没有子目录');
   assert.equal(u.relDirOfPath('01.flac'), '', '没有文件夹前缀也不报错');
 });
+
+test('音乐库批量：按一级子文件夹分组 + 拖拽根名识别', () => {
+  const p = (rel) => ({ file: { name: rel.split('/').pop() }, relPath: rel });
+  const items = [
+    p('Music/A/01.flac'),
+    p('Music/A/02.flac'),
+    p('Music/B/01.flac'),
+    p('Music/A/cover.jpg'),
+    p('Music/readme.txt'),
+  ];
+  const cands = u.libraryCandidates(items);
+  assert.deepEqual(Array.from(cands, (c) => c.name), ['A', 'B'], '按子文件夹分组并排序');
+  assert.equal(cands[0].files.length, 2, '非音频不进候选');
+
+  assert.equal(u.droppedRootName([p('Abbey Road/01.flac')]), 'Abbey Road', '拖文件夹 → 根名');
+  assert.equal(u.droppedRootName([p('Abbey Road/CD1/01.flac')]), 'Abbey Road', '嵌套也算同一个根');
+  assert.equal(u.droppedRootName([p('01.flac')]), '', '散选文件没有根文件夹');
+  assert.equal(
+    u.droppedRootName([p('A/01.flac'), p('B/01.flac')]),
+    '',
+    '多个文件夹同时拖入 → 不硬猜'
+  );
+
+  const withProp = { name: 'x.flac' };
+  withProp.relPath = 'Music/A/x.flac';
+  assert.equal(u.relPathOf(withProp), 'Music/A/x.flac', '拖拽注入的 relPath 能被读到');
+  assert.equal(u.relPathOf({ name: 'y.flac' }), '', '没有相对路径时返回空串');
+});

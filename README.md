@@ -72,9 +72,12 @@ begins, so the connection between "this note" and "this sound" stays visible.
 - **Pick or drop a folder** to import a whole album in one go: the folder name becomes the album
   title, every supported audio file inside (including subfolders) is imported, and the subfolder
   layout is kept — `audio/<album>/CD1/01.flac`. Non-audio files (covers, cue sheets, logs) are
-  ignored. If the folder has no audio of its own and contains several *non-disc* subfolders with
-  audio, the plugin assumes you picked a music-library root and asks for a specific album folder
-  instead of merging everything into one album.
+  ignored.
+- Dropping a folder **on the shelf** works too: on a card → into that album, on empty space →
+  a new album named after the folder. (Disc subfolders like `CD1` / `CD2` count as one album.)
+- **Music-library import**: pick a parent folder whose subfolders are individual albums and the
+  dialog lists them as checkable albums — one import creates the whole batch
+  (`Vinyl Life/Vinyl Note/<folder>.md` + `Vinyl Life/audio/<folder>/…`).
 
 ### Notes integration
 

@@ -29,7 +29,16 @@ import { buildAlbumQueue, QueueDeps } from './core/queue';
 import { normalizeShelfProps, normalizeShelfPropLabels } from './core/shelf-props';
 import { DISC_DIRECTIONS, SPIN_SPEEDS } from './core/disc-motion';
 import { normalizeDeckStyle, normalizeRecordColor } from './core/appearance';
-import { notice, pluginAbsPath, ensureFolder, splitAudioFiles, skippedFormatsText } from './util';
+import {
+  notice,
+  pluginAbsPath,
+  ensureFolder,
+  splitAudioFiles,
+  skippedFormatsText,
+  analyzeFolder,
+  relPathOf,
+  libraryRootHint,
+} from './util';
 import {
   ImportContext,
   importNeteaseAlbum,
@@ -319,15 +328,30 @@ export default class VinylLifePlugin extends Plugin {
   }
 
   // 拖拽入库入口（专辑墙调用）：album 为 null 时从文件新建本地专辑
-  async importAudioFromFiles(files: File[], album: AlbumInfo | null) {
+  async importAudioFromFiles(files: File[], album: AlbumInfo | null, rootName = '') {
+    // 拖入的是文件夹 → 按「一张专辑一个文件夹」分析（音乐库根目录会被拦下）
+    const scan = rootName
+      ? analyzeFolder(
+          rootName,
+          files.map((f) => ({ file: f, relPath: relPathOf(f) }))
+        )
+      : null;
+    if (scan?.verdict === 'library') {
+      notice(`${libraryRootHint(scan)}——请用命令「导入本地音频」选择具体的专辑文件夹（可批量勾选）`);
+      return;
+    }
     // 不支持的格式单独提示（此前是静默忽略：拖进来没反应，用户不知道为什么）
-    const { audio: audioFiles, skipped } = splitAudioFiles(files);
-    if (skipped.length) notice(skippedFormatsText(skipped.map((f) => f.name)));
-    if (!audioFiles.length) return;
+    const { audio: pickedAudio, skipped } = splitAudioFiles(files);
+    const audioFiles = scan ? scan.files : pickedAudio;
+    if (!scan && skipped.length) notice(skippedFormatsText(skipped.map((f) => f.name)));
+    if (!audioFiles.length) {
+      if (scan) notice('这个文件夹里没有受支持的音频文件');
+      return;
+    }
     try {
       let target = album;
       if (!target) {
-        target = await createAlbumFromFiles(this.importCtx(), audioFiles);
+        target = await createAlbumFromFiles(this.importCtx(), audioFiles, scan?.rootName);
         if (!target) {
           notice('从文件新建专辑失败');
           return;

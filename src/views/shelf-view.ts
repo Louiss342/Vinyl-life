@@ -21,7 +21,7 @@ import {
   resolveDropIndex,
   toggleShelfProp,
 } from '../core/shelf-props';
-import { notice, isAudioFile } from '../util';
+import { notice, isAudioFile, collectDroppedFiles, droppedRootName } from '../util';
 import { SetCoverModal } from './set-cover-modal';
 
 export const SHELF_VIEW_TYPE = 'vinyl-shelf';
@@ -664,9 +664,15 @@ export class VinylShelfView extends ItemView {
       ev.preventDefault();
       ev.stopPropagation();
       card.removeClass('is-drag-over');
-      const files = this.audioFilesOf(ev);
-      if (!files.length) return;
-      await this.plugin.importAudioFromFiles(files, e.album);
+      if (!ev.dataTransfer) return;
+      // 文件或文件夹都支持：文件夹按「一张专辑一个文件夹」导入到这张专辑
+      const picked = await collectDroppedFiles(ev.dataTransfer);
+      if (!picked.length) return;
+      await this.plugin.importAudioFromFiles(
+        picked.map((p) => p.file),
+        e.album,
+        droppedRootName(picked)
+      );
     });
     return card;
   }
@@ -808,17 +814,23 @@ export class VinylShelfView extends ItemView {
     grid.addEventListener('drop', async (ev) => {
       ev.preventDefault();
       grid.removeClass('is-drag-over');
-      const files = this.audioFilesOf(ev);
-      if (!files.length) return;
-      await this.plugin.importAudioFromFiles(files, null);
+      if (!ev.dataTransfer) return;
+      // 拖到空白处：文件夹按其名字新建专辑
+      const picked = await collectDroppedFiles(ev.dataTransfer);
+      if (!picked.length) return;
+      await this.plugin.importAudioFromFiles(
+        picked.map((p) => p.file),
+        null,
+        droppedRootName(picked)
+      );
     });
   }
 
+  // 音频文件或文件夹都算可接收（目录的 dataTransfer item type 为空）
   private hasAudioFiles(ev: DragEvent): boolean {
+    const items = Array.from(ev.dataTransfer?.items || []);
+    if (items.some((it) => it.kind === 'file' && !it.type)) return true;
     return Array.from(ev.dataTransfer?.files || []).some((f) => isAudioFile(f.name));
   }
 
-  private audioFilesOf(ev: DragEvent): File[] {
-    return Array.from(ev.dataTransfer?.files || []).filter((f) => isAudioFile(f.name));
-  }
 }

@@ -15,8 +15,13 @@ import {
   splitAudioFiles,
   suggestAlbumTitle,
   analyzeFolder,
+  collectDroppedFiles,
+  droppedRootName,
+  libraryCandidates,
+  libraryRootHint,
+  relPathOf,
   FolderScan,
-  PickedAudio,
+  LibraryCandidate,
 } from '../util';
 
 // ============ 专辑导入（网易云 / QQ 音乐） ============
@@ -93,33 +98,6 @@ export class AlbumImportModal extends Modal {
 
 // ============ 本地音频导入 ============
 
-/** 拖入的目录条目递归展开（readEntries 每次最多返回 100 个，必须循环到空） */
-async function readEntry(entry: any, parent: string, out: PickedAudio[]): Promise<void> {
-  const path = parent + entry.name;
-  if (entry.isFile) {
-    const file: File = await new Promise((res, rej) => entry.file(res, rej));
-    try {
-      (file as any).relPath = path; // 供 relDirOf / 子目录保留使用
-    } catch (_) {}
-    out.push({ file, relPath: path });
-    return;
-  }
-  if (!entry.isDirectory) return;
-  const reader = entry.createReader();
-  for (;;) {
-    const batch: any[] = await new Promise((res, rej) => reader.readEntries(res, rej));
-    if (!batch.length) break;
-    for (const child of batch) await readEntry(child, path + '/', out);
-  }
-}
-
-function libraryHint(scan: FolderScan): string {
-  return (
-    `ℹ️「${scan.rootName}」根层没有音频，但有 ${scan.audioSubfolders} 个子文件夹各含音频——` +
-    '看起来是音乐库根目录。文件夹导入一次只建一张专辑，请改选**具体的专辑文件夹**。'
-  );
-}
-
 export class LocalImportModal extends Modal {
   private albums: AlbumInfo[];
   private presetAlbum?: AlbumInfo;
@@ -134,6 +112,8 @@ export class LocalImportModal extends Modal {
   private scan: FolderScan | null = null;
   /** 专辑名被手动改过 → 不再自动覆盖 */
   private nameTouched = false;
+  /** 音乐库模式下的候选专辑（勾选框） */
+  private batchRows: Array<{ cand: LibraryCandidate; cb: HTMLInputElement }> = [];
 
   constructor(app: App, ctx: ImportContext, albums: AlbumInfo[], presetAlbum?: AlbumInfo) {
     super(app);
@@ -197,6 +177,9 @@ export class LocalImportModal extends Modal {
       existRow.addClass('is-disabled');
       existRow.createSpan({ text: '（还没有专辑笔记）', cls: 'vinyl-muted' });
     }
+    // 音乐库模式（识别到多个专辑子目录）时隐藏上面这套单选，改为逐张勾选
+    const targetFormEls = [newRow, nameInput, existRow, sel];
+    const batchHost = targetSec.createDiv({ cls: 'vinyl-import-batch' });
 
     // —— ③ 落库方式 ——
     const modeSec = c.createDiv({ cls: 'vinyl-import-section' });
@@ -257,7 +240,31 @@ export class LocalImportModal extends Modal {
       if (!this.nameTouched && newRadio.checked) {
         nameInput.value = this.rootName || suggestAlbumTitle(this.picked);
       }
-      status.setText(this.scan?.verdict === 'library' ? libraryHint(this.scan) : '');
+      // 音乐库根目录 → 逐张专辑勾选（而不是禁止导入）
+      const isLib = this.scan?.verdict === 'library';
+      for (const el of targetFormEls) el.style.display = isLib ? 'none' : '';
+      batchHost.empty();
+      this.batchRows = [];
+      if (isLib && this.scan) {
+        const cands = libraryCandidates(
+          this.picked.map((f) => ({ file: f, relPath: relPathOf(f) }))
+        );
+        batchHost.createDiv({
+          cls: 'vinyl-import-step',
+          text: `发现 ${cands.length} 张专辑（勾选后逐张建笔记并导入）`,
+        });
+        for (const cand of cands) {
+          const row = batchHost.createEl('label', { cls: 'vinyl-import-choice' });
+          const cb = row.createEl('input', { attr: { type: 'checkbox' } });
+          cb.checked = true;
+          row.createSpan({ text: `${cand.name}（${cand.files.length} 个音频）` });
+          this.batchRows.push({ cand, cb });
+        }
+        btn.setText(`导入 ${cands.length} 张专辑`);
+      } else {
+        btn.setText('开始导入');
+      }
+      status.setText(isLib && this.scan ? libraryRootHint(this.scan) : '');
     };
     const takeFiles = (files: File[], rootName = '') => {
       if (!files.length) return;
@@ -288,26 +295,52 @@ export class LocalImportModal extends Modal {
       c.removeClass('is-drop-active');
       const dt = ev.dataTransfer;
       if (!dt) return;
-      const entries = Array.from(dt.items || [])
-        .map((it) =>
-          typeof (it as any).webkitGetAsEntry === 'function' ? (it as any).webkitGetAsEntry() : null
-        )
-        .filter((e): e is any => !!e);
-      if (entries.length) {
-        const scanned: PickedAudio[] = [];
-        for (const entry of entries) await readEntry(entry, '', scanned);
-        const onlyDir =
-          entries.length === 1 && entries[0].isDirectory ? String(entries[0].name || '') : '';
-        takeFiles(scanned.map((s) => s.file), onlyDir);
-        return;
-      }
-      if (dt.files?.length) takeFiles(Array.from(dt.files));
+      const picked = await collectDroppedFiles(dt);
+      if (picked.length) takeFiles(picked.map((p) => p.file), droppedRootName(picked));
     });
 
     const run = async () => {
       status.setText('');
+      const mode = modeSel.value === 'link' ? 'link' : 'copy';
+      // 音乐库根目录：逐张建专辑导入
       if (this.scan?.verdict === 'library') {
-        status.setText(libraryHint(this.scan));
+        const chosen = this.batchRows.filter((r) => r.cb.checked);
+        if (!chosen.length) {
+          status.setText('请至少勾选一张专辑');
+          return;
+        }
+        btn.disabled = true;
+        let albums = 0;
+        let added = 0;
+        let failed = 0;
+        try {
+          for (let i = 0; i < chosen.length; i++) {
+            const { cand } = chosen[i];
+            status.setText(`正在导入 ${i + 1}/${chosen.length}：${cand.name}…`);
+            try {
+              const album = await createAlbumFromFiles(this.ctx, cand.files, cand.name);
+              if (!album) {
+                failed++;
+                continue;
+              }
+              const res = await importLocalAudio(this.ctx, album, cand.files, mode);
+              albums++;
+              added += res.added.length;
+            } catch (e) {
+              failed++;
+              console.error('[vinyl] 批量导入失败：' + cand.name, e);
+            }
+          }
+          status.setText(
+            `✅ 已导入 ${albums} 张专辑 / ${added} 个音频${
+              failed ? `，${failed} 张失败（见控制台）` : ''
+            }`
+          );
+          notice(status.textContent || '');
+          this.close();
+        } finally {
+          btn.disabled = false;
+        }
         return;
       }
       const picked = splitAudioFiles(this.picked);
@@ -346,7 +379,6 @@ export class LocalImportModal extends Modal {
           status.setText('❌ 创建专辑失败');
           return;
         }
-        const mode = modeSel.value === 'link' ? 'link' : 'copy';
         status.setText(
           `正在导入 ${audio.length} 个文件（${mode === 'copy' ? '复制进 vault' : '外链引用'}）…`
         );

@@ -1160,6 +1160,13 @@
   width: 100%;
 }
 
+/* 音乐库批量导入：候选专辑勾选列表 */
+.vinyl-import-batch {
+  margin-top: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
 /* 拖文件进弹窗时的落点高亮 */
 .vinyl-local-import.is-drop-active {
   outline: 2px dashed var(--interactive-accent);

@@ -74,10 +74,86 @@ export function relDirOfPath(relPath: string): string {
   return segs.length <= 1 ? '' : segs.slice(1, -1).join('/');
 }
 
-/** File → 子目录（选择器读 webkitRelativePath；拖拽读注入的 relPath） */
-export function relDirOf(file: File): string {
+/** File → 相对路径（选择器读 webkitRelativePath；拖拽由扫描器注入 relPath） */
+export function relPathOf(file: File): string {
   const anyFile = file as any;
-  return relDirOfPath(String(anyFile.webkitRelativePath || anyFile.relPath || ''));
+  return String(anyFile.webkitRelativePath || anyFile.relPath || '');
+}
+
+/** File → 子目录（`A/CD1/01.flac` → `CD1`） */
+export function relDirOf(file: File): string {
+  return relDirOfPath(relPathOf(file));
+}
+
+/** 拖拽结果的根文件夹名（≥2 段相对路径的第一段；散选文件为空） */
+export function droppedRootName(picked: PickedAudio[]): string {
+  const roots = new Set<string>();
+  for (const p of picked) {
+    const segs = p.relPath.split('/').filter(Boolean);
+    if (segs.length >= 2) roots.add(segs[0]);
+  }
+  return roots.size === 1 ? [...roots][0] : '';
+}
+
+/** 拖入的目录条目递归展开（readEntries 每次最多 100 条，必须循环到空） */
+async function readEntry(entry: any, parent: string, out: PickedAudio[]): Promise<void> {
+  const path = parent + entry.name;
+  if (entry.isFile) {
+    const file: File = await new Promise((res, rej) => entry.file(res, rej));
+    try {
+      (file as any).relPath = path; // 供 relDirOf / 子目录保留使用
+    } catch (_) {}
+    out.push({ file, relPath: path });
+    return;
+  }
+  if (!entry.isDirectory) return;
+  const reader = entry.createReader();
+  for (;;) {
+    const batch: any[] = await new Promise((res, rej) => reader.readEntries(res, rej));
+    if (!batch.length) break;
+    for (const child of batch) await readEntry(child, path + '/', out);
+  }
+}
+
+/** DataTransfer → 展开后的文件（文件夹递归；拿不到 entry 时退回普通文件列表） */
+export async function collectDroppedFiles(dt: DataTransfer): Promise<PickedAudio[]> {
+  const entries = Array.from(dt.items || [])
+    .map((it) =>
+      typeof (it as any).webkitGetAsEntry === 'function' ? (it as any).webkitGetAsEntry() : null
+    )
+    .filter((e): e is any => !!e);
+  if (entries.length) {
+    const out: PickedAudio[] = [];
+    for (const entry of entries) await readEntry(entry, '', out);
+    return out;
+  }
+  return Array.from(dt.files || []).map((file) => ({ file, relPath: '' }));
+}
+
+export interface LibraryCandidate {
+  name: string;
+  files: File[];
+}
+
+/** 音乐库根目录 → 按一级子文件夹分组成「每张专辑一批」 */
+export function libraryCandidates(items: PickedAudio[]): LibraryCandidate[] {
+  const map = new Map<string, File[]>();
+  for (const it of items) {
+    if (!isAudioFile(it.file.name)) continue;
+    const top = relDirOfPath(it.relPath).split('/')[0];
+    if (!top) continue;
+    const list = map.get(top) || [];
+    list.push(it.file);
+    map.set(top, list);
+  }
+  return [...map.entries()]
+    .map(([name, files]) => ({ name, files }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+}
+
+/** 音乐库根目录提示（弹窗与专辑墙共用同一句判定说明） */
+export function libraryRootHint(scan: FolderScan): string {
+  return `「${scan.rootName}」根层没有音频，但有 ${scan.audioSubfolders} 个子文件夹各含音频——看起来是音乐库根目录`;
 }
 
 /** 碟号子目录（CD1 / Disc 2 / Vol.3 …）：属于同一张专辑 */
