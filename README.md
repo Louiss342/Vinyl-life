@@ -12,6 +12,10 @@ Put the needle down, and for a second there is only that crackle — like beans 
 
 Music and notes may have a natural affinity for each other.
 
+[中文](#中文) | [English](#english)
+
+## 中文
+
 Vinyl Life 把专辑笔记展示成一张张唱片，配有黑胶唱机样式的播放器。可以听电脑里的音乐，也可以接入自己的网易云音乐或 QQ 音乐账号。每张唱片对应一篇普通的 Markdown 笔记，用来记专辑资料、评分，或某次听歌时想到的事。
 
 支持 Obsidian 1.4.0 及以上版本，仅限桌面端。界面可切换中文和 English。
@@ -149,3 +153,145 @@ Vinyl Life/
 [MIT](LICENSE) © 2026 Louiss342
 
 本地网关使用了 [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi) 的部分接口模块，原项目采用 MIT 许可。
+
+---
+
+## English
+
+Vinyl Life presents album notes as records on a shelf, with a turntable-style player. You can listen to music on your computer, or connect your own NetEase Cloud Music or QQ Music account. Each record is an ordinary Markdown note, for album details, ratings, or whatever you happened to think about while listening.
+
+Requires Obsidian 1.4.0 or later, desktop only. The interface can be switched between Chinese and English.
+
+## Album shelf
+
+Albums are laid out as cover cards. Hover over one and the record slides out of its sleeve; click an album that has audio and the record animates from the shelf to the turntable. The album that is playing is highlighted on the shelf.
+
+The toolbar at the top lets you:
+
+- Search by album name, artist, or genre.
+- Sort by title, year, rating, play count, or recently played.
+- Filter by local, NetEase, or QQ Music, as well as collected albums that have no audio.
+- Choose which note properties the cards show, drag to reorder them, and rename how a property is displayed.
+- Import an album link or local audio.
+
+Right-clicking a card lets you open the note, add audio, change the cover, or open the matching page on the music platform. Albums with no audio can sit on the shelf too; clicking them opens the note directly, which suits collecting information and writing reviews.
+
+## Vinyl player
+
+The player has a spinning record and a tonearm that moves with the playback state, and it can live in the sidebar, in a main-area tab, or in a window of its own.
+
+The controls you reach for most sit below the turntable: play and pause, previous and next track, scrubbing, and volume. The track list lets you click a song to play it, or drag to change the playing order. Each album remembers its own ordering and keeps using it the next time you open it; for online albums you can also restore the platform's original track order.
+
+The player shows the current source, and for online playback the quality tier as well. Whether playback starts automatically after an album loads can be changed in the settings.
+
+## Importing music
+
+### Local audio
+
+You can pick files, pick a folder, or simply drag them into the import window. When importing, you can create a new album or add tracks to an existing one.
+
+There are two ways to store the files:
+
+| Method | When it fits |
+| --- | --- |
+| Copy into the vault | When you want the audio to sit alongside the notes and be managed with the vault. |
+| Reference the original files | When your music is already organized on your computer or a drive and you would rather not make a second copy. The plugin only records the absolute path, and the original files need to stay where they are. |
+
+When you import a whole album, the folder name is carried over and subdirectories such as `CD1` and `CD2` are preserved. If you pick a music library folder that holds several albums, you can tick the albums you want and create the notes in bulk.
+
+You can also drag files straight onto the album shelf: drop them on an existing card to add audio to that album, or on empty space to create a new album.
+
+The file extensions you can import are `mp3`, `flac`, `m4a`, `m4b`, `mp4`, `wav`, `ogg`, `oga`, `opus`, `aac`, `webm`, and `weba`; whether a file actually plays depends on its encoding and on Obsidian's built-in decoders. Other formats are skipped with a notice. Local tracks use the file name as their title; audio tags such as ID3 are not read yet.
+
+### NetEase Cloud Music and QQ Music
+
+Paste an album link or ID and the plugin fetches the album information, creates a note, and downloads the cover. After that you can open it from the album shelf and play it.
+
+Sign in to your own account on the Sources settings page. Scanning a QR code, opening the official login page, and entering cookies by hand are all supported. For QQ, the QR code shown inside the plugin has to be scanned with mobile QQ; you can also choose browser login and finish signing in on the official page.
+
+Online sources require Node.js 18 or later installed on your computer. On first use the plugin starts a local gateway; if you only listen to local files, no extra Node.js installation is needed.
+
+## Album notes and listening log
+
+Behind every album is a note. You can add text, images, wikilinks, and custom properties as usual.
+
+An existing note is recognized by the album shelf as long as you add the `album` tag to its frontmatter. For example, with the album name as the file name, write:
+
+```yaml
+---
+tags: [album]
+artist: 艺术家
+year: 2024
+genre: Jazz
+rating: 4
+cover: "[[Vinyl Life/covers/专辑封面.jpg]]"
+---
+```
+
+Just point the cover path at your own image. Having no audio yet is fine — you can import audio later from the card's right-click menu.
+
+There are two ways to write things down while listening:
+
+- **Into the album note**: click the pencil button in the player to append the time and the current track name to the end of that album's note, then open the note and carry on writing.
+- **Into the current note**: run the Insert the currently playing track command to insert the current album and track at the cursor; the album name links back to its note. Handy for leaving a line while you are writing your journal, too.
+
+Local imports support a custom album note template. Choose a Markdown file in the settings, or generate a template first and then edit it. The template can use `{{title}}`, `{{audioFolder}}`, `{{date}}`, and `{{time}}`, which are filled in with the album name, the audio folder, the date, and the time.
+
+## Covers and album organization
+
+Right-click an album and choose Set cover to use an image from the vault, or pick an image from your computer and copy it into the cover folder. The `cover` property in a note also accepts image links, remote image URLs, and solid color values.
+
+For audio inside the vault, you can also put `cover.jpg`, `folder.jpg`, or `front.jpg` into the album's audio folder; an image in the cover folder with the same name as the album note is picked up automatically as well. When no cover is found, a music-note placeholder is shown.
+
+Deleting an album brings up a confirmation window where you can choose whether to delete the in-vault audio and covers along with it. Files referenced by other albums are kept, and original audio outside the vault is never deleted. How in-vault files are deleted follows Obsidian's Deleted files setting.
+
+## Playback statistics
+
+The General settings show the cumulative play count, the albums you played recently, and the albums you played most. The recent list includes the last track played and the time it was played, and you can clear the statistics from here as well.
+
+Statistics are stored in the plugin's own data file; play records are never added to your album notes automatically.
+
+## Settings
+
+The settings page is split into four tabs:
+
+| Tab | What you can adjust |
+| --- | --- |
+| General | Interface language, album and cover folders, the local note template, the default source, online audio quality, autoplay, player position, and playback statistics. |
+| Appearance | How many albums per row on the shelf, which way records slide out, record color, turntable color scheme, and platter animation speed. |
+| Sources | NetEase and QQ Music sign-in, the local audio folder, the default import method, and the status of the online source runtime. |
+| About | Version, the author's note, the project URL, and license information. |
+
+The turntable comes in walnut and vinyl black, and records come in black, yellow, blue, and white. The shelf can lay itself out to fit the window width, or be pinned to 2–7 per row; records can slide out upwards, downwards, leftwards, or rightwards.
+
+The default file locations are as follows, and all of them can be changed to suit your own habits:
+
+```text
+Vinyl Life/
+├── Vinyl Note/    专辑笔记
+├── covers/        封面图片
+└── audio/         复制进库的音频
+```
+
+## Installation and getting started
+
+1. Download `main.js`, `manifest.json`, and `styles.css` from [GitHub Releases](https://github.com/Louiss342/Vinyl-life/releases).
+2. Put them into your vault's `.obsidian/plugins/vinyl-life/` folder.
+3. Reload Obsidian and enable Vinyl Life under Settings → Community plugins.
+4. Search for Vinyl Life in the command palette, open the album shelf, and import an album.
+
+If you plan to use NetEase Cloud Music or QQ Music, install Node.js first, restart Obsidian, and then sign in to your account on the plugin's Sources settings page.
+
+## Online sources and data
+
+NetEase Cloud Music and QQ Music are reached through unofficial APIs, and the plugin is not affiliated with NetEase or Tencent. What you can play and at what quality is limited by your account's permissions and by the state of the platforms' APIs; paid or membership restrictions are not bypassed. Using these APIs may fall under the platforms' terms of service.
+
+The plugin collects no telemetry and uploads no playback statistics. Online features connect to the login, music, and image services of the music platform you choose, and the local gateway only listens on `127.0.0.1`. When a note uses a remote cover, the corresponding image URL is fetched as well.
+
+Login credentials, settings, and playback statistics are stored in the plugin folder on your own machine. You can sign out and clear the statistics in the settings; when you share plugin files, do not include your own cookies and login data.
+
+## License and acknowledgements
+
+[MIT](LICENSE) © 2026 Louiss342
+
+The local gateway uses some API modules from [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi), which is released under the MIT license.

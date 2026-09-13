@@ -1006,3 +1006,83 @@ test('README：开头的中文手记下方跟着同一份英译（不加标题�
     '中文手记与英译之间只隔一个空行'
   );
 });
+
+// ============ README：中文整版在上、英文整版在下，两份小节一一对应 ============
+// 局限（写在断言旁边，免得把它当成了「翻译质量检查」）：
+//   标题对等 != 内容逐段对等 —— 标题都在，只能说明没有整节漏掉；
+//   长度下限也只挡得住「只翻了几行」，挡不住把长段落写成一句摘要、跳过表格某一行、
+//   或者把代码块注释漏掉。真要判断有没有缩水，仍得中英两栏人工对着读一遍。
+test('README：整版中英对照 —— 中文在上、英文在下，小节标题一一对应', () => {
+  // 归一化 CRLF：仓库开着 autocrlf，换台机器检出后 README 可能带 \r，\n 硬匹配会误红
+  const readme = fs.readFileSync(path.join(__dirname, '../README.md'), 'utf8').replace(/\r\n/g, '\n');
+
+  // 1) 两个语言标记各自独立成行：中文区在前，英文区在后
+  const zhMark = readme.indexOf('\n## 中文\n');
+  const enMark = readme.indexOf('\n## English\n');
+  assert.ok(zhMark >= 0, 'README 缺「## 中文」标记（中文整版要收在它下面）');
+  assert.ok(enMark >= 0, 'README 缺「## English」标记（英文整版要收在它下面）');
+  assert.ok(zhMark < enMark, '中文整版在上、英文整版在下（顺序不许倒）');
+
+  const zhBody = readme.slice(zhMark, enMark);
+  const enBody = readme.slice(enMark);
+
+  // 2) 切出各区里的 ## / ### 标题（语言标记自己不算小节）
+  const headingsOf = (text) =>
+    text
+      .split('\n')
+      .filter((line) => /^#{2,3} \S/.test(line))
+      .map((line) => line.trim());
+  const zhHeads = headingsOf(zhBody).filter((h) => h !== '## 中文');
+  const enHeads = headingsOf(enBody).filter((h) => h !== '## English');
+
+  assert.ok(zhHeads.length >= 12, `探针：中文区只切出 ${zhHeads.length} 个标题，切分逻辑可能已失效`);
+  assert.equal(enHeads.length, zhHeads.length, '英文区小节数量必须与中文区相等（不许整节漏译）');
+  // 层级也要对得上：## 与 ### 各自数量相等（英文区不该整体降一级或多一级）
+  const isSub = (h) => h.startsWith('### ');
+  assert.equal(enHeads.filter(isSub).length, zhHeads.filter(isSub).length, '### 子节数量相等');
+  assert.equal(enHeads.filter((h) => !isSub(h)).length, zhHeads.filter((h) => !isSub(h)).length, '## 节数量相等');
+
+  // 3) 顺序一一对应：两份标题按顺序抄死，插节 / 挪节 / 改标题都会红
+  assert.deepEqual(
+    zhHeads,
+    [
+      '## 专辑墙',
+      '## 黑胶播放器',
+      '## 导入音乐',
+      '### 本地音频',
+      '### 网易云音乐和 QQ 音乐',
+      '## 专辑笔记与听歌记录',
+      '## 封面与专辑整理',
+      '## 播放统计',
+      '## 设置',
+      '## 安装与开始使用',
+      '## 在线音源与数据',
+      '## 许可与致谢',
+    ],
+    '中文区小节清单（中文标题若有改动，这份期望值要同步）'
+  );
+  assert.deepEqual(
+    enHeads,
+    [
+      '## Album shelf',
+      '## Vinyl player',
+      '## Importing music',
+      '### Local audio',
+      '### NetEase Cloud Music and QQ Music',
+      '## Album notes and listening log',
+      '## Covers and album organization',
+      '## Playback statistics',
+      '## Settings',
+      '## Installation and getting started',
+      '## Online sources and data',
+      '## License and acknowledgements',
+    ],
+    '英文区小节清单（顺序与中文区一一对应）'
+  );
+
+  // 4) 英文区不能是「翻了两行就收工」：长度下限（英文按字符数本就比中文长，60% 是很松的下限）
+  assert.ok(
+    enBody.trim().length > zhBody.trim().length * 0.6,
+    `英文区明显偏短（${enBody.trim().length} vs 中文 ${zhBody.trim().length}）—— 疑似只译了开头`
+  );
+});
