@@ -1,327 +1,145 @@
 # Vinyl Life
 
-[![CI](https://github.com/Louiss342/Vinyl-life/actions/workflows/ci.yml/badge.svg)](https://github.com/Louiss342/Vinyl-life/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![Obsidian](https://img.shields.io/badge/Obsidian-1.4.0%2B-7c3aed)
+一首歌值得被写下来。
 
-Turn your album notes into a **vinyl wall with a turntable player**. Vinyl Life reads the
-album notes already in your vault, renders them as a shelf of records, and plays them —
-from your own audio files, or from your own NetEase Cloud Music / QQ Music account.
+把唱针轻轻搭上，那一秒爆豆子似的静电声。它出现在哪一年、哪个城市、哪一场雨；它陪过你熬过哪一夜；它让你想起谁。这些不该沉在记忆里，也不该变成一个社交平台上的动态。它应该是你自己的一页纸，私人，安静，可以一直放在那儿。
 
-> **Read this first.** Vinyl Life uses **unofficial** NetEase Cloud Music and QQ Music
-> endpoints for sign-in and for resolving stream URLs. This may violate those platforms'
-> terms of service. It is intended for personal use with your own account, it does not
-> bypass paid or membership-only restrictions, and it is not affiliated with Tencent or
-> NetEase. See [Compliance](#compliance).
+音乐和笔记也许本身有着天然的亲和力。
 
-## Overview
+Vinyl Life 把专辑笔记展示成一张张唱片，配有黑胶唱机样式的播放器。可以听电脑里的音乐，也可以接入自己的网易云音乐或 QQ 音乐账号。每张唱片对应一篇普通的 Markdown 笔记，用来记专辑资料、评分，或某次听歌时想到的事。
 
-Vinyl Life is a desktop-only Obsidian plugin (plugin id `vinyl-life`, `isDesktopOnly: true`).
-It adds two custom views:
+支持 Obsidian 1.4.0 及以上版本，仅限桌面端。界面可切换中文和 English。
 
-- **Album shelf** — a hand-drawn card grid of every album note in your vault.
-- **Turntable player** — a record-spinning player that can live in the sidebar, in a main-area
-  tab, or in its own pop-out window.
+## 专辑墙
 
-Pressing a record on the shelf detaches it from the wall, carries it to the platter, and starts
-playback — the *handoff* animation is the plugin's signature interaction.
+专辑以封面卡片排列。鼠标移上去，唱片会从封套里露出来；点击有音源的专辑，会出现唱片从墙上移到唱机的动画。正在播放的专辑会在墙上高亮。
 
-## Music sources
+顶部工具栏可以：
 
-Each user signs in with **their own** account. The plugin ships no author credentials, no shared
-tokens, and no author-operated backend: requests go from your machine to the provider, or through
-the local gateway process described below.
+- 按专辑名、艺术家或流派搜索。
+- 按标题、年份、评分、播放次数或最近播放排序。
+- 筛选本地、网易云、QQ 音乐，以及没有音源的收藏专辑。
+- 选择卡片显示哪些笔记属性，拖动调整顺序，也可以修改属性的显示名称。
+- 导入专辑链接或本地音频。
 
-| Source | Setup | Notes |
-| --- | --- | --- |
-| **Local audio** | None | Files inside the vault, or absolute paths outside the vault. No backend process, works fully offline. |
-| **NetEase Cloud Music** | QR code login · browser login on the official page · paste Cookie manually | Requires Node.js (see below). |
-| **QQ Music** | QR code login · browser login on the official page · paste Cookie manually | Requires Node.js (see below). |
+右键卡片可以打开笔记、补充音频、更换封面，或打开对应的音乐平台页面。没有音源的专辑也能放在墙上，点击会直接打开笔记，适合只收藏资料和写乐评。
 
-Browser login opens the provider's own login page in an Electron window (QR code or
-username/password both work there). The session lives in a plugin-scoped partition and only the
-resulting credentials are kept — see [Privacy and network access](#privacy-and-network-access).
+## 黑胶播放器
 
-## Features
+播放器有转动的唱片和随播放状态移动的唱臂，可以放在侧栏、主区标签页，也可以单独开一个窗口。
 
-### Album shelf
+常用操作都在唱机下方：播放与暂停、上一首与下一首、进度拖动、音量调整。曲目列表可以直接点歌，也可以拖动改变播放顺序。每张专辑会记住自己的排序，下次打开时继续使用；在线专辑还可以恢复平台原有的曲目顺序。
 
-- Custom-rendered view: card grid over the album notes found in your vault.
-- Vinyl pop-out hover animation, with the direction configurable (left / right).
-- Source badge per card (local / NetEase / QQ) and a highlight on the album currently playing.
-- Toolbar with search, sort, filter, card-property selection and import.
+播放器会显示当前音源，在线播放时还会显示音质档位。是否在载入专辑后自动播放，可以在设置中调整。
 
-### Player
+## 导入音乐
 
-- Turntable visual with a spinning record and a tonearm that moves between rest and play positions.
-- Queue, seek/progress and volume controls.
-- Dockable: sidebar, main-area tab, or a standalone pop-out window.
-- Track list per album, with a "append a thought" action on the current track (see below).
+### 本地音频
 
-### Handoff animation
+可以选择文件、选择文件夹，或直接把它们拖进导入窗口。导入时可以新建专辑，也可以给已有专辑添加曲目。
 
-Clicking a record on the shelf animates it off the wall and onto the platter before playback
-begins, so the connection between "this note" and "this sound" stays visible.
+有两种存放方式：
 
-### Import
-
-- Paste a NetEase Cloud Music or QQ Music album link (or ID) to create an album note with the
-  right frontmatter, then download the cover through the local gateway (avoids CORS).
-- Drag local audio files in, in one of two modes: **copy into the vault**, or **link by reference**
-  to a path outside the vault.
-- **Pick or drop a folder** to import a whole album in one go: the folder name becomes the album
-  title, every supported audio file inside (including subfolders) is imported, and the subfolder
-  layout is kept — `audio/<album>/CD1/01.flac`. Non-audio files (covers, cue sheets, logs) are
-  ignored.
-- Dropping a folder **on the shelf** works too: on a card → into that album, on empty space →
-  a new album named after the folder. (Disc subfolders like `CD1` / `CD2` count as one album.)
-- **Music-library import**: pick a parent folder whose subfolders are individual albums and the
-  dialog lists them as checkable albums — one import creates the whole batch
-  (`Vinyl Life/Vinyl Note/<folder>.md` + `Vinyl Life/audio/<folder>/…`).
-
-### Notes integration
-
-- **Thoughts on playback** — while a record is playing, append a timestamped entry to that album's
-  note with a single command, with the cursor placed on the new line.
-- Playback never edits your notes on its own; only this explicit action writes to them.
-
-### Playback statistics
-
-Play counts, last-played timestamps and last-played track are stored in the plugin's own
-`data.json`. Nothing is written into your notes, and nothing is sent anywhere.
-
-### Covers
-
-A cover can come from four places, in this order:
-
-1. **Your own image, chosen from the card menu** — right-click a card → *Set cover…* → pick an
-   image already in the vault, or a local image file (copied into the cover folder).
-2. **`cover:` in the note frontmatter** — a vault wikilink (`"[[]]"`), an `https://` URL, or a
-   colour like `#8b5cf6` (rendered as a solid block).
-3. **A conventional file next to the music** — `cover.jpg` / `folder.jpg` / `front.jpg` (also
-   `.jpeg` / `.png` / `.webp`) inside the album's audio folder, or a file named after the album.
-4. **`<album title>.jpg` in the cover folder** — the same naming the online import uses.
-
-Cases 3 and 4 need no action at all: drop the file in and the shelf picks it up on the next
-refresh (nothing is written to your notes). Locally imported albums start with a ♪ placeholder
-until one of these exists.
-
-### Appearance
-
-Player colour scheme, record colour, turntable speed, album-shelf column count, and more
-(default source, streaming quality, autoplay, album/cover/audio folders) in the settings tab.
-
-## Installation
-
-### From the community plugin directory
-
-Once the plugin is listed, search for **Vinyl Life** in *Settings → Community plugins → Browse*
-and install it.
-
-### Manually
-
-1. Download `main.js`, `manifest.json` and `styles.css` from the
-   [latest release](https://github.com/Louiss342/Vinyl-life/releases).
-2. Put them in `<your vault>/.obsidian/plugins/vinyl-life/`.
-3. Reload Obsidian and enable **Vinyl Life** in *Settings → Community plugins*.
-
-## Requirements
-
-| | |
+| 方式 | 适合的情况 |
 | --- | --- |
-| Obsidian | 1.4.0 or newer |
-| Platform | Desktop only (Windows / macOS / Linux). Not available on mobile. |
-| Node.js | **Optional.** Required only for the NetEase Cloud Music and QQ Music sources. Version 18 or newer. |
+| 复制进笔记库 | 希望音频和笔记放在一起，随笔记库管理。 |
+| 引用原文件 | 音乐已经整理在电脑或硬盘上，不想再复制一份。插件只记录绝对路径，原文件需要留在该位置。 |
 
-### Why Node.js is needed
+导入整张专辑时，会沿用文件夹名称，并保留 `CD1`、`CD2` 等子目录结构。如果选择的是包含多张专辑的音乐库目录，可以勾选要导入的专辑，批量创建笔记。
 
-The online sources talk to a small local gateway process that runs on `127.0.0.1`. The Obsidian
-binary disables `ELECTRON_RUN_AS_NODE`, so the plugin cannot reuse Obsidian's bundled Node — it
-needs a system Node.js installation, either on `PATH` or in one of the usual install locations
-(e.g. `C:\Program Files\nodejs\node.exe`, `%LOCALAPPDATA%\Programs\nodejs\node.exe`).
+也可以直接拖到专辑墙上：放在已有卡片上，就是给这张专辑添加音频；放在空白处，则新建专辑。
 
-- The gateway source is **inlined inside `main.js`** at build time and released to the system temp
-  directory the first time you use an online source. No extra files are downloaded.
-- If you only use local audio, **you do not need Node.js** and the plugin spawns no process at all.
-- If Node.js is missing, the plugin says so explicitly in its settings tab, where you can
-  re-detect it after installing Node.js and restarting Obsidian.
+可导入的文件扩展名包括 `mp3`、`flac`、`m4a`、`m4b`、`mp4`、`wav`、`ogg`、`oga`、`opus`、`aac`、`webm` 和 `weba`，实际能否播放取决于文件编码及 Obsidian 内置的解码器。其他格式会跳过并提示。本地曲目以文件名作为标题，尚不读取 ID3 等音频标签。
 
-### Supported audio formats
+### 网易云音乐和 QQ 音乐
 
-Playback is handed to Chromium's built-in decoders — the plugin does not decode audio itself.
-These containers work: `mp3`, `m4a` / `m4b` / `mp4` (AAC · ALAC), `wav`, `ogg` / `oga` (Vorbis),
-`opus`, `aac` (ADTS), `webm` / `weba`.
+粘贴专辑链接或 ID，插件会获取专辑资料、创建笔记并下载封面。之后可以从专辑墙打开播放。
 
-Anything else (`ape`, `wma`, `dsf`, `dff`, `tak`, `aiff`, …) is skipped on import — you get a
-notice naming the skipped files, so convert those to `flac` or `mp3` first. The same list applies to
-vault-internal files and to external-path (link) mode.
+在设置的「源」页面登录自己的账号。支持扫码、打开官方登录页面，以及手动填写 Cookie。QQ 的插件内二维码需要用手机 QQ 扫描；也可以选择浏览器登录，在官方页面完成登录。
 
-## Privacy and network access
+在线音源需要电脑安装 Node.js 18 或以上版本。首次使用时，插件会启动本机网关；只听本地文件不需要额外安装 Node.js。
 
-- **No telemetry. No analytics. No usage reporting.** Nothing is sent to the author or to any
-  third party other than the providers you sign in to.
-- The local gateway binds to `127.0.0.1` on an idle port and is only reachable from your machine.
+## 专辑笔记与听歌记录
 
-Domains contacted, and why:
+每张专辑背后都是一篇笔记。你可以照常添加文字、图片、双链和自定义属性。
 
-| Domain | Purpose |
-| --- | --- |
-| `music.163.com` | NetEase Cloud Music web login page and web API |
-| `interface.music.163.com` | NetEase Cloud Music eapi (album metadata, stream URLs) |
-| `y.qq.com` | QQ Music album pages and login |
-| `c.y.qq.com`, `u.y.qq.com` | QQ Music API |
-| `ssl.ptlogin2.qq.com`, `xui.ptlogin2.qq.com` | QQ Music login |
-| `graph.qq.com` | QQ account profile |
-| `y.gtimg.cn` | QQ Music cover CDN |
-| `aqqmusic.tc.qq.com` | QQ Music audio CDN (stream URL host) |
-| `127.0.0.1:<port>` | The plugin's local gateway process |
+已有笔记只要在顶部属性中加入 `album` 标签，就可以被专辑墙识别。例如，以专辑名作为文件名，写入：
 
-What is stored on disk, and where — everything lives in the plugin folder
-(`<vault>/.obsidian/plugins/vinyl-life/`) and **never in your notes**:
-
-| File | Contents |
-| --- | --- |
-| `.cookie` | NetEase Cloud Music login Cookie |
-| `.qq-cookie` | QQ Music login Cookie |
-| `.anon-token` | NetEase anonymous device token |
-| `.device-id` | Device identifier sent with NetEase requests |
-| `.qq-guid` | QQ Music device GUID |
-| `data.json` | Plugin settings and playback statistics |
-| `gateway.log` | Diagnostic log from the gateway process (contains no Cookie values) |
-| `.gateway.pid` | PID of the running gateway process, used to clean up stale processes |
-
-You can clear your credentials at any time with **Log out** in the plugin settings.
-
-## Compliance
-
-This section is deliberately blunt — please read it before using the online sources.
-
-- Some QQ Music and NetEase Cloud Music interfaces used by this plugin are **not public APIs**.
-  The plugin implements login and stream-URL resolution through **unofficial** interfaces, which
-  **may violate the terms of service of those platforms**.
-- Use it only for normal, personal use under **your own account**, and evaluate the risk yourself.
-- This plugin is **not affiliated with, endorsed by, or connected to Tencent or NetEase**.
-- It does **not** bypass payment or membership restrictions. Tracks that require a VIP membership
-  or a purchased album still require that entitlement — the plugin only plays what your own
-  account is already allowed to play.
-- The author provides no warranty and accepts no liability for account restrictions or any other
-  consequences of use.
-
-## Known limitations
-
-Not implemented yet (planned):
-
-- Lyrics display.
-- A mini player in the status bar.
-- ID3 / audio tag parsing for local files.
-
-## Migrating from Vinyl Note (v0.6.0)
-
-As of v0.6.0 the plugin was renamed from **Vinyl Note** to **Vinyl Life**:
-
-- The plugin id changed from `vinyl-note` to `vinyl-life`. Your settings move with the plugin
-  folder, but make sure the folder itself is named `vinyl-life` after upgrading.
-- The browser-login session partition changed, so **you will need to sign in once more** to
-  NetEase Cloud Music and/or QQ Music.
-- If you used the earlier bases-based setup, you can now delete or disable `Music.base`, the
-  Bases card view, and the `music-vinyl-shelf.css` CSS snippet — the plugin ships the same
-  visuals on its own.
-- The default folders are now `Vinyl Life/{audio, covers, Vinyl Note}` and are created
-  automatically on first run. Existing folder settings are left untouched.
-
-## Development
-
-```bash
-npm install
-npm run build      # esbuild → main.js (+ src/core/gateway-bundle.ts and server.js)
-npm run typecheck  # tsc --noEmit  — run the build first, it generates a file typecheck needs
-npm test           # node:test suite, 130+ cases, no Obsidian runtime required
-npm run version-bump
+```yaml
+---
+tags: [album]
+artist: 艺术家
+year: 2024
+genre: Jazz
+rating: 4
+cover: "[[Vinyl Life/covers/专辑封面.jpg]]"
+---
 ```
 
-The test suite runs on plain Node.js (`node:test`) together with esbuild — no Obsidian
-installation or test vault is needed.
+封面路径换成自己的图片即可。暂时没有音源也没关系，以后可以从卡片右键菜单导入音频。
 
-### Architecture
+听歌时有两种记录方式：
 
-| Path | Responsibility |
+- **写到专辑笔记里**：点击播放器的铅笔按钮，在这张专辑的笔记末尾追加时间和当前曲名，然后打开笔记继续写。
+- **写到当前笔记里**：执行「插入此刻正在听」命令，在光标位置插入当前专辑和曲目，专辑名会链接回对应笔记。写日记时也可以随手留下一行。
+
+本地导入支持自定义专辑笔记模板。在设置里选择一篇 Markdown 文件，或先生成模板再修改。模板可使用 `{{title}}`、`{{audioFolder}}`、`{{date}}`、`{{time}}`，分别填入专辑名、音频目录、日期和时间。
+
+## 封面与专辑整理
+
+右键专辑，选择「设置封面」，可以使用库里的图片，也可以从电脑上选择图片并复制到封面目录。笔记中的 `cover` 属性也支持图片链接、网络图片地址和纯色色值。
+
+对于库内音频，还可以把 `cover.jpg`、`folder.jpg` 或 `front.jpg` 放进专辑的音频文件夹；在封面目录放入与专辑笔记同名的图片，也能自动识别。没有找到封面时，会显示音符占位。
+
+删除专辑前会弹出确认窗口，可以选择是否一并删除库内音频和封面。被其他专辑引用的文件会保留，库外的原始音频不会被删除。库内文件的删除方式遵循 Obsidian 的「已删除文件」设置。
+
+## 播放统计
+
+在「通用」设置里可以查看累计播放次数、最近听过的专辑和播放最多的专辑。最近播放记录包含上次播放的曲目和时间，也可以从这里清除统计。
+
+统计保存在插件自己的数据文件中，不会自动往专辑笔记里添加播放记录。
+
+## 设置
+
+设置页分为四个板块：
+
+| 板块 | 可以调整的内容 |
 | --- | --- |
-| `src/core/` | Album index, queue, playback engine, local source, gateway management, authentication |
-| `src/views/` | Album shelf, player, and modals (import, QR login, web login, statistics, delete) |
-| `src/animation/` | The record handoff animation |
-| `server/` | Gateway source; bundled and inlined into `main.js` at build time |
-| `scripts/` | `node:test` suites |
+| 通用 | 界面语言、专辑和封面目录、本地笔记模板、默认音源、在线音质、自动播放、播放器位置，以及播放统计。 |
+| 外观 | 专辑墙每行数量、唱片弹出方向、唱片颜色、唱机配色和转盘动画速度。 |
+| 源 | 网易云与 QQ 音乐登录、本地音频目录、默认导入方式，以及在线音源运行状态。 |
+| 关于 | 版本、作者手记、项目地址和许可信息。 |
 
-The build produces `main.js` (the only file the community directory installs) plus
-`src/core/gateway-bundle.ts`, a generated module holding the gateway source as a string.
-Both `main.js` and the generated module are gitignored.
+唱机有胡桃木和黑胶黑两种配色，唱片可选黑、黄、蓝、白。专辑墙可以按窗口宽度自动排版，也可以固定为每行 2—7 张；唱片弹出方向可选上、下、左、右。
 
-### Releasing
+默认文件位置如下，均可按自己的习惯修改：
 
-Bump `version` in `manifest.json`, run `npm run version-bump`, commit, then push a tag matching
-the version. The release workflow builds the plugin and attaches `main.js`, `manifest.json` and
-`styles.css` to a GitHub release. Tags containing `-` (e.g. `0.7.0-beta.1`) are marked as
-pre-releases.
+```text
+Vinyl Life/
+├── Vinyl Note/    专辑笔记
+├── covers/        封面图片
+└── audio/         复制进库的音频
+```
 
-## Credits
+## 安装与开始使用
 
-- The local gateway reuses a small number of endpoint modules from
-  [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi) (MIT).
+1. 从 [GitHub Releases](https://github.com/Louiss342/Vinyl-life/releases) 下载 `main.js`、`manifest.json` 和 `styles.css`。
+2. 放进笔记库的 `.obsidian/plugins/vinyl-life/` 文件夹。
+3. 重新加载 Obsidian，在「设置 → 第三方插件」中启用 Vinyl Life。
+4. 在命令面板中搜索 Vinyl Life，打开专辑墙，导入一张专辑。
 
-## License
+如果准备使用网易云或 QQ 音乐，先安装 Node.js，重启 Obsidian 后到插件的「源」设置页登录账号。
+
+## 在线音源与数据
+
+网易云和 QQ 音乐通过非官方接口接入，插件与网易、腾讯没有关联。播放范围和音质受账号权限及平台接口状态限制，不绕过付费或会员限制；使用这些接口可能涉及平台的服务条款。
+
+插件不收集遥测或上传播放统计。在线功能会连接所选音乐平台的登录、音乐与图片服务，本机网关只监听 `127.0.0.1`。笔记中使用网络封面时，也会访问对应的图片地址。
+
+登录凭据、设置和播放统计保存在本机插件目录中。可以在设置里退出账号、清除统计；分享插件文件时，不要附带自己的 Cookie 和登录数据。
+
+## 许可与致谢
 
 [MIT](LICENSE) © 2026 Louiss342
 
----
-
-## 中文说明
-
-**Vinyl Life** 把 Obsidian 里的专辑笔记变成「专辑墙 + 黑胶唱机播放器」。仅支持桌面端。
-
-**三个音源**（都使用**你自己的**账号登录，插件不携带任何作者凭据）：
-
-- **本地音频** —— vault 内文件或库外绝对路径，无后端、可离线播放。
-- **网易云音乐** —— 扫码登录 / 官方登录页浏览器登录 / 手动粘贴 Cookie。
-- **QQ 音乐** —— 扫码登录 / 官方登录页浏览器登录 / 手动粘贴 Cookie。
-
-**主要功能**：专辑墙（卡片网格、黑胶弹出动效、音源角标、播放高亮、搜索/排序/筛选/卡片属性/导入工具栏）；播放器（黑胶转盘、唱臂姿态、队列、进度、音量，可停靠侧栏、主区或独立弹出窗口）；黑胶交接动效；专辑链接一键建笔记并代理下载封面，本地音频拖拽入库（复制进 vault 或外链引用；**选/拖一个文件夹即整张专辑导入**，按文件夹名建专辑并保留子目录结构 `audio/<专辑>/CD1/01.flac`）；播放中一键在专辑笔记追加时间戳感想；播放统计写入插件 `data.json`（不写笔记）；播放器配色、唱片颜色、转速、专辑墙列数等外观设置。
-
-### 需要 Node.js
-
-网易云 / QQ 音乐音源依赖一个本地网关进程。Obsidian 自带的二进制禁用了 `ELECTRON_RUN_AS_NODE`，因此**需要系统安装 Node.js（≥ 18，位于 PATH 或常见安装路径）**。网关源码在构建时内联进 `main.js`，首次使用在线音源时释放到系统临时目录运行。
-
-只用本地音频的话**不需要 Node.js**，插件也不会 spawn 任何进程。
-
-### 封面
-
-封面按以下顺序取用：① 卡片右键「设置封面…」选库内图片或本地图片（本地图片会复制进封面目录）；② 笔记 frontmatter 的 `cover:`（vault 内图片 / `https://` 链接 / 色值如 `#8b5cf6`）；③ **约定文件**——专辑音频文件夹里的 `cover.jpg` / `folder.jpg` / `front.jpg`（也支持 `.jpeg` / `.png` / `.webp`）或与专辑同名的图片；④ 封面目录下与专辑同名的图片（与在线导入的命名一致）。
-
-③④ 两步**零操作**：把图放进去，专辑墙下次刷新就会采用（不写笔记）。刚导入的本地专辑在这之前显示 ♪ 占位。
-
-### 支持的音频格式
-
-播放交给 Chromium 内置解码器（插件自身不解码）。可用容器：`mp3`、`m4a` / `m4b` / `mp4`（AAC · ALAC）、`wav`、`ogg` / `oga`（Vorbis）、`opus`、`aac`（ADTS）、`webm` / `weba`。
-
-其余格式（`ape`、`wma`、`dsf`、`dff`、`tak`、`aiff` 等）导入时会被跳过并提示文件名，需先转成 `flac` / `mp3`。vault 内文件与外链模式共用同一份列表。
-
-### 隐私与网络
-
-无遥测、无统计上报。访问的域：`music.163.com`、`interface.music.163.com`（网易云）、`y.qq.com`、`c.y.qq.com`、`u.y.qq.com`、`ptlogin2.qq.com` 等 QQ 音乐登录与 CDN 域名。本地网关只监听 `127.0.0.1`。
-
-凭据与数据全部存放在插件目录内（**不写入笔记**）：`.cookie`、`.qq-cookie`、`.anon-token`、`.device-id`、`.qq-guid`、`data.json`（设置与播放统计）、`gateway.log`（诊断日志，不含 Cookie 值）。可在设置里「退出登录」清除凭据。
-
-### 合规声明
-
-QQ 音乐与网易云的部分接口**并非公开 API**，插件通过**非官方接口**实现登录与取链，**可能违反相应平台的服务条款**；仅供个人在自己账号下正常使用，请自行评估风险。插件与腾讯、网易**无任何关联**，也**不绕过付费 / 会员限制** —— VIP 专享曲目仍需相应会员权益。
-
-### 已知限制
-
-歌词、状态栏迷你控制、ID3 标签解析尚未实现（规划中）。
-
-### 从 Vinyl Note 迁移
-
-v0.6.0 起由 "Vinyl Note" 更名为 "Vinyl Life"（插件 id 由 `vinyl-note` → `vinyl-life`，设置随插件目录迁移）。浏览器登录会话分区已更换，升级后需**重新登录一次**。旧版 `Music.base` + Bases 卡片视图 + `music-vinyl-shelf.css` 片段可删除 / 停用（插件自带同款视觉）。默认目录改为 `Vinyl Life/{audio, covers, Vinyl Note}`，首次运行自动创建；已有设置不受影响。
-
-### 许可
-
-MIT，详见 [LICENSE](LICENSE)。
+本地网关使用了 [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi) 的部分接口模块，原项目采用 MIT 许可。
