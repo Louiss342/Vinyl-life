@@ -1,0 +1,30 @@
+# 依赖
+node_modules/
+
+# 构建产物（发布走 Release 附件，不入库）
+main.js
+main.js.map
+server.js
+server.js.map
+src/core/gateway-bundle.ts
+
+# 凭据与运行时状态（绝不入库）
+.cookie
+.anon-token
+.qq-cookie
+.qq-guid
+.device-id
+# 插件设置与播放统计（含用户自己的目录配置与专辑播放记录，属个人数据）
+data.json
+
+# 网关日志与临时文件
+gateway.log
+.gateway.pid
+qr-login-tmp*.png
+qr-802-debug.json
+tmp/
+*.log
+
+# 系统与编辑器
+.DS_Store
+.obsidian/

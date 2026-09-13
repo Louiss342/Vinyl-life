@@ -1,0 +1,317 @@
+// 专辑导入回归：esbuild 编译真实 src/import.ts 后在 vm 执行（stub obsidian + 假 vault），
+// 覆盖「导入专辑」双来源：链接识别 / 派发 / 建笔记字段 / 查重 / 失败不落笔记。
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const path = require('node:path');
+const vm = require('node:vm');
+const esbuild = require('esbuild');
+
+const source = esbuild.buildSync({
+  entryPoints: [path.join(__dirname, '../src/import.ts')],
+  bundle: true,
+  write: false,
+  format: 'cjs',
+  platform: 'node',
+  external: ['obsidian'],
+}).outputFiles[0].text;
+
+const NETEASE_URL = 'https://music.163.com/#/album?id=437968';
+const QQ_MID = '004VSvF52mQoQp';
+const QQ_URL = `https://y.qq.com/n/ryqq/albumDetail/${QQ_MID}`;
+
+// —— 极简 frontmatter 读取（只取本用例关心的键）——
+function readFm(content) {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(String(content || ''));
+  if (!m) return {};
+  const fm = {};
+  for (const line of m[1].split(/\r?\n/)) {
+    const kv = /^([A-Za-z_][A-Za-z0-9_-]*):\s*(.*)$/.exec(line);
+    if (!kv) continue;
+    const v = kv[2].trim();
+    if (v.startsWith('[')) {
+      fm[kv[1]] = v
+        .slice(1, -1)
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    } else {
+      fm[kv[1]] = v.replace(/^"|"$/g, '');
+    }
+  }
+  return fm;
+}
+
+class TFile {
+  constructor(p, content) {
+    this.path = p;
+    // 与 Obsidian TFile 一致：basename 无扩展名（查重提示文案依赖它）
+    this.basename = p.split('/').pop().replace(/\.md$/, '');
+    this._content = content;
+  }
+}
+
+function setup() {
+  const files = new Map();
+  const binaries = new Map();
+  const calls = { qqAlbum: [], neteaseAlbum: [], covers: [] };
+
+  // 目录单独登记（不混进 getMarkdownFiles），模拟 Obsidian「createFolder 逐级建目录」
+  const folders = new Set();
+  // 与 Obsidian 一致：父目录不存在时 vault.create / createBinary 直接抛错
+  const assertParent = (p) => {
+    const i = String(p).lastIndexOf('/');
+    if (i > 0 && !folders.has(String(p).slice(0, i))) {
+      throw new Error(`ENOENT: 父目录不存在 ${p}`);
+    }
+  };
+  const vault = {
+    getAbstractFileByPath: (p) =>
+      files.get(p) || (folders.has(p) ? { path: p, children: [] } : null),
+    getMarkdownFiles: () => [...files.values()],
+    createFolder: async (p) => {
+      let cur = '';
+      for (const part of String(p).split('/')) {
+        cur = cur ? `${cur}/${part}` : part;
+        folders.add(cur);
+      }
+      return { path: p, children: [] };
+    },
+    create: async (p, content) => {
+      assertParent(p);
+      const f = new TFile(p, content);
+      files.set(p, f);
+      return f;
+    },
+    createBinary: async (p, ab) => {
+      assertParent(p);
+      binaries.set(p, ab);
+      files.set(p, new TFile(p, null));
+      return files.get(p);
+    },
+  };
+  const app = {
+    vault,
+    metadataCache: {
+      getFileCache: (f) => {
+        const fm = readFm(f._content);
+        return Object.keys(fm).length ? { frontmatter: fm } : null;
+      },
+    },
+  };
+
+  const module = { exports: {} };
+  vm.runInNewContext(source, {
+    module,
+    exports: module.exports,
+    require: (name) => {
+      if (name === 'obsidian') {
+        return {
+          App: class {},
+          TFile,
+          TFolder: class {},
+          normalizePath: (p) => p,
+          Notice: class {},
+          Plugin: class {},
+          Modal: class {},
+        };
+      }
+      return require(name);
+    },
+    console,
+    Buffer,
+    URL,
+    fetch: async () => {
+      throw new Error('unexpected network call in test');
+    },
+  });
+  const mod = module.exports;
+
+  const neteaseAlbum = {
+    code: 200,
+    album: {
+      name: 'Abbey Road (Remastered)',
+      artist: { name: 'The Beatles' },
+      publishTime: 1442188800000,
+      picUrl: 'https://p1.music.126.net/cover.jpg',
+    },
+    songs: [{}, {}],
+  };
+  const qqAlbum = {
+    code: 0,
+    data: {
+      album: {
+        mid: QQ_MID,
+        name: '未完成',
+        artist: '孙燕姿',
+        coverUrl: `https://y.gtimg.cn/music/photo_new/T002R300x300M000${QQ_MID}.jpg`,
+        publishTime: '2002-05-01',
+        trackCount: 11,
+      },
+      songs: [],
+    },
+  };
+
+  const ctx = {
+    app,
+    settings: () => ({ albumFolder: '06-专辑墙/专辑', coverFolder: '06-专辑墙/covers' }),
+    client: {
+      album: async (id) => {
+        calls.neteaseAlbum.push(id);
+        return neteaseAlbum;
+      },
+      fetchCover: async (url) => {
+        calls.covers.push(url);
+        return new ArrayBuffer(8);
+      },
+    },
+    qq: {
+      album: async (mid) => {
+        calls.qqAlbum.push(mid);
+        return qqAlbum;
+      },
+    },
+  };
+
+  return { mod, ctx, files, folders, binaries, calls, app };
+}
+
+// ============ 链接识别 ============
+
+test('parseAlbumInput：网易云链接 / 纯数字 ID', () => {
+  const h = setup();
+  assert.deepEqual({ ...h.mod.parseAlbumInput(NETEASE_URL) }, { source: 'netease', id: 437968 });
+  assert.deepEqual({ ...h.mod.parseAlbumInput('437968') }, { source: 'netease', id: 437968 });
+  assert.deepEqual({ ...h.mod.parseAlbumInput('  437968  ') }, { source: 'netease', id: 437968 });
+});
+
+test('parseAlbumInput：QQ 音乐 新版 / 旧版 / 纯 mid', () => {
+  const h = setup();
+  assert.deepEqual({ ...h.mod.parseAlbumInput(QQ_URL) }, { source: 'qq', mid: QQ_MID });
+  assert.deepEqual(
+    { ...h.mod.parseAlbumInput(`https://y.qq.com/n/ryqq/album/${QQ_MID}.html`) },
+    { source: 'qq', mid: QQ_MID }
+  );
+  assert.deepEqual({ ...h.mod.parseAlbumInput(QQ_MID) }, { source: 'qq', mid: QQ_MID });
+});
+
+test('parseAlbumInput：无法识别时返回 undefined', () => {
+  const h = setup();
+  for (const bad of ['', '   ', '随便一句话', 'https://example.com/song/123']) {
+    assert.equal(h.mod.parseAlbumInput(bad), undefined, `不应识别：${bad}`);
+  }
+});
+
+// ============ 派发与建笔记 ============
+
+test('导入专辑：目标目录不存在时自动创建（新装用户回归）', async () => {
+  const h = setup();
+  h.folders.clear(); // 模拟全新 vault：专辑 / 封面目录都还不存在
+  const res = await h.mod.importAlbum(h.ctx, NETEASE_URL);
+  assert.equal(res.ok, true, res.detail);
+  assert.ok(h.folders.has('06-专辑墙/专辑'), '应自动创建专辑目录');
+  assert.ok(h.folders.has('06-专辑墙/covers'), '应自动创建封面目录');
+  assert.ok(h.files.has('06-专辑墙/专辑/Abbey Road (Remastered).md'), '应建立专辑笔记');
+});
+
+test('导入专辑：网易云链接 → 走网易云，字段与既有行为一致（回归）', async () => {
+  const h = setup();
+  const res = await h.mod.importAlbum(h.ctx, NETEASE_URL);
+  assert.equal(res.ok, true, res.detail);
+  assert.deepEqual(h.calls.neteaseAlbum, [437968]);
+  assert.equal(h.calls.qqAlbum.length, 0, '不得误走 QQ 接口');
+  const note = h.files.get('06-专辑墙/专辑/Abbey Road (Remastered).md');
+  assert.ok(note, '应建立专辑笔记');
+  assert.match(note._content, /tags: \[album\]/);
+  assert.match(note._content, /neteaseId: 437968/);
+  assert.match(note._content, /netease: "https:\/\/music\.163\.com\/#\/album\?id=437968"/);
+  assert.doesNotMatch(note._content, /qqId:/, '网易云导入不得写入 qqId');
+  assert.match(note._content, /cover: "\[\[06-专辑墙\/covers\/Abbey Road \(Remastered\)\.jpg\]\]"/);
+  assert.ok(h.binaries.has('06-专辑墙/covers/Abbey Road (Remastered).jpg'));
+});
+
+test('导入专辑：QQ 音乐链接 → 走 QQ，写出 qqId / qq 链接 / 封面（无 netease 字段）', async () => {
+  const h = setup();
+  const res = await h.mod.importAlbum(h.ctx, QQ_URL);
+  assert.equal(res.ok, true, res.detail);
+  assert.deepEqual(h.calls.qqAlbum, [QQ_MID]);
+  assert.equal(h.calls.neteaseAlbum.length, 0, '不得误走网易云接口');
+  const note = h.files.get('06-专辑墙/专辑/未完成.md');
+  assert.ok(note, '应建立专辑笔记');
+  assert.match(note._content, /tags: \[album\]/);
+  assert.match(note._content, new RegExp(`qqId: ${QQ_MID}`));
+  assert.match(note._content, new RegExp(`qq: "https://y\\.qq\\.com/n/ryqq/albumDetail/${QQ_MID}"`));
+  assert.match(note._content, /artist: "孙燕姿"/);
+  assert.match(note._content, /year: 2002/, 'QQ 的 aDate 应转成 4 位年份');
+  assert.doesNotMatch(note._content, /neteaseId:/, 'QQ 导入不得写入 neteaseId');
+  assert.ok(h.binaries.has('06-专辑墙/covers/未完成.jpg'), '封面应落盘');
+  assert.match(res.detail, /11 曲/);
+});
+
+test('导入专辑：纯 mid / 旧版链接同样可导入', async () => {
+  const h1 = setup();
+  assert.equal((await h1.mod.importAlbum(h1.ctx, QQ_MID)).ok, true);
+  const h2 = setup();
+  assert.equal(
+    (await h2.mod.importAlbum(h2.ctx, `https://y.qq.com/n/ryqq/album/${QQ_MID}.html`)).ok,
+    true
+  );
+});
+
+// ============ 查重 ============
+
+test('导入专辑：已存在同 qqId 的笔记 → 指路而不新建', async () => {
+  const h = setup();
+  h.files.set(
+    '06-专辑墙/专辑/未完成.md',
+    new TFile('06-专辑墙/专辑/未完成.md', `---\ntags: [album]\nqqId: ${QQ_MID}\n---\n`)
+  );
+  const res = await h.mod.importAlbum(h.ctx, QQ_URL);
+  assert.equal(res.ok, false);
+  assert.match(res.detail, /已存在「未完成」/, '提示里应带既有笔记标题');
+  assert.equal(res.file?.path, '06-专辑墙/专辑/未完成.md');
+  assert.equal(h.calls.qqAlbum.length, 0, '查重命中不应再打接口');
+});
+
+test('导入专辑：已存在同 neteaseId 的笔记 → 指路而不新建（回归）', async () => {
+  const h = setup();
+  h.files.set(
+    '06-专辑墙/专辑/Abbey Road (Remastered).md',
+    new TFile('06-专辑墙/专辑/Abbey Road (Remastered).md', '---\ntags: [album]\nneteaseId: 437968\n---\n')
+  );
+  const res = await h.mod.importAlbum(h.ctx, NETEASE_URL);
+  assert.equal(res.ok, false);
+  assert.match(res.detail, /已存在/);
+});
+
+// ============ 失败路径 ============
+
+test('导入专辑：无法识别的链接 → 提示两种来源，不建笔记', async () => {
+  const h = setup();
+  const res = await h.mod.importAlbum(h.ctx, 'https://example.com/whatever');
+  assert.equal(res.ok, false);
+  assert.match(res.detail, /网易云/);
+  assert.match(res.detail, /QQ 音乐/);
+  assert.equal(h.files.size, 0);
+  assert.equal(h.calls.qqAlbum.length + h.calls.neteaseAlbum.length, 0);
+});
+
+test('导入专辑：QQ 专辑无效（1101）→ 友好失败且不建笔记', async () => {
+  const h = setup();
+  h.ctx.qq.album = async () => ({ code: 1101, msg: '专辑不存在或 albummid 无效', data: { album: null, songs: [] } });
+  const res = await h.mod.importAlbum(h.ctx, QQ_URL);
+  assert.equal(res.ok, false);
+  assert.match(res.detail, /专辑不存在/);
+  assert.doesNotMatch(res.detail, /albummid index|TypeError/, '不得泄漏上游术语');
+  assert.equal(h.files.size, 0);
+});
+
+test('导入专辑：接口抛错 → 中文失败信息，不建笔记', async () => {
+  const h = setup();
+  h.ctx.qq.album = async () => {
+    throw new Error('网关未就绪');
+  };
+  const res = await h.mod.importAlbum(h.ctx, QQ_URL);
+  assert.equal(res.ok, false);
+  assert.match(res.detail, /获取专辑失败/);
+  assert.equal(h.files.size, 0);
+});

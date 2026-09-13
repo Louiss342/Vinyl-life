@@ -1,0 +1,1248 @@
+/* Vinyl Note — 样式
+ * 专辑墙（M2 视觉对齐黑胶 CSS 片段） + 黑胶转盘播放器（M3，v0.3.1 唱机质感）
+ * + 登录弹窗 + 设置面板
+ */
+
+/* ============ 通用 ============ */
+
+.vinyl-muted {
+  color: var(--text-muted);
+  font-size: 0.9em;
+}
+
+.vinyl-error {
+  color: var(--text-error);
+  font-size: 0.9em;
+}
+
+.vinyl-badge {
+  font-size: 0.72em;
+  padding: 1px 6px;
+  border-radius: 8px;
+  flex: none;
+}
+
+.vinyl-badge.is-local {
+  background: var(--color-green-2);
+  color: var(--color-green-7);
+}
+
+.vinyl-badge.is-net {
+  background: var(--color-orange-2);
+  color: var(--color-orange-7);
+}
+
+/* QQ 音乐：青色（避开已有绿色「本地」） */
+.vinyl-badge.is-qq {
+  background: var(--color-cyan-2);
+  color: var(--color-cyan-7);
+}
+
+.vinyl-badge.is-collect {
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+}
+
+/* ============ 唱片配色（设置 → 外观 → 黑胶唱片） ============ */
+/* 盘面基色 / 纹路亮色 / 标签色 / 外缘阴影 / 极细描边（白胶靠它不与浅背景糊在一起）。
+ * 卡片（.vinyl-shelf-disc）与播放器转盘（.vinyl-turntable-vinyl）共用这一组变量，
+ * 颜色只在这里定义一处，两处渲染都读它。默认 = 经典黑胶 + 红标。 */
+.vinyl-shelf,
+.vinyl-player {
+  --vinyl-record-base: #111112;
+  --vinyl-record-groove: #26262c;
+  --vinyl-record-label: #ff4757;
+  --vinyl-record-edge: rgba(0, 0, 0, 0.55);
+  --vinyl-record-hairline: rgba(255, 255, 255, 0.07);
+}
+
+/* 黄胶：不透明姜黄（黄 + 黑标是彩胶最经典的搭配） */
+.vinyl-shelf.is-record-yellow,
+.vinyl-player.is-record-yellow {
+  --vinyl-record-base: #d9a91c;
+  --vinyl-record-groove: #f2cd52;
+  --vinyl-record-label: #1c1a17;
+  --vinyl-record-edge: rgba(60, 38, 0, 0.5);
+  --vinyl-record-hairline: rgba(90, 60, 0, 0.35);
+}
+
+/* 蓝胶：不透明钴蓝（沿用红标，蓝盘红标是 60 年代经典） */
+.vinyl-shelf.is-record-blue,
+.vinyl-player.is-record-blue {
+  --vinyl-record-base: #1c4f9c;
+  --vinyl-record-groove: #3d7fd4;
+  --vinyl-record-label: #e8414f;
+  --vinyl-record-edge: rgba(0, 8, 30, 0.55);
+  --vinyl-record-hairline: rgba(255, 255, 255, 0.12);
+}
+
+/* 白胶：米白盘 + 黑标；纹路用灰而不是白，且描边最重——浅色主题/浅色封面下也要看得见 */
+.vinyl-shelf.is-record-white,
+.vinyl-player.is-record-white {
+  --vinyl-record-base: #e7e3da;
+  --vinyl-record-groove: #c4beb1;
+  --vinyl-record-label: #1c1a17;
+  --vinyl-record-edge: rgba(0, 0, 0, 0.45);
+  --vinyl-record-hairline: rgba(40, 34, 24, 0.4);
+}
+
+/* ============ 专辑墙视图（M2） ============ */
+
+.vinyl-shelf {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+  /* 黑胶唱片动效（设置 → 外观 → 专辑墙）：rest = 常驻探出位，lift = 抽出中途，off = 离墙/播放隐藏态。
+   * handoff.ts 离墙动画与唱片回位动画直接读这三个变量，换方向只改下面的 .is-disc-* 组。 */
+  --vinyl-disc-rest: translate(-20%, -50%) translateZ(-10px) rotate(20deg);
+  --vinyl-disc-lift: translate(62%, -55%) translateZ(0) rotate(0deg) scale(1.06);
+  --vinyl-disc-off: translate(130%, -62%) translateZ(0) rotate(0deg) scale(0.45);
+}
+
+/* 向左：右向镜像（x → -100% - x） */
+.vinyl-shelf.is-disc-left {
+  --vinyl-disc-rest: translate(-80%, -50%) translateZ(-10px) rotate(-20deg);
+  --vinyl-disc-lift: translate(-162%, -55%) translateZ(0) rotate(0deg) scale(1.06);
+  --vinyl-disc-off: translate(-230%, -62%) translateZ(0) rotate(0deg) scale(0.45);
+}
+
+/* 向下 / 向上：横向居中，纵向探出 */
+.vinyl-shelf.is-disc-down {
+  --vinyl-disc-rest: translate(-50%, -20%) translateZ(-10px) rotate(-20deg);
+  --vinyl-disc-lift: translate(-50%, 62%) translateZ(0) rotate(0deg) scale(1.06);
+  --vinyl-disc-off: translate(-50%, 130%) translateZ(0) rotate(0deg) scale(0.45);
+}
+
+.vinyl-shelf.is-disc-up {
+  --vinyl-disc-rest: translate(-50%, -80%) translateZ(-10px) rotate(20deg);
+  --vinyl-disc-lift: translate(-50%, -162%) translateZ(0) rotate(0deg) scale(1.06);
+  --vinyl-disc-off: translate(-50%, -230%) translateZ(0) rotate(0deg) scale(0.45);
+}
+
+/* 工具栏（v0.4.1）：标题计数 / 搜索 / 刷新 / 排序 / 筛选 / 属性 / 导入 */
+.vinyl-shelf-toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 12px 26px 8px;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--background-primary);
+  flex-wrap: wrap;
+}
+
+.vinyl-shelf-toolbar-title {
+  font-size: 1.05em;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.vinyl-shelf-search {
+  flex: 1 1 160px;
+  min-width: 120px;
+  display: flex;
+}
+
+.vinyl-shelf-search input {
+  width: 100%;
+  margin: 0;
+}
+
+.vinyl-shelf-toolbar .vinyl-toolbar-icon {
+  flex: none;
+}
+
+.vinyl-shelf-grid-host {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* 卡片属性弹层（M7：两区 + 拖拽排序 + 改名，保持打开） */
+.vinyl-props-popover {
+  position: fixed;
+  z-index: 1000;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 220px;
+  max-height: 60vh; /* 实际值由 placePropsPopover 按视口空间写入 */
+  overflow-y: auto;
+}
+
+.vinyl-props-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.vinyl-props-row:hover {
+  background: var(--background-modifier-hover);
+}
+
+.vinyl-props-row input {
+  margin: 0;
+}
+
+/* 分区标题 / 分隔线 / 固定说明 */
+.vinyl-props-section {
+  padding: 4px 6px 2px;
+  color: var(--text-muted);
+  font-size: 0.75em;
+}
+
+.vinyl-props-divider {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--background-modifier-border);
+}
+
+.vinyl-props-hint {
+  max-width: 250px;
+  padding: 4px 6px;
+  color: var(--text-muted);
+  font-size: 0.78em;
+  line-height: 1.4;
+}
+
+.vinyl-props-row-label {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vinyl-props-count {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-size: 0.78em;
+}
+
+/* 已显示行（可拖拽）：整行抓手；图标按钮收紧命中区 */
+.vinyl-props-row.is-selected {
+  cursor: grab;
+}
+
+.vinyl-props-row.is-selected:active {
+  cursor: grabbing;
+}
+
+.vinyl-props-icon {
+  flex: 0 0 auto;
+  padding: 0 2px;
+}
+
+/* 拖拽：被拖行半透明 + 落点行上/下缘指示线 */
+.vinyl-props-row.is-dragging {
+  opacity: 0.5;
+}
+
+.vinyl-props-row.is-drop-before {
+  box-shadow: inset 0 2px 0 0 var(--interactive-accent);
+}
+
+.vinyl-props-row.is-drop-after {
+  box-shadow: inset 0 -2px 0 0 var(--interactive-accent);
+}
+
+.vinyl-props-rename {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 22px;
+  font-size: 0.85em;
+}
+
+.vinyl-shelf-grid {
+  display: grid;
+  /* 每行数量（设置 → 外观 → 专辑墙）：变量由 shelf-view.applyAppearance 写入 */
+  grid-template-columns: var(--vinyl-shelf-columns, repeat(auto-fill, minmax(230px, 1fr)));
+  gap: 28px 42px;
+  padding: 20px 26px 40px;
+  align-content: start;
+}
+
+.vinyl-shelf-card {
+  padding: 0 54px 0 0; /* 右侧留唱片探出位（默认方向） */
+  cursor: pointer;
+}
+
+/* 探出位随「黑胶动画方向」换边 */
+.vinyl-shelf.is-disc-left .vinyl-shelf-card {
+  padding: 0 0 0 54px;
+}
+
+.vinyl-shelf.is-disc-up .vinyl-shelf-card {
+  padding: 54px 0 0 0;
+}
+
+.vinyl-shelf.is-disc-down .vinyl-shelf-card {
+  padding: 0 0 54px 0;
+}
+
+/* 纵向探出时行距放宽（唱片探出量可能超出卡片内边距） */
+.vinyl-shelf.is-disc-up .vinyl-shelf-grid,
+.vinyl-shelf.is-disc-down .vinyl-shelf-grid {
+  gap: 48px 34px;
+}
+
+/* 封面：1/1、微 3D，唱片藏于其下 */
+.vinyl-shelf-cover {
+  position: relative;
+  overflow: visible;
+  transform-style: preserve-3d;
+  z-index: 1;
+  border-radius: 2px;
+  background-color: var(--background-secondary);
+  box-shadow:
+    0 4px 8px rgba(0, 0, 0, 0.3),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+  aspect-ratio: 1 / 1;
+  margin-bottom: 10px;
+}
+
+/* 黑胶唱片：常驻封面一侧探出（方向见 --vinyl-disc-rest）；hover 弹出摆动（排除播放中/交接中的卡片） */
+.vinyl-shelf-disc {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 95%;
+  height: 95%;
+  border-radius: 50%;
+  transform: var(--vinyl-disc-rest, translate(-20%, -50%) translateZ(-10px) rotate(20deg));
+  /* 颜色全部走 --vinyl-record-*（配色见文件上方的「唱片配色」段） */
+  background:
+    radial-gradient(
+      circle,
+      transparent 3%,
+      var(--vinyl-record-label) 3.5%,
+      var(--vinyl-record-label) 35%,
+      transparent 35.5%
+    ),
+    repeating-radial-gradient(
+      var(--vinyl-record-base) 0,
+      var(--vinyl-record-base) 2px,
+      var(--vinyl-record-groove) 3px,
+      var(--vinyl-record-base) 4px
+    );
+  box-shadow:
+    0 0 0 1px var(--vinyl-record-hairline),
+    0 0 5px var(--vinyl-record-edge);
+  transition:
+    transform 0.65s cubic-bezier(0.34, 1.56, 0.64, 1),
+    opacity 0.45s ease;
+}
+
+.vinyl-shelf-card:not(.is-playing):not(.is-handing-off):not(.is-returning):hover
+  .vinyl-shelf-disc {
+  animation: vinyl-record-poke 0.8s ease forwards;
+}
+
+/* 弹出：回到封面正中（藏起）再探出，方向由 --vinyl-disc-rest 决定 */
+@keyframes vinyl-record-poke {
+  0% {
+    transform: var(--vinyl-disc-rest, translate(-20%, -50%) translateZ(-10px) rotate(20deg));
+  }
+
+  50% {
+    transform: translate(-50%, -50%) translateZ(-10px) rotate(0deg);
+  }
+
+  100% {
+    transform: var(--vinyl-disc-rest, translate(-20%, -50%) translateZ(-10px) rotate(20deg));
+  }
+}
+
+.vinyl-shelf-cover img {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  border-radius: 2px;
+}
+
+.vinyl-shelf-cover-color {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 40px;
+  color: rgba(255, 255, 255, 0.85);
+  border-radius: 2px;
+}
+
+.vinyl-shelf-cover-empty {
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+}
+
+.vinyl-shelf-card-title {
+  font-size: 0.98em;
+  font-weight: 700;
+  line-height: 1.25;
+  margin-bottom: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vinyl-shelf-prop {
+  display: grid;
+  grid-template-columns: minmax(64px, 0.48fr) minmax(0, 1fr);
+  column-gap: 10px;
+  align-items: baseline;
+  margin-top: 6px;
+  line-height: 1.25;
+}
+
+.vinyl-shelf-prop-label {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 0.78em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vinyl-shelf-prop-value {
+  overflow: hidden;
+  color: var(--text-normal);
+  font-size: 0.88em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vinyl-shelf-badges {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+/* 正在播放：描边 + 标题着色 */
+.vinyl-shelf-card.is-playing .vinyl-shelf-cover {
+  box-shadow:
+    0 0 0 2px var(--interactive-accent),
+    0 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+.vinyl-shelf-card.is-playing .vinyl-shelf-card-title {
+  color: var(--interactive-accent);
+}
+
+/* ============ 专辑墙：交接与卡位空出（M3，v0.3.1 修订） ============ */
+
+.vinyl-shelf-card.is-handing-off {
+  pointer-events: none;
+}
+
+/* 播放中：唱片持续离墙。此值与 handoff.ts 离墙关键帧终点完全一致，
+ * 动画 fill:forwards 结束后无跳变；换专辑时取消动画，经上方 transition 优雅滑回封套。 */
+.vinyl-shelf-card.is-playing .vinyl-shelf-disc {
+  opacity: 0;
+  transform: var(--vinyl-disc-off, translate(130%, -62%) translateZ(0) rotate(0deg) scale(0.45));
+}
+
+/* 空态 */
+.vinyl-shelf-empty {
+  padding: 48px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  text-align: center;
+}
+
+.vinyl-shelf-empty-title {
+  font-size: 1.05em;
+  font-weight: 600;
+}
+
+/* 拖拽导入高亮（M4） */
+.vinyl-shelf-card.is-drag-over .vinyl-shelf-cover {
+  outline: 2px dashed var(--interactive-accent);
+  outline-offset: 6px;
+}
+
+.vinyl-shelf-grid.is-drag-over {
+  outline: 2px dashed var(--interactive-accent);
+  outline-offset: -8px;
+  border-radius: 8px;
+}
+
+/* ============ 黑胶转盘播放器（M3，v0.3.1 唱机质感） ============ */
+
+.vinyl-player {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+
+/* 头部：标题 + 换碟圆钮 */
+.vinyl-player-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vinyl-player-header-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 700;
+  font-size: 0.95em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vinyl-player-header-title.is-error {
+  color: var(--text-error);
+}
+
+/* 设备面板：胡桃木底座（照 Pro-Ject E1 的方向：中等偏暖的胡桃木 + 缎面漆 + 方正棱角）。
+ * 木纹不引外部贴图：SVG 湍流噪声经 feDiffuseLighting 打光成「木面明暗」，
+ * 再以 multiply 45% 压到胡桃木基色渐变上——色为主、纹为辅。
+ * 纯 CSS repeating 渐变做不出天然木纹（等距条纹会像竹子），故走 SVG 滤镜。 */
+.vinyl-deck {
+  background-image:
+    /* 缎面漆受光（上缘亮、向下收敛；用近白而非米黄，避免整体发黄） */
+    radial-gradient(120% 90% at 50% 0%, rgba(255, 244, 232, 0.1), transparent 58%),
+    url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='900' height='600'><filter id='f' x='0' y='0' width='100%' height='100%'><feTurbulence type='fractalNoise' baseFrequency='0.004 0.02' numOctaves='3' seed='11' result='w'/><feTurbulence type='fractalNoise' baseFrequency='0.014 0.05' numOctaves='3' seed='23' result='b'/><feTurbulence type='fractalNoise' baseFrequency='0.02 0.85' numOctaves='3' seed='5' result='n'/><feMerge result='m'><feMergeNode in='w'/><feMergeNode in='b'/><feMergeNode in='n'/></feMerge><feDiffuseLighting in='m' lighting-color='%23ffffff' surfaceScale='2.4' result='l'><feDistantLight azimuth='258' elevation='54'/></feDiffuseLighting><feComponentTransfer in='l'><feFuncA type='linear' slope='0.72' intercept='0'/></feComponentTransfer></filter><rect width='900' height='600' filter='url(%23f)'/></svg>"),
+    /* 基色：胡桃木（压低黄味，偏中性棕；上亮下沉模拟面板受光） */
+    linear-gradient(180deg, #85613f 0%, #725233 52%, #604227 100%);
+  background-blend-mode: normal, multiply, normal;
+  background-size: 100% 100%, 100% 100%, 100% 100%;
+  background-repeat: no-repeat;
+  border: 1px solid rgba(52, 28, 8, 0.5);
+  border-radius: 6px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 240, 215, 0.28),
+    inset 0 -2px 6px rgba(46, 24, 6, 0.35),
+    0 6px 18px rgba(0, 0, 0, 0.45);
+  padding: 14px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* 「播放器配色」的另一套：黑胶黑 = M3 初版的拉丝金属面板（.vinyl-deck 本体 = 胡桃木） */
+.vinyl-player.is-deck-black .vinyl-deck {
+  background-image: linear-gradient(180deg, #232327, #1b1b1f 60%, #18181b);
+  background-blend-mode: normal;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 14px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.5),
+    0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+/* 转盘（随可用高度自适应，空间不足时压缩，配合视图滚动） */
+.vinyl-turntable {
+  position: relative;
+  width: min(100%, clamp(150px, 30vh, 220px));
+  aspect-ratio: 1 / 1;
+  margin: 2px auto;
+  flex: none;
+}
+
+/* 毛毡垫（原为拉丝金属盘）：极哑光 + 高频纤维斑点，无同心纹、无高光 */
+.vinyl-turntable-platter {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background-image:
+    url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='f' x='0' y='0' width='100%' height='100%'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' seed='3'/><feColorMatrix type='matrix' values='0 0 0 0 0.22 0 0 0 0 0.22 0 0 0 0 0.24 0.55 0 0 0 0'/></filter><rect width='220' height='220' filter='url(%23f)'/></svg>"),
+    /* 比唱片亮一档的炭灰：毛毡是哑光绒面，要与光泽的黑胶拉出层次，否则糊成一片 */
+    radial-gradient(circle at 50% 42%, #34343a, #1d1d21 78%);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow:
+    inset 0 1px 3px rgba(0, 0, 0, 0.75),
+    0 6px 18px rgba(0, 0, 0, 0.45);
+}
+
+/* 外层：落盘入场动画目标（与内层 CSS 旋转分离，动画互不冲突） */
+.vinyl-turntable-disc {
+  position: absolute;
+  /* 6%：唱片略小于垫子，露出毛毡圈（4% 时垫子几乎被压住看不见） */
+  inset: 6%;
+  border-radius: 50%;
+}
+
+/* 内层：唱片本体，CSS 旋转（仅 1 个 transform，will-change 提层） */
+.vinyl-turntable-vinyl {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: repeating-radial-gradient(
+    var(--vinyl-record-base) 0,
+    var(--vinyl-record-base) 2px,
+    var(--vinyl-record-groove) 3px,
+    var(--vinyl-record-base) 4px
+  );
+  box-shadow:
+    0 0 0 1px var(--vinyl-record-hairline),
+    0 2px 10px var(--vinyl-record-edge);
+  will-change: transform;
+  transition: opacity 0.3s;
+}
+
+.vinyl-turntable-vinyl.is-empty {
+  opacity: 0;
+}
+
+.vinyl-turntable-vinyl.is-spinning {
+  /* 转速（设置 → 外观 → 播放器）：变量由 player-view.applyAppearance 写入 */
+  animation: vinyl-spin var(--vinyl-spin-duration, 1.8s) linear infinite;
+}
+
+.vinyl-turntable-vinyl.is-spinning.is-paused,
+.vinyl-turntable-vinyl.is-spinning.is-hidden {
+  animation-play-state: paused;
+}
+
+@keyframes vinyl-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 唱片中心标签 = 专辑封面 */
+.vinyl-turntable-label {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 34%;
+  height: 34%;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--background-secondary);
+  box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.45);
+}
+
+.vinyl-turntable-label img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.vinyl-turntable-label-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  color: var(--text-muted);
+}
+
+.vinyl-turntable-spindle {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: #d8d8dc;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
+  z-index: 3;
+}
+
+/* 直线唱臂（Pro-Ject 式：细铝管 + 立式轴承座 + 圆柱配重 + 黑色唱头壳）。
+ * 姿态按真实唱机（Akai / Mitsubishi 服务手册 + 唱臂几何）：
+ *   不播放 = 归位到唱臂支架卡口，唱针完全离开唱片；
+ *   播放   = 唱针落在导入槽（外圈 ≈0.96R），随播放进度向内圈（导出槽 ≈0.40R，停在标签外）缓移。
+ * 角度由 player-view 按「曲序 + 本曲进度」写入 --vinyl-arm-angle，默认值 = 停放位。 */
+.vinyl-turntable-arm {
+  position: absolute;
+  top: 13%;
+  /* -6%：转轴落在盘外（木箱体转角）——真实唱机的轴承座不在毛毡上 */
+  right: -6%;
+  width: 48%;
+  height: 5px;
+  border-radius: 3px;
+  background: linear-gradient(#e4e4e8 0%, #bcbcc4 46%, #8c8c94 100%);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.45);
+  transform-origin: 93% 50%;
+  transform: rotate(var(--vinyl-arm-angle, -100deg));
+  transition: transform 0.6s cubic-bezier(0.33, 1, 0.68, 1);
+  z-index: 4;
+}
+
+/* 唱臂支架（停放位）：归位时唱头落在这个小夹子上，位置对着 --vinyl-arm-angle 的停放角 */
+.vinyl-arm-rest {
+  position: absolute;
+  /* 对着 --vinyl-arm-angle 的停放角（-100°）时唱头落点 */
+  left: 107%;
+  top: 61%;
+  width: 7px;
+  height: 17px;
+  border-radius: 3px;
+  background: linear-gradient(#d8d8de 0%, #9a9aa2 55%, #6e6e76 100%);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  z-index: 3;
+}
+
+.vinyl-arm-counterweight {
+  position: absolute;
+  right: -27px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 16px;
+  border-radius: 4px;
+  background: linear-gradient(#3c3c44, #1c1c20 60%, #141418);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
+.vinyl-arm-pivot {
+  position: absolute;
+  right: -8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 24px;
+  border-radius: 5px;
+  background: linear-gradient(#ececf0 0%, #b6b6be 42%, #7e7e86 100%);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.5),
+    inset 0 -1px 2px rgba(0, 0, 0, 0.35);
+}
+
+/* 唱头壳：黑色（直线臂常见的分体式唱头） */
+.vinyl-arm-head {
+  position: absolute;
+  left: -13px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 12px;
+  border-radius: 2px;
+  background: linear-gradient(#33333a, #131316 70%);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+.vinyl-arm-head::after {
+  /* 唱针 */
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 50%;
+  width: 3px;
+  height: 5px;
+  transform: translateY(-50%);
+  border-radius: 1px;
+  background: #e8e8ec;
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.6);
+}
+
+/* 进度行：金属轨 + 计数器 */
+.vinyl-progress {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.vinyl-readout {
+  font-family: var(--font-monospace);
+  font-size: 0.78em;
+  /* 木底比原金属底亮，丝印白字提一档才够读 */
+  color: rgba(255, 255, 255, 0.62);
+  white-space: nowrap;
+  /* 定宽：等宽字体下 1ch = 1 字符，读数变长（3:46 → 1:02:33）不再把进度条挤窄 */
+  flex: none;
+  min-width: 11ch;
+  text-align: right;
+}
+
+/* 金属滑轨（进度红 / 音量银，经 --track-fill 由 JS 填充） */
+.vinyl-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1;
+  height: 15px;
+  background: transparent;
+  cursor: pointer;
+  margin: 0;
+  min-width: 0;
+}
+
+.vinyl-slider::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--track-fill, #1c1c21);
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.7),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.vinyl-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -3px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #f0f0f4, #a8a8b2 55%, #707078);
+  border: 1px solid rgba(0, 0, 0, 0.55);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.5),
+    inset 0 1px 1px rgba(255, 255, 255, 0.45);
+  transition: transform 0.12s;
+}
+
+.vinyl-slider:hover::-webkit-slider-thumb {
+  transform: scale(1.15);
+}
+
+.vinyl-slider:active::-webkit-slider-thumb {
+  transform: scale(1.35);
+}
+
+/* 控制圆钮组（索尼式金属圆钮） */
+.vinyl-controls {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  justify-content: center;
+}
+
+.vinyl-btn {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at 32% 28%, #4a4a52, #26262c 62%, #1a1a1e);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 3px 6px rgba(0, 0, 0, 0.5),
+    inset 0 1px 2px rgba(255, 255, 255, 0.18),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.5);
+  /* 图案色：近白（原先 #d8d8dc 在深色钮面上偏灰，辨识度低） */
+  color: #f2f2f6;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    box-shadow 0.15s,
+    transform 0.08s,
+    color 0.15s;
+}
+
+.vinyl-btn:hover {
+  background: radial-gradient(circle at 32% 28%, #565660, #2e2e36 62%, #202024);
+  color: #fff;
+}
+
+.vinyl-btn:active {
+  transform: translateY(1px);
+  background: radial-gradient(circle at 32% 28%, #3a3a42, #202024 62%, #16161a);
+  box-shadow:
+    inset 0 2px 6px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.vinyl-btn-primary {
+  width: 46px;
+  height: 46px;
+  background: radial-gradient(circle at 32% 28%, #5a5a64, #2c2c34 62%, #1c1c20);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.vinyl-btn-small {
+  width: 28px;
+  height: 28px;
+}
+
+.vinyl-btn .svg-icon {
+  width: 18px;
+  height: 18px;
+  stroke-width: 1.8;
+}
+
+.vinyl-btn-primary .svg-icon {
+  width: 22px;
+  height: 22px;
+}
+
+.vinyl-btn-small .svg-icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* 音量行 */
+.vinyl-vol-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 0 2px;
+}
+
+.vinyl-vol-icon {
+  display: inline-flex;
+  flex: none;
+}
+
+.vinyl-vol-icon .svg-icon {
+  width: 14px;
+  height: 14px;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+/* 丝印品牌行 */
+/* 丝印品牌行 + 实际音质读数（右侧小字：源 · 档位） */
+.vinyl-deck-brand-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 14px;
+  margin-top: 2px;
+}
+
+.vinyl-deck-brand {
+  text-align: center;
+  font-size: 9px;
+  letter-spacing: 3px;
+  color: rgba(255, 255, 255, 0.32);
+  text-transform: uppercase;
+  user-select: none;
+}
+
+.vinyl-quality {
+  position: absolute;
+  right: 2px;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.55);
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* 极高 / 无损：品牌红点缀（一眼看出没被降档） */
+.vinyl-quality.is-hq {
+  color: #ff8a95;
+}
+
+/* 队列（滚动交给视图层，列表自然展开不被裁） */
+.vinyl-order-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.vinyl-order-row .vinyl-queue-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.vinyl-queue-title {
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.vinyl-queue {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.vinyl-queue-item {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 5px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.vinyl-queue-item:hover {
+  background: var(--background-modifier-hover);
+}
+
+.vinyl-queue-item.is-current {
+  background: var(--background-modifier-active-hover);
+}
+
+.vinyl-queue-item.is-current .vinyl-q-title {
+  font-weight: 600;
+}
+
+.vinyl-idx {
+  color: var(--text-faint);
+  font-size: 0.85em;
+  width: 20px;
+  flex: none;
+}
+
+.vinyl-q-title {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ============ 登录弹窗 ============ */
+
+.vinyl-qr-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 300px;
+}
+
+.vinyl-qr-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+}
+
+.vinyl-qr-section img {
+  border-radius: 8px;
+}
+
+.vinyl-qr-modal textarea {
+  width: 100%;
+  height: 64px;
+  margin: 6px 0;
+}
+
+/* ============ 设置面板（M6：通用 / 外观 / 源 三标签页） ============ */
+
+.vinyl-settings-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  margin: 2px 0 12px;
+}
+
+.vinyl-settings-tab {
+  background: none;
+  box-shadow: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 6px 12px;
+  height: auto;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  cursor: pointer;
+}
+
+.vinyl-settings-tab:hover {
+  background: none;
+  color: var(--text-normal);
+  border-bottom-color: var(--background-modifier-border);
+}
+
+.vinyl-settings-tab.is-active {
+  color: var(--text-normal);
+  font-weight: 600;
+  border-bottom-color: var(--interactive-accent);
+}
+
+/* 子板块标题（网易云 / QQ 音乐 / 运行环境） */
+.vinyl-settings-sub {
+  margin: 16px 0 0;
+  font-size: var(--font-ui-smaller);
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+
+.vinyl-auth-status {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 8px 0;
+}
+
+/* ============ 导入弹窗 / 统计弹窗（M4） ============ */
+
+.vinyl-import-input {
+  width: 100%;
+  margin: 10px 0;
+}
+
+.vinyl-import-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.vinyl-import-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.vinyl-import-row select {
+  flex: 1;
+  min-width: 0;
+}
+
+.vinyl-import-label {
+  flex: none;
+  width: 64px;
+  color: var(--text-muted);
+  font-size: 0.9em;
+}
+
+.vinyl-local-import {
+  min-width: 320px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 浏览器登录弹窗 */
+.vinyl-web-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 6px 0;
+}
+
+.vinyl-web-login textarea {
+  width: 100%;
+  height: 72px;
+  margin: 6px 0;
+}
+
+.vinyl-copy-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.vinyl-copy-row pre.vinyl-code {
+  flex: 1;
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 0.85em;
+  user-select: all;
+}
+
+.vinyl-copy-row button {
+  flex: none;
+}
+
+.vinyl-stats {
+  min-width: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vinyl-stats-total {
+  font-size: 1.1em;
+  font-weight: 700;
+}
+
+.vinyl-stats-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.vinyl-stats-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.vinyl-stats-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ============ 删除专辑弹窗（M6） ============ */
+
+.vinyl-delete-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 340px;
+}
+
+.vinyl-delete-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.vinyl-delete-title {
+  font-weight: 700;
+}
+
+.vinyl-delete-path {
+  word-break: break-all;
+  font-size: 0.85em;
+}
+
+.vinyl-delete-opt {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin-top: 8px;
+  cursor: pointer;
+}
+
+.vinyl-delete-opt input {
+  margin-top: 3px;
+  flex: none;
+}
+
+.vinyl-delete-opt-detail {
+  font-size: 0.82em;
+  word-break: break-all;
+}
+
+.vinyl-delete-hint {
+  margin-top: 6px;
+  font-size: 0.85em;
+}
+
+.vinyl-delete-actions {
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
+.vinyl-delete-status {
+  font-size: 0.9em;
+}
