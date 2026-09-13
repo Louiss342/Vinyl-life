@@ -1,6 +1,6 @@
 // Vinyl Life —— 主入口（M4：导入+增强 + M3 交接动效 + M2 专辑墙 + M1 双源播放底座）
 // 本地源（零后端）+ 网易云源（懒加载 Node 网关，M0 已验证）统一为 Track 队列。
-import { Plugin, Notice, TFile, normalizePath } from 'obsidian';
+import { Plugin, Notice, TFile, MarkdownView, normalizePath } from 'obsidian';
 import * as fs from 'fs';
 import { VinylSettings, DEFAULT_SETTINGS, VinylSettingTab, normalizeQueueOrder } from './settings';
 import { ServerManager } from './core/server-manager';
@@ -215,6 +215,11 @@ export default class VinylLifePlugin extends Plugin {
       id: 'append-listening-note',
       name: t('cmd.appendNote'),
       callback: () => this.appendListeningNote(),
+    });
+    this.addCommand({
+      id: 'insert-now-playing',
+      name: t('cmd.insertNowPlaying'),
+      callback: () => this.insertNowPlaying(),
     });
     this.addCommand({
       id: 'show-stats',
@@ -500,6 +505,28 @@ export default class VinylLifePlugin extends Plugin {
       editor.setCursor({ line: lastLine, ch: editor.getLine(lastLine).length });
     }
     notice(tf('notice.appended', { name: file.basename }));
+  }
+
+  // 插入此刻正在听（P1）：往「用户当前编辑的笔记」光标处插一行曲目信息。
+  // 与上面的 appendListeningNote 是两件事：那个写专辑笔记正文末尾，这个只动当前编辑器、不碰文件。
+  // 成功不弹通知（插入结果肉眼可见），只有失败路径才提示。
+  insertNowPlaying() {
+    const snap = this.engine.snapshot();
+    const track = snap.current;
+    if (!track) {
+      notice(t('notice.nothingPlaying'));
+      return;
+    }
+    // 焦点可能在设置页 / 其他视图（没有可编辑的 Markdown 编辑器）→ 提示，别静默吞掉
+    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (!view) {
+      notice(t('notice.noActiveNote'));
+      return;
+    }
+    // 专辑名优先取专辑笔记标题（队列加载后一定有）；收藏类队列没有笔记标题时退回曲目自带的专辑名
+    const album = snap.albumTitle || track.album || '';
+    const line = tf('notice.nowPlayingLine', { album, track: track.title });
+    view.editor.replaceSelection(line + '\n');
   }
 
   recordPlay(track: Track, albumPath?: string, albumTitle?: string) {

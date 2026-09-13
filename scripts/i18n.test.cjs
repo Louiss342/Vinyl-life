@@ -202,6 +202,21 @@ test('i18n：tf() 占位符替换（缺变量 / 缺键时原样保留，不吞�
   i18n.setLanguage('zh');
 });
 
+test('i18n：「插入此刻正在听」的行文案按语言逐字拼装（占位符两边都要替换）', () => {
+  i18n.setLanguage('zh');
+  assert.equal(
+    i18n.tf('notice.nowPlayingLine', { album: '黑豹乐队', track: '无地自容' }),
+    '此刻正在听《黑豹乐队》的《无地自容》'
+  );
+
+  i18n.setLanguage('en');
+  const en = i18n.tf('notice.nowPlayingLine', { album: 'Black Panther', track: 'No Place to Hide' });
+  assert.ok(en.trim().length > 0, 'en 文案非空');
+  assert.equal(en.includes('{'), false, 'en 的占位符也要被替换掉');
+  assert.notEqual(en, '此刻正在听《Black Panther》的《No Place to Hide》', 'en 不能回落到中文模板');
+  i18n.setLanguage('zh');
+});
+
 test('i18n：语言切换后新建的登录 provider 文案跟着变（不能被模块加载时定型）', () => {
   const providers = esbuild.buildSync({
     stdin: {

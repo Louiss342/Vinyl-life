@@ -620,6 +620,10 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     zh: '在专辑笔记追加此刻感想',
     en: 'Append current thoughts to the album note',
   },
+  'cmd.insertNowPlaying': {
+    zh: '插入此刻正在听的曲目',
+    en: 'Insert the currently playing track',
+  },
   'cmd.showStats': { zh: '显示播放统计', en: 'Show playback stats' },
   'cmd.m4SelfTest': {
     zh: 'M4 自检：导入 + 感想 + 统计验证',
@@ -675,6 +679,16 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     en: 'No album is playing right now (play one first, then append your thoughts)',
   },
   'notice.appended': { zh: '已追加到「{name}」', en: 'Appended to "{name}"' },
+  // 插入此刻正在听：行文案（插进当前笔记，语法随语言变 → 用 tf 占位符拼）
+  'notice.nowPlayingLine': {
+    zh: '此刻正在听《{album}》的《{track}》',
+    en: 'Now playing: {track} — {album}',
+  },
+  'notice.nothingPlaying': { zh: '当前没有正在播放的歌曲', en: 'Nothing is playing right now' },
+  'notice.noActiveNote': {
+    zh: '请先打开一篇笔记并把光标放到要插入的位置',
+    en: 'Open a note first and put the cursor where you want to insert',
+  },
   'notice.neteaseLoggedOut': { zh: '已退出网易云登录', en: 'Signed out of NetEase' },
   'notice.qqLoggedOut': { zh: '已退出 QQ 音乐登录', en: 'Signed out of QQ Music' },
   'notice.migrateFailed': { zh: '迁移失败：{detail}', en: 'Migration failed: {detail}' },
