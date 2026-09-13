@@ -1,4 +1,4 @@
-// 导入弹窗（M4）：专辑导入（粘贴网易云 / QQ 音乐链接或 ID）+ 本地音频导入。
+// 导入弹窗：专辑导入（粘贴网易云 / QQ 音乐链接或 ID）+ 本地音频导入。
 // 本地导入为「文件优先」流程：① 选文件 / 文件夹（或拖进弹窗）→ ② 选目标 → ③ 落库方式。
 // 文件夹 = 一张专辑；子目录结构保留（audio/<专辑>/CD1/01.flac）。
 import { App, Modal, TFile } from 'obsidian';
@@ -105,7 +105,7 @@ export class LocalImportModal extends Modal {
   private ctx: ImportContext;
   private fileInput: HTMLInputElement | null = null;
   private dirInput: HTMLInputElement | null = null;
-  /** 已选文件（选择器或拖入）；不再「选完专辑才能选文件」 */
+  /** 已选文件（选择器或拖入）；文件优先，不要求先选专辑 */
   private picked: File[] = [];
   /** 选中的文件夹名（空 = 散选文件） */
   private rootName = '';

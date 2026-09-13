@@ -1,5 +1,5 @@
 // 专辑笔记索引：metadataCache 过滤 tags:[album]，解析 frontmatter 为 AlbumInfo。
-// 向后兼容（方案 5.1）：netease 旧字段 URL 正则解析；本地引用支持 wikilink / 外链绝对路径。
+// 向后兼容：netease 旧字段 URL 正则解析；本地引用支持 wikilink / 外链绝对路径。
 import { App, TFile, TFolder, normalizePath } from 'obsidian';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -267,7 +267,7 @@ function audioRefExists(app: App, ref: string): boolean {
   return file instanceof TFile && isAudioFile(file.name);
 }
 
-// 简易 YAML frontmatter 解析（metadataCache 未命中时的兜底，自检/导入用）
+// 简易 YAML frontmatter 解析（metadataCache 未命中时的兜底）
 export function parseFrontmatterSimple(text: string): any {
   const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!m) return {};

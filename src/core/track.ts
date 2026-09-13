@@ -1,5 +1,4 @@
-// 统一 Track 抽象（方案 4.2 关键设计）：
-// 队列统一为 Track[]，播放时按 source 各自解析为可播放地址；
+// 统一 Track 抽象：队列统一为 Track[]，播放时按 source 各自解析为可播放地址。
 // 前端只面向 Track 编程，增删音源不碰播放器逻辑。
 import { TFile } from 'obsidian';
 import { t } from './i18n';

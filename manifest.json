@@ -1,7 +1,7 @@
 {
   "id": "vinyl-life",
   "name": "Vinyl Life",
-  "version": "0.6.0",
+  "version": "1.0.0",
   "minAppVersion": "1.4.0",
   "description": "Vinyl album shelf + turntable player for your notes: local audio, NetEase Cloud Music and QQ Music with your own account.",
   "author": "Louiss342",

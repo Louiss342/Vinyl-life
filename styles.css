@@ -1,7 +1,4 @@
-/* Vinyl Note — 样式
- * 专辑墙（M2 视觉对齐黑胶 CSS 片段） + 黑胶转盘播放器（M3，v0.3.1 唱机质感）
- * + 登录弹窗 + 设置面板
- */
+/* Vinyl Life — 样式：专辑墙 + 黑胶转盘播放器 + 登录弹窗 + 设置面板 */
 
 /* ============ 通用 ============ */
 
@@ -86,7 +83,7 @@
   --vinyl-record-hairline: rgba(40, 34, 24, 0.4);
 }
 
-/* ============ 专辑墙视图（M2） ============ */
+/* ============ 专辑墙视图 ============ */
 
 .vinyl-shelf {
   display: flex;
@@ -120,7 +117,7 @@
   --vinyl-disc-off: translate(-50%, -230%) translateZ(0) rotate(0deg) scale(0.45);
 }
 
-/* 工具栏（v0.4.1）：标题计数 / 搜索 / 刷新 / 排序 / 筛选 / 属性 / 导入 */
+/* 工具栏：标题计数 / 搜索 / 刷新 / 排序 / 筛选 / 属性 / 导入 */
 .vinyl-shelf-toolbar {
   display: flex;
   gap: 8px;
@@ -160,7 +157,7 @@
   min-height: 0;
 }
 
-/* 卡片属性弹层（M7：两区 + 拖拽排序 + 改名，保持打开） */
+/* 卡片属性弹层（两区 + 拖拽排序 + 改名，保持打开） */
 .vinyl-props-popover {
   position: fixed;
   z-index: 1000;
@@ -450,7 +447,7 @@
   color: var(--interactive-accent);
 }
 
-/* ============ 专辑墙：交接与卡位空出（M3，v0.3.1 修订） ============ */
+/* ============ 专辑墙：交接与卡位空出 ============ */
 
 .vinyl-shelf-card.is-handing-off {
   pointer-events: none;
@@ -478,7 +475,7 @@
   font-weight: 600;
 }
 
-/* 拖拽导入高亮（M4） */
+/* 拖拽导入高亮 */
 .vinyl-shelf-card.is-drag-over .vinyl-shelf-cover {
   outline: 2px dashed var(--interactive-accent);
   outline-offset: 6px;
@@ -490,7 +487,7 @@
   border-radius: 8px;
 }
 
-/* ============ 黑胶转盘播放器（M3，v0.3.1 唱机质感） ============ */
+/* ============ 黑胶转盘播放器 ============ */
 
 .vinyl-player {
   padding: 12px;
@@ -550,7 +547,7 @@
   gap: 10px;
 }
 
-/* 「播放器配色」的另一套：黑胶黑 = M3 初版的拉丝金属面板（.vinyl-deck 本体 = 胡桃木） */
+/* 「播放器配色」的另一套：黑胶黑 = 拉丝金属面板（.vinyl-deck 本体 = 胡桃木） */
 .vinyl-player.is-deck-black .vinyl-deck {
   background-image: linear-gradient(180deg, #232327, #1b1b1f 60%, #18181b);
   background-blend-mode: normal;
@@ -571,7 +568,7 @@
   flex: none;
 }
 
-/* 毛毡垫（原为拉丝金属盘）：极哑光 + 高频纤维斑点，无同心纹、无高光 */
+/* 毛毡垫：极哑光 + 高频纤维斑点，无同心纹、无高光 */
 .vinyl-turntable-platter {
   position: absolute;
   inset: 0;
@@ -852,7 +849,7 @@
     0 3px 6px rgba(0, 0, 0, 0.5),
     inset 0 1px 2px rgba(255, 255, 255, 0.18),
     inset 0 -2px 4px rgba(0, 0, 0, 0.5);
-  /* 图案色：近白（原先 #d8d8dc 在深色钮面上偏灰，辨识度低） */
+  /* 图案色：近白（深色钮面上才够辨识） */
   color: #f2f2f6;
   cursor: pointer;
   transition:
@@ -1041,7 +1038,7 @@
   margin: 6px 0;
 }
 
-/* ============ 设置面板（M6：通用 / 外观 / 源 三标签页） ============ */
+/* ============ 设置面板（通用 / 外观 / 源 / 关于） ============ */
 
 .vinyl-settings-tabs {
   display: flex;
@@ -1138,7 +1135,7 @@
   color: var(--text-muted);
 }
 
-/* ============ 导入弹窗 / 统计弹窗（M4） ============ */
+/* ============ 导入弹窗 / 统计弹窗 ============ */
 
 .vinyl-import-input {
   width: 100%;
@@ -1323,7 +1320,7 @@
   text-overflow: ellipsis;
 }
 
-/* ============ 删除专辑弹窗（M6） ============ */
+/* ============ 删除专辑弹窗 ============ */
 
 .vinyl-delete-modal {
   display: flex;

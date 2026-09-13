@@ -1,4 +1,4 @@
-// 导入功能（M4，方案 5.9）：
+// 导入功能：
 //   A. 专辑导入：网易云 / QQ 音乐链接（或 ID）→ 元信息 → 建笔记（neteaseId / qqId）→ 代理下封面 → 打开笔记
 //   B. 本地音频导入：复制进 vault（audioFolder）/ 外链绝对路径（audio 列表）两模式，processFrontMatter 更新
 //   C. 拖到空白处：从文件新建本地专辑笔记

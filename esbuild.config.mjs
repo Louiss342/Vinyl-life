@@ -50,7 +50,7 @@ async function build() {
       `export const GATEWAY_GZIP = ${JSON.stringify(gz)};\n`
   );
 
-  // 3) 前端插件产物（M1 起开启 minify，体积预算见 README）
+  // 3) 前端插件产物（minify，体积预算见 README）
   await esbuild.build({
     ...common,
     entryPoints: ['src/main.ts'],

@@ -1,4 +1,4 @@
-// 渲染进程直连网易云（M0 遗留探索项落地）：
+// 渲染进程直连网易云：
 //   内嵌官方登录页（iframe）与 Obsidian 共享同一 Electron 会话——用户登录成功后，
 //   会话 Cookie（MUSIC_U）随 requestUrl 自动携带，无需向网关落盘任何 Cookie。
 //   未登录时由 NeteaseService 路由回退网关（网关 Cookie 通道）。
@@ -170,7 +170,7 @@ export class WebClient {
     return header;
   }
 
-  // 登录态探测（weapi nuser/account/get，M0 spike 同款；结果缓存 60s）
+  // 登录态探测（weapi nuser/account/get；结果缓存 60s）
   async probeLogin(force = false): Promise<WebLoginState> {
     if (!force && this.probeCache && Date.now() - this.probeCache.at < this.PROBE_TTL) {
       return this.probeCache.state;

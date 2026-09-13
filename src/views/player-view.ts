@@ -1,7 +1,6 @@
-// 播放器视图（M3 黑胶转盘版，v0.3.1 唱机质感打磨）：
-//   转盘 + 旋转唱片 + 直线唱臂（不播放归位支架 / 播放落针并随进度内移）+ 唱臂支架；
+// 播放器视图：转盘 + 旋转唱片 + 直线唱臂（不播放归位支架 / 播放落针并随进度内移）；
 //   胡桃木设备面板（.vinyl-deck）：金属圆钮控制、红色填充进度轨、丝印品牌行；
-//   换碟 = 头部圆钮弹 Menu（替代臃肿的 select 选择区）。
+//   换碟 = 头部圆钮弹 Menu。
 // 增量渲染：壳只建一次，状态更新只改目标节点——旋转动画不被打断。
 import { ItemView, WorkspaceLeaf, Menu, setIcon, TFile, CachedMetadata } from 'obsidian';
 import type VinylLifePlugin from '../main';
@@ -308,7 +307,7 @@ export class VinylPlayerView extends ItemView {
     brandRow.createDiv({ cls: 'vinyl-deck-brand', text: 'Vinyl Life' });
     const qualityEl = brandRow.createDiv({ cls: 'vinyl-quality' });
 
-    // Vinyl order 行：标题 + ✎ 追加感想（P1 感想联动）+ ↺ 恢复原有顺序
+    // Vinyl order 行：标题 + ✎ 追加感想 + ↺ 恢复原有顺序
     const orderRow = c.createDiv({ cls: 'vinyl-order-row' });
     const queueTitle = orderRow.createDiv({ cls: 'vinyl-queue-title' });
     const noteBtn = orderRow.createEl('button', { cls: 'vinyl-btn vinyl-btn-small' });

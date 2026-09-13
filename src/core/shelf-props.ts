@@ -1,4 +1,4 @@
-// 卡片属性（M7）：专辑笔记 frontmatter 键 → 卡片显示值。
+// 卡片属性：专辑笔记 frontmatter 键 → 卡片显示值。
 // 依赖方向：util ← 本模块 ← album-index（单向；禁止反向 import album-index 的运行时导出，否则成环）。
 // 所有「显示什么属性」的规则都集中在这里：黑名单 / 预设别名 / 值格式化 / 旧设置迁移 / 有序变更。
 // 本模块不依赖 album-index（连类型也不依赖）：属性发现的入参只要求结构上有 displayProps。
@@ -137,7 +137,7 @@ export function collectShelfPropKeys(
     .sort((x, y) => y.count - x.count || x.key.localeCompare(y.key, 'zh-CN'));
 }
 
-/** data.json → shelfProps。兼容 M7 前的 boolean 结构 {artist:true,…}；脏数据回落默认。 */
+/** data.json → shelfProps。兼容旧的 boolean 结构 {artist:true,…}；脏数据回落默认。 */
 export function normalizeShelfProps(raw: unknown): string[] {
   if (Array.isArray(raw)) {
     // 稳定去重（保留首次出现位置：顺序有语义，不能 Set 之后重排）
@@ -153,7 +153,7 @@ export function normalizeShelfProps(raw: unknown): string[] {
     return out; // [] 合法（用户显式全关），不得回落默认
   }
   if (raw && typeof raw === 'object') {
-    // 旧结构按默认键序保留 true 的项：用户此前关掉的键静默保持关闭
+    // 旧结构按默认键序保留 true 的项：未勾选的键静默保持关闭
     const o = raw as Record<string, unknown>;
     return DEFAULT_SHELF_PROPS.filter((k) => o[k] === true);
   }

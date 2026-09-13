@@ -1,4 +1,4 @@
-// 播放统计（P1）：次数/最近播放，存插件 data.json，不污染笔记（方案 5.1 规则）。
+// 播放统计：次数/最近播放，存插件 data.json，不污染笔记。
 export interface AlbumPlayStat {
   plays: number;
   lastPlayedAt: number;

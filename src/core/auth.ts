@@ -1,4 +1,4 @@
-// 登录态与 Cookie 管理（方案 5.5，M0 V4 已验证链路）：
+// 登录态与 Cookie 管理：
 //   扫码 803 → 网关验证后落盘 .cookie；官方登录窗口 + 手动粘贴。
 //   凭据仅存本机插件目录，不进笔记/日志/git。
 import { Plugin } from 'obsidian';

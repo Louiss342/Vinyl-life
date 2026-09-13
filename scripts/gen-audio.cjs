@@ -1,4 +1,4 @@
-// 生成 3 秒 440Hz 正弦波 WAV（M0 测试音频，无依赖）
+// 生成 3 秒 440Hz 正弦波 WAV（测试音频，无依赖）
 const fs = require('fs');
 
 function genWav(seconds, freq) {

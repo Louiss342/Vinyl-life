@@ -1,4 +1,4 @@
-// 队列构建（方案 5.2）：专辑 → Track[]。
+// 队列构建：专辑 → Track[]。
 // 源判定：笔记 source 显式优先；auto = 本地有音轨先播本地，否则 neteaseId → 网易云，
 // 再次 qqId → QQ 音乐（两条在线源都没有时按收藏展示）。
 import { AlbumInfo } from './album-index';

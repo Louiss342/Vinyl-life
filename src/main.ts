@@ -1,5 +1,5 @@
-// Vinyl Life —— 主入口（M4：导入+增强 + M3 交接动效 + M2 专辑墙 + M1 双源播放底座）
-// 本地源（零后端）+ 网易云源（懒加载 Node 网关，M0 已验证）统一为 Track 队列。
+// Vinyl Life —— 主入口：注册视图 / 命令 / 设置面板，装配服务层与播放引擎。
+// 本地源（零后端）+ 网易云源（懒加载 Node 网关）统一为 Track 队列。
 import { Plugin, TFile, MarkdownView, normalizePath } from 'obsidian';
 import { VinylSettings, DEFAULT_SETTINGS, VinylSettingTab, normalizeQueueOrder } from './settings';
 import { ServerManager } from './core/server-manager';
@@ -129,10 +129,10 @@ export default class VinylLifePlugin extends Plugin {
     this.registerView(SHELF_VIEW_TYPE, (leaf) => new VinylShelfView(leaf, this));
     // 图标与播放器视图一致（disc-3），方便一眼认出是 Vinyl Life
     this.addRibbonIcon('disc-3', t('cmd.ribbonShelf'), () => this.openShelf());
-    // 命令面板瘦身：日常 5 条常驻（open-shelf / open-player / import-netease / import-local /
+    // 命令面板：日常 5 条常驻（open-shelf / open-player / import-netease / import-local /
     // insert-now-playing）；登录 / 退出这类维护命令收进 registerDebugCommands()，
     // 仅当「设置 → 通用 → 调试命令」打开时注册（改开关后需重载插件生效）。
-    // 命令 id 与行为一律不变（改了会让已绑定的快捷键失效）
+    // 命令 id 不得改动（改了会让已绑定的快捷键失效）
     this.addCommand({
       id: 'open-shelf',
       name: t('cmd.openShelf'),
@@ -161,11 +161,10 @@ export default class VinylLifePlugin extends Plugin {
     if (this.settings.debugCommands) this.registerDebugCommands();
     this.addSettingTab(new VinylSettingTab(this.app, this));
 
-    console.log('[vinyl] M4 导入+增强 · M3 交接动效 · M2 专辑墙 · M1 双源底座已加载');
+    console.log('[vinyl] loaded');
   }
 
-  /** 维护类命令（默认不注册）：登录 / 退出。触发条件见 onload 里的 settings.debugCommands。
-   *  命令 id、名称与回调与从前完全一致——只是收进了这道门后面。 */
+  /** 维护类命令（默认不注册）：登录 / 退出。触发条件见 onload 里的 settings.debugCommands。 */
   registerDebugCommands() {
     this.addCommand({
       id: 'netease-login',
@@ -216,7 +215,7 @@ export default class VinylLifePlugin extends Plugin {
     const data = await this.loadData();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
     this.settings.stats = ensureStats(data?.stats);
-    // 卡片属性（M7）：数组结构必须显式归一化——Object.assign 对数组会产出 {0:…,length:…} 类数组怪物，
+    // 卡片属性：数组结构必须显式归一化——Object.assign 对数组会产出 {0:…,length:…} 类数组怪物，
     // 且浅拷贝会让设置与 DEFAULT_SETTINGS 共享引用（push 即污染默认值）；归一化同时完成旧 boolean 结构迁移
     this.settings.shelfProps = normalizeShelfProps(data?.shelfProps);
     this.settings.shelfPropLabels = normalizeShelfPropLabels(data?.shelfPropLabels);
@@ -239,7 +238,7 @@ export default class VinylLifePlugin extends Plugin {
     setAlbumTemplatePath(this.settings.albumNoteTemplate);
     // 界面语言（i18n 模块级当前语言）
     setLanguage(this.settings.language);
-    // 配色项（M8：原「主题 follow/dark」已被「播放器配色」取代，旧值直接忽略）
+    // 配色项（不认识的旧值由 normalize* 回落默认）
     this.settings.playerDeck = normalizeDeckStyle(data?.playerDeck);
     this.settings.recordColor = normalizeRecordColor(data?.recordColor);
   }
@@ -323,7 +322,7 @@ export default class VinylLifePlugin extends Plugin {
     }
   }
 
-  // ============ M4：导入 / 感想 / 统计 ============
+  // ============ 导入 / 感想 / 统计 ============
 
   importCtx(): ImportContext {
     return {
@@ -364,7 +363,7 @@ export default class VinylLifePlugin extends Plugin {
       notice(tf('notice.libraryRoot', { hint: libraryRootHint(scan) }));
       return;
     }
-    // 不支持的格式单独提示（此前是静默忽略：拖进来没反应，用户不知道为什么）
+    // 不支持的格式单独提示（静默忽略时拖进来没反应，用户不知道为什么）
     const { audio: pickedAudio, skipped } = splitAudioFiles(files);
     const audioFiles = scan ? scan.files : pickedAudio;
     if (!scan && skipped.length) notice(skippedFormatsText(skipped.map((f) => f.name)));
@@ -413,7 +412,7 @@ export default class VinylLifePlugin extends Plugin {
     }
   }
 
-  // ============ M6：删除专辑 ============
+  // ============ 删除专辑 ============
 
   // 专辑墙右键「删除专辑…」入口：资产盘点 + 二次确认在弹窗内完成
   openDeleteAlbum(album: AlbumInfo) {
@@ -439,7 +438,7 @@ export default class VinylLifePlugin extends Plugin {
     );
   }
 
-  // 感想联动（P1）：在播放中的专辑笔记正文末尾追加时间戳条目并定位光标
+  // 感想联动：在播放中的专辑笔记正文末尾追加时间戳条目并定位光标
   async appendListeningNote() {
     const snap = this.engine.snapshot();
     const albumPath = snap.albumNotePath;
@@ -467,7 +466,7 @@ export default class VinylLifePlugin extends Plugin {
     notice(tf('notice.appended', { name: file.basename }));
   }
 
-  // 插入此刻正在听（P1）：往「用户当前编辑的笔记」光标处插一行曲目信息。
+  // 插入此刻正在听：往「用户当前编辑的笔记」光标处插一行曲目信息。
   // 与上面的 appendListeningNote 是两件事：那个写专辑笔记正文末尾，这个只动当前编辑器、不碰文件。
   // 成功不弹通知（插入结果肉眼可见），只有失败路径才提示。
   insertNowPlaying() {

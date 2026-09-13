@@ -1,4 +1,4 @@
-// 卡片属性（M7）回归：黑名单 / 值格式化 / 旧设置迁移 / 有序变更 / 属性发现 / 卡片采集。
+// 卡片属性回归：黑名单 / 值格式化 / 旧设置迁移 / 有序变更 / 属性发现 / 卡片采集。
 // esbuild 从真实 TS 编译进 node:vm（stub obsidian），不改 vault、不依赖 Obsidian 运行。
 // 注意：不要 import settings.ts（会拉起登录弹窗整条依赖链）。
 const { test } = require('node:test');

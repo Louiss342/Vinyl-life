@@ -1,5 +1,5 @@
-// 网易云登录弹窗（M0 V4 已验证链路的产品化封装）：
-//   扫码：qrimg 自带 data: 前缀（M0 坑，勿重复拼接）→ 2s 轮询 800/801/802/803
+// 网易云登录弹窗：
+//   扫码：qrimg 自带 data: 前缀（勿重复拼接）→ 2s 轮询 800/801/802/803
 //   手动：粘贴浏览器 Cookie 兜底
 import { App, Modal } from 'obsidian';
 import { ServerManager } from '../core/server-manager';
@@ -212,8 +212,8 @@ export class QrLoginModal extends Modal {
           statusEl.textContent = t('login.scannedConfirm');
         } else if (code === 803) {
           statusEl.textContent = t('login.authorizing');
-          // 新网关直接复用 803 前已经验证过的账号，避免紧接着重复请求远端导致假失败。
-          // 数字返回值仍兼容旧网关与测试替身。
+          // 803 已带回验证过的账号 → 直接复用，避免紧接着重复请求远端导致假失败
+          // （只在拿到数字返回值、或响应里没有 state 时才回落到 getStatus）。
           const st = typeof result === 'number' || !result.state
             ? await this.deps.auth.getStatus()
             : result.state;

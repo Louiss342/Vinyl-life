@@ -1,7 +1,7 @@
-// 黑胶交接动效（M3，方案 5.8）：IDLE → HANDOFF → PLAYING 状态机
+// 黑胶交接动效：IDLE → HANDOFF → PLAYING 状态机
 // 不做跨视图物理飞行（多 pane 不可靠且耗电）：
 //   墙上「拾取 + 离墙淡出」（WAAPI，420ms）+ 播放器「落盘淡入」（视图内入场动画）两段拼接。
-// 时间线（v0.3.1 修订：方向改为从封套右侧开口抽出，时长 700ms，缓动 easeOutCubic）：
+// 时间线（方向：从封套右侧开口抽出；时长 700ms，缓动 easeOutCubic）：
 //   A 拾取 0–370ms    唱片从封面右侧探出位向右抽出 + 轻微放大（现实中从开口抽出、拿起）
 //   B 离墙 370–700ms  继续右上方离场 + 缩小 + 淡出
 //   C 落盘 ~700ms+    播放器出现/聚焦，唱片滑入转盘（VinylPlayerView.playEntrance）
@@ -26,7 +26,7 @@ export class HandoffController {
   }
 
   /**
-   * 点击黑胶 → 交接。cardEl 为墙上卡片（含 .vinyl-shelf-disc），传 null 时跳过墙上动画（自检用）。
+   * 点击黑胶 → 交接。cardEl 为墙上卡片（含 .vinyl-shelf-disc），传 null 时跳过墙上动画。
    * 返回最终状态（playing = 队列已加载并开始播放 / 落盘待命）。
    */
   async handoff(album: AlbumInfo, cardEl: HTMLElement | null): Promise<HandoffState> {

@@ -12,17 +12,9 @@
 //   makeStore(file) → { read(), write(v) } 凭据文件；timeout(ms) → AbortSignal；
 //   crypto → node:crypto（仅 zza 签名后备用）；cookieFile / guidFile → 本模块凭据路径。
 //
-// 实探记录（2026-09-10 匿名实测，实施依据；改动接口前先复核）：
-//   V1  vkey.GetVkeyServer/CgiGetVkey 可不带 sign 直接请求（uin:"0" 亦返回 code:0）
-//   V2  sip 的 http CDN 地址支持 https + Range(206)、无需 Referer ⇒ 仅做 http→https 改写，不做音频代理
-//   V3  专辑 fcg_v8_album_info_cp.fcg 返回 data.list[]（strMediaMid / interval 秒 / pay / preview），
-//       封面需自行拼 https://y.gtimg.cn/music/photo_new/T002R300x300M000<albummid>.jpg
-//   V4  无效 albummid → {"code":1101,"message":"para error!"}
-//   V5  strMediaMid ≠ songmid（vkey filename 用 mediaMid，空 purl 时回退 songmid 再试）
-//   V7  music.UserInfo.userInfoServer/GetLoginUserInfo 存在且登录受限（匿名 req_0.code=1000）
-//   V8  ptqrshow 200，Set-Cookie: qrsig=...（PNG）
-//   V9  lyric 匿名可用（需 Referer: https://y.qq.com/）
-//   V12 空 purl = 无权限（无错误码可映射）；试听曲目同样给 purl（仅 ~30s 可播）
+// 上游约束：vkey 取链可不带 sign；sip 的 http CDN 支持 https + Range(206)、无需 Referer
+//   ⇒ 只做 http→https 改写，不做音频代理。strMediaMid ≠ songmid（vkey filename 优先 mediaMid，
+//   空 purl 时回退 songmid 再试）；空 purl = 无权限（无错误码可映射），试听曲目同样给 purl。
 //
 // 扫码码（ptuiCB 首参）：66 待扫 / 67 已扫待确认 / 65 过期 / 0 成功
 //   → 网关内归一化为 801 / 802 / 800 / 803（客户端弹窗协议与网易云一致）。
@@ -104,9 +96,8 @@ function getSetCookies(res) {
 }
 
 // Set-Cookie 合并（跨跳持久化）：同一 Cookie 名可能多次下发（不同 Domain/Path，含“删除型”空值，
-// 实测 check_sig 对 p_uin / p_skey 各下发两次）。旧实现按最后一条覆盖，空值会把有效票据冲掉 ——
-// 线上事故：check_sig 明显下发了 p_skey/p_uin，后续跳转却报「未取得 p_skey/p_uin」。
-// 规则：空值不覆盖已有值；非空值按最后一条为准。
+// 如 check_sig 对 p_uin / p_skey 各下发两次）。规则：空值不覆盖已有值；非空值按最后一条为准
+// —— 按最后一条无脑覆盖时，空值会把有效票据冲掉。
 function mergeSetCookies(jar, setCookies) {
   for (const c of setCookies || []) {
     const first = String(c).split(';')[0];
@@ -145,10 +136,8 @@ function setCookieShape(setCookies) {
 }
 
 // ptuiCB('66','0','','0','...','') → { code, subCode, url, msg, nick }；无法解析返回 null
-// 官方字段数不固定：成功响应实测为 7 字段（…,'0','登录成功！','<昵称>','')，尾部可能还有空字段。
-// 旧实现只匹配 ≤6 字段，腾讯多下发一个空字段即整体解析失败 —— 线上事故：
-// 手机确认后返回成功响应，网关却抛“服务异常”，表现为「手机显示成功、电脑显示失败」。
-// 现在把第 5 字段之后统一当作附加字段序列，取第一个附加字段为昵称。
+// 官方字段数不固定（成功响应 7 字段，尾部可能还有空字段）：第 5 字段之后统一当作附加字段
+// 序列，取第一个附加字段为昵称。别按固定字段数匹配——多一个空字段就会整体解析失败。
 function parsePtuiCB(text) {
   const m = /^ptuiCB\('(\d+)',\s*'(\d+)',\s*'([^']*)',\s*'(\d+)',\s*'([^']*)'((?:,\s*'[^']*')*)\)/.exec(
     String(text == null ? '' : text).trim()
@@ -170,7 +159,7 @@ function coverUrl(albumMid) {
     : '';
 }
 
-// 双通道防御：个别版本把 Cookie 放在 JSON body 里（V4 风险项）
+// 双通道防御：部分响应把 Cookie 放在 JSON body 里，而非 Set-Cookie 头
 function extractCookiesFromJson(node, depth) {
   if ((depth || 0) > 4 || node == null) return {};
   if (typeof node === 'string') {
@@ -211,7 +200,7 @@ function registerQqRoutes(deps) {
     return g;
   }
 
-  // zza 签名（实测当前接口不校验；若未来 musicu 返回风控错误，可拼到 URL query：?sign=<z>&data=…）
+  // zza 签名（当前接口不校验；若 musicu 返回风控错误，可拼到 URL query：?sign=<z>&data=…）
   function zzaSign(jsonText) {
     const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
     const count = Math.floor(Math.random() * 7 + 10);
@@ -385,7 +374,7 @@ function registerQqRoutes(deps) {
   async function completeLogin(checkUrl, initialJar) {
     const jar = { ...(initialJar || {}) };
     // 1) check_sig 跳转链：逐跳捕获 Set-Cookie（p_skey / p_uin / pt4_token 等）。
-    //    有的链路在这一步的 302 Location 里就直接带 OAuth code（R4 兜底）。
+    //    有的链路在这一步的 302 Location 里就直接带 OAuth code（可作兜底）。
     let url = checkUrl;
     let chainCode = '';
     const codeFrom = (loc) => {
@@ -600,7 +589,7 @@ function registerQqRoutes(deps) {
     return info;
   }
 
-  // —— 播放取链（服务端 ladder + CDN 并行探测 + https 改写；V1/V2/V5/V6/V12）——
+  // —— 播放取链（服务端 ladder + CDN 并行探测 + https 改写）——
 
   async function probeCdn(url) {
     try {
@@ -635,7 +624,7 @@ function registerQqRoutes(deps) {
       const dedupeKey = spec.prefix + spec.ext;
       if (tried.has(dedupeKey)) continue;
       tried.add(dedupeKey);
-      // V5/R6：filename 优先 mediaMid，空 purl 时回退 songmid
+      // filename 优先 mediaMid（strMediaMid ≠ songmid），空 purl 时回退 songmid 再试
       const candidates = [];
       if (mediaMid && mediaMid !== mid) candidates.push(mediaMid);
       candidates.push(mid);
@@ -715,7 +704,7 @@ function registerQqRoutes(deps) {
         log('[vinyl-server] qq qr/check code: 803（已校验并保存，uin', info.uin + '）');
         return { code: 803, data: normalizeAccount(info).data };
       } catch (e) {
-        // 失败原因必须落在网关日志里（此前只进 Obsidian 控制台，日志排查时看不到）。
+        // 失败原因必须落在网关日志里（只进 Obsidian 控制台时，排查看不到）。
         log('[vinyl-server] qq-login 失败:', (e && e.message) || String(e));
         throw e;
       } finally {

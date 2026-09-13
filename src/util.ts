@@ -275,7 +275,7 @@ export function baseName(name: string): string {
   return name.replace(/\.[^.]+$/, '');
 }
 
-// wikilink 剥壳（M7 从 album-index 移入：卡片属性格式化与路径解析共用，且此处是依赖链叶子，避免 album-index ↔ shelf-props 成环）
+// wikilink 剥壳（卡片属性格式化与路径解析共用；此处是依赖链叶子，避免 album-index ↔ shelf-props 成环）
 const WIKILINK_RE = /^\[\[([^\]|#]+)(?:[^\]|]*)\]\]$/;
 
 export function stripWikilink(v: string): string {
@@ -294,7 +294,7 @@ export function fmtTime(sec: number): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-// 网易云播放限制码 → 提示文案（M0 已定映射，方案 5.4）
+// 网易云播放限制码 → 提示文案
 export function restrictionText(code: number | string | undefined | null): string {
   const c = String(code ?? '');
   if (['401', '10407'].includes(c)) return t('util.restrictionLoginRequired');
@@ -304,7 +304,7 @@ export function restrictionText(code: number | string | undefined | null): strin
   return c ? tf('util.restrictionUnknown', { code: c }) : t('util.restrictionUnavailable');
 }
 
-// 插件目录绝对路径（M0 三连坑：Obsidian 进程 cwd ≠ vault 根，相对路径静默失效）
+// 插件目录绝对路径（Obsidian 进程 cwd ≠ vault 根，相对路径会静默失效）
 export function pluginAbsPath(plugin: Plugin, ...parts: string[]): string {
   let base = '';
   try {

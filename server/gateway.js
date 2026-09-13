@@ -224,7 +224,7 @@ function loadAnonymousTokenFromDisk() {
         return true;
       }
     } catch (_) {}
-    // 旧格式（M0 遗留：仅 token，无 deviceId）
+    // 旧格式（仅 token，无 deviceId）
     anonymousToken = raw;
     savedDeviceId = '';
     serverLog('[vinyl-server] anonymous token 已从磁盘加载 (旧格式，无 deviceId 绑定), 长度', raw.length);
@@ -345,9 +345,9 @@ const request = createRequest;
 loadAnonymousTokenFromDisk();
 
 // —— 匿名身份惰性注册（新用户首次扫码登录）——
-// 背景（M0）：802 授权只有在请求携带 MUSIC_A 时才会下发 MUSIC_U。新用户本机没有
-// .anon-token，因此这里在首次扫码前注册一次匿名身份并落盘复用；每个进程生命周期最多
-// 尝试一次，避免触发上游限流（注册接口有频率限制，失败不阻塞流程，仍有浏览器登录兜底）。
+// 802 授权只有在请求携带 MUSIC_A 时才会下发 MUSIC_U。新用户本机没有 .anon-token，
+// 因此首次扫码前注册一次匿名身份并落盘复用；每个进程生命周期最多尝试一次，避免触发
+// 上游限流（注册接口有频率限制，失败不阻塞流程，仍有浏览器登录兜底）。
 const ID_XOR_KEY_1 = '3go8&$8*3*3h0k(2)2';
 let anonRegisterTried = false;
 
@@ -480,8 +480,8 @@ route('GET', '/api/login/qr/create', async ({ query }) => {
 });
 
 route('GET', '/api/login/qr/check', async ({ query }) => {
-  // 上游示例：800 过期 / 801 等待扫码 / 802 待确认 / 803 授权成功。
-  // 直接调用端点，避开依赖模块 catch 分支引用未定义 result、吞掉网络错误的问题。
+  // 上游码：800 过期 / 801 等待扫码 / 802 待确认 / 803 授权成功。
+  // 直接调用端点而不是依赖模块的封装：其 catch 分支引用了未定义的 result，会吞掉网络错误。
   const result = await request('/api/login/qrcode/client/login',
     { key: query.key, type: 3 }, { crypto: 'weapi' });
   const code = Number(result.body?.code);

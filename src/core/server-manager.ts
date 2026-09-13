@@ -1,7 +1,7 @@
-// 网易云本地网关管理（M0 V3 已验证）：
+// 本地网关管理：
 //   Obsidian 二进制禁用 ELECTRON_RUN_AS_NODE → 依赖系统 Node，先探测 PATH 再试常见绝对路径
 //   空闲端口探测 → 懒加载 spawn → 就绪等待 → 优雅关闭 → 崩溃自愈（限次重启）
-//   所有路径经 gatewayEnv 统一绝对化注入（M0 遗留项收口）
+//   所有路径经 gatewayEnv 统一绝对化注入
 import { Plugin } from 'obsidian';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -49,7 +49,7 @@ export class ServerManager {
     return this.state === 'running';
   }
 
-  // —— Node 探测（M0 结论：需系统 Node，做友好引导）——
+  // —— Node 探测（需系统 Node，做友好引导）——
   probeNode(bin: string): Promise<boolean> {
     return new Promise((resolve) => {
       try {
@@ -111,8 +111,7 @@ export class ServerManager {
       console.error('[vinyl] ' + this.lastError);
       return false;
     }
-    // 插件每次重载都会新建 ServerManager 并 spawn 新网关；旧进程不清会常驻堆积，
-    // 还可能出现「日志/进程仍是旧代码」的排查陷阱。先按 PID 记录清掉上一个网关。
+    // 插件每次重载都会 spawn 新网关；旧进程不清会常驻堆积，先按 PID 记录清掉上一个。
     await this.killStaleGateway();
     this.port = await this.findFreePort();
     let gateway = '';
@@ -159,7 +158,7 @@ export class ServerManager {
       }
     });
 
-    // 就绪等待（最多 15s；M0 实测冷启动 278–292ms）
+    // 就绪等待（最多 15s）
     for (let i = 0; i < 100; i++) {
       if (earlyError) break;
       try {

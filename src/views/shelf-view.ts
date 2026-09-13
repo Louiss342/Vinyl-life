@@ -1,6 +1,6 @@
-// 专辑墙视图（M2 自绘 ItemView，v0.4.1 工具栏版）：
+// 专辑墙视图（自绘 ItemView）：
 //   工具栏：标题计数 / 搜索（防抖）/ 刷新 / 排序 / 音源筛选 / 卡片属性 / 导入专辑 / 导入本地音频
-//   点击卡片 = 黑胶交接（M3）；拖拽音频入库（M4）；播放中卡片高亮 + 唱片离墙。
+//   点击卡片 = 黑胶交接；拖拽音频入库；播放中卡片高亮 + 唱片离墙。
 import {
   ItemView,
   WorkspaceLeaf,
@@ -398,7 +398,7 @@ export class VinylShelfView extends ItemView {
     menu.showAtMouseEvent(ev);
   }
 
-  // ============ 卡片属性弹层（M7）============
+  // ============ 卡片属性弹层 ============
   // 两区（已显示 / 可添加）+ 计数；已显示区可拖拽调序、✎ 改显示名、✕ 移除。
   // 内容重绘与事件注册分离：任何变更只重绘本区，弹层保持打开、逐项即时生效。
 
@@ -655,7 +655,7 @@ export class VinylShelfView extends ItemView {
     }
 
     card.createDiv({ text: album.title, cls: 'vinyl-shelf-card-title' });
-    // 属性行（M7）：顺序取自设置数组（不遍历 displayProps 键序——整数样键名会被 Object.keys 提前）
+    // 属性行：顺序取自设置数组（不遍历 displayProps 键序——整数样键名会被 Object.keys 提前）
     const labels = this.plugin.settings.shelfPropLabels;
     const prop = (label: string, value: string) => {
       const row = card.createDiv({ cls: 'vinyl-shelf-prop' });
@@ -670,8 +670,8 @@ export class VinylShelfView extends ItemView {
       prop(propLabel(key, labels), propPrefix(key) + value);
     }
 
-    // 音源标记已下线（音源可由工具栏「音源筛选」找到，播放时播放器丝印行也显示来源）；
-    // 只留「无音源」提示——这类卡片点击打开笔记而非播放，需要一眼可辨。
+    // 只在「无任何音源」时给提示——这类卡片点击打开笔记而非播放，需要一眼可辨
+    // （音源筛选在工具栏，播放时播放器丝印行也显示来源）。
     if (!e.local && !e.netease && !e.qq) {
       card
         .createDiv({ cls: 'vinyl-shelf-badges' })
@@ -683,7 +683,7 @@ export class VinylShelfView extends ItemView {
       ev.preventDefault();
       this.showMenu(e, ev);
     });
-    // 拖拽音频到卡片 = 导入到该专辑（M4，落库模式取设置）
+    // 拖拽音频到卡片 = 导入到该专辑（落库模式取设置）
     card.addEventListener('dragover', (ev) => {
       if (this.hasAudioFiles(ev)) {
         ev.preventDefault();
@@ -709,7 +709,7 @@ export class VinylShelfView extends ItemView {
     return card;
   }
 
-  // 点击 = 黑胶交接（M3）：离墙动画 → 打开播放器 → 落盘 → 播放；纯收藏态 → 打开笔记
+  // 点击 = 黑胶交接：离墙动画 → 打开播放器 → 落盘 → 播放；纯收藏态 → 打开笔记
   private async playAlbum(e: ShelfEntry) {
     const { album } = e;
     if (!e.local && !e.netease && !e.qq) {

@@ -1,4 +1,4 @@
-// 设置面板（M6 改版）：四个标签页 —— 通用（路径 / 播放 / 播放器 / 播放统计）、
+// 设置面板：四个标签页 —— 通用（路径 / 播放 / 播放器 / 播放统计）、
 // 外观（专辑墙 / 播放器）、源（外来源 / 本地源）、关于（版本 / 作者手记 / 许可）。
 // 卡片属性不在设置页出现：专辑墙工具栏「卡片属性」直接维护 shelfProps。
 import { App, PluginSettingTab, Setting } from 'obsidian';
@@ -36,7 +36,7 @@ export interface VinylSettings {
   importMode: 'copy' | 'link';
   defaultSource: 'auto' | 'local' | 'netease' | 'qq';
   quality: 'standard' | 'higher' | 'exhigh' | 'lossless';
-  /** 加载队列后立即播放（M3 交接后即“落盘即播”） */
+  /** 加载队列后立即播放（交接后即“落盘即播”） */
   autoPlay: boolean;
   playerLocation: 'sidebar' | 'tab' | 'window';
   /** 播放器面板配色（外观标签页）：胡桃木 / 黑胶黑 */
@@ -200,7 +200,7 @@ export class VinylSettingTab extends PluginSettingTab {
           this.display(); // 设置面板自身立即按新语言重绘（否则要重开标签页才变）
         });
       });
-    // 命令面板瘦身：维护类命令（登录 / 退出）默认不注册。
+    // 维护类命令（登录 / 退出）默认不注册。
     // 注册发生在 onload → 改完开关重载插件（或重开 Obsidian）才生效，描述里已写明。
     new Setting(c)
       .setName(t('settings.debugCommands'))

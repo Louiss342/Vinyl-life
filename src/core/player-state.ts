@@ -1,5 +1,5 @@
-// 播放引擎（M1 底座）：统一面向 Track 解析可播放地址、推进队列、状态快照事件。
-// M3 的交接动效与黑胶转盘视觉接在此状态之上（IDLE → HANDOFF → PLAYING）。
+// 播放引擎：统一面向 Track 解析可播放地址、推进队列、状态快照事件。
+// 交接动效与黑胶转盘视觉接在此状态之上（IDLE → HANDOFF → PLAYING）。
 import { App } from 'obsidian';
 import { Track, trackKey, applyTrackOrder, reorderTracks } from './track';
 import { AlbumInfo } from './album-index';
@@ -177,7 +177,7 @@ export class PlaybackEngine {
     // 它是「恢复原有顺序」的基准，拖拽不得改动，故只认这里的构建结果
     this.originalOrder = tracks.map((t) => trackKey(t));
     // 该专辑存过自定义顺序 → 套用（新增曲目按原相对顺序补在后面）；
-    // 没存过（或钩子未接线）走原始顺序，行为与旧版一致
+    // 没存过（或钩子未接线）走构建出来的原始顺序
     const saved = this.deps.savedOrder?.(albumNotePath);
     this.queue = saved && saved.length ? applyTrackOrder(tracks, saved) : tracks;
     this.index = -1;
@@ -278,7 +278,7 @@ export class PlaybackEngine {
     this.emit();
     const track = this.queue[i];
     // 「还在等这一首吗」按下标判定会在拖拽重排后误判（下标变了、曲子没变）→ 卡在 loading。
-    // 统一改成判「当前曲目还是不是这一首」：切走 / 换专辑照样丢弃，重排不再打断加载。
+    // 判据用「当前曲目还是不是这一首」：切走 / 换专辑照样丢弃，重排不打断加载。
     const stillCurrent = () => this.queue[this.index] === track;
     try {
       const url = await this.resolveUrl(track);
@@ -345,7 +345,7 @@ export class PlaybackEngine {
     this.emit();
   }
 
-  // —— 地址解析（三路 M0 已验证）——
+  // —— 地址解析（本地 / 网易云 / QQ 三路）——
   async resolveUrl(track: Track): Promise<string> {
     switch (track.source) {
       case 'local-vault':
@@ -396,7 +396,7 @@ export class PlaybackEngine {
     // 出错的是「事件触发时的那一首」：await 之后若已切歌，兜底结果一律丢弃。
     // 判「当前曲目还是不是这一首」而非下标——拖拽重排只换位置不换曲子，不该丢弃兜底结果。
     const stillCurrent = () => this.queue[this.index] === track;
-    // vault 流式失败 → readBinary→Blob 兜底（M0 V1-B 预案）
+    // vault 流式失败 → readBinary→Blob 兜底
     if (track.source === 'local-vault' && !this.vaultBlobRetried.has(track.file.path)) {
       this.vaultBlobRetried.add(track.file.path);
       try {

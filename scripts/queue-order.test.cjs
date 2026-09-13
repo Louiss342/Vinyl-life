@@ -1,4 +1,4 @@
-// 播放队列拖拽排序（M9）：
+// 播放队列拖拽排序：
 //   A 部分纯函数：reorderTracks（含越界）/ applyTrackOrder（缺失键、新增曲目排后面保序）；
 //   B 部分引擎：moveTrack 后「正在播的那首仍是当前曲目」+ 顺序持久化钩子 + setQueue 套用存过的顺序；
 //   C 部分设置归一化：normalizeQueueOrder 丢弃脏数据 + 默认值不被就地改写；

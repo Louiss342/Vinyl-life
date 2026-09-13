@@ -1,4 +1,4 @@
-// 删除专辑弹窗（M6）：二次确认 + 可选连带清理（本地音频 / 封面）。
+// 删除专辑弹窗：二次确认 + 可选连带清理（本地音频 / 封面）。
 // 资产盘点在 onOpen 时做一次（模态打开期间专辑墙不会改动）；执行统一走 plugin.deleteAlbum。
 import { App, Modal } from 'obsidian';
 import type VinylLifePlugin from '../main';

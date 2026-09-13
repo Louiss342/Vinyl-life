@@ -1,4 +1,4 @@
-// 网易云源客户端：与本地网关（server.js，M0 已验证）通信。
+// 网易云源客户端：与本地网关（server.js）通信。
 import { Track } from './track';
 import { restrictionText } from '../util';
 
@@ -117,7 +117,7 @@ export class ServerClient {
     return this.getJson('/api/search', { keywords });
   }
 
-  // 封面代理下载（避开浏览器 CORS；网易云导入 M4 用，这里先给基础能力）
+  // 封面代理下载（避开浏览器 CORS）
   async fetchCover(url: string): Promise<ArrayBuffer> {
     const res = await fetch(this.url('/api/cover', { url }));
     if (!res.ok) throw new Error(`封面下载失败 HTTP ${res.status}`);

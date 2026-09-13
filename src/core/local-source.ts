@@ -1,6 +1,6 @@
-// 本地源（零后端，方案 5.3）：
+// 本地源（零后端）：
 //   vault 内  → adapter 扫描 + getResourcePath 流式直出（首选），readBinary→Blob 兜底
-//   外链绝对路径 → Node fs 扫描/读取 → Blob URL（按文件缓存；v1 内存拷贝，接受）
+//   外链绝对路径 → Node fs 扫描/读取 → Blob URL（按文件缓存，内存拷贝）
 // Blob URL 生命周期：按专辑小缓存，切专辑回收，unload 全清。
 import { App, TFile, TFolder, normalizePath } from 'obsidian';
 import * as fs from 'fs';
@@ -134,7 +134,7 @@ export class LocalSource {
 
   // ============ 可播放地址解析 ============
 
-  // vault：getResourcePath 流式直出（M0 V1-A 已验证），失败由引擎回退 readBinary→Blob
+  // vault：getResourcePath 流式直出，失败由引擎回退 readBinary→Blob
   resolveVaultUrl(file: TFile): string {
     return this.app.vault.getResourcePath(file);
   }
@@ -150,7 +150,7 @@ export class LocalSource {
     return url;
   }
 
-  // 外链：fs → Blob URL（M0 V2 已验证；按文件缓存）
+  // 外链：fs → Blob URL（按文件缓存）
   resolveExternalUrl(absPath: string): string {
     const hit = this.blobUrls.get(absPath);
     if (hit) return hit;
