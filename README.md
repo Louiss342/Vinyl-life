@@ -6,6 +6,12 @@
 
 音乐和笔记也许本身有着天然的亲和力。
 
+A song is worth writing down.
+
+Put the needle down, and for a second there is only that crackle — like beans popping. The year it came from, the city, the rain; the night it carried you through; the person it brings back. These things should not sink into memory, and should not become a post on a social platform. They should be a page of your own — private, quiet, somewhere it can stay.
+
+Music and notes may have a natural affinity for each other.
+
 Vinyl Life 把专辑笔记展示成一张张唱片，配有黑胶唱机样式的播放器。可以听电脑里的音乐，也可以接入自己的网易云音乐或 QQ 音乐账号。每张唱片对应一篇普通的 Markdown 笔记，用来记专辑资料、评分，或某次听歌时想到的事。
 
 支持 Obsidian 1.4.0 及以上版本，仅限桌面端。界面可切换中文和 English。

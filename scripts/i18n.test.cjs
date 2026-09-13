@@ -790,6 +790,20 @@ const ABOUT_EXPECTED =
   '\n' +
   '音乐和笔记也许本身有着天然的亲和力。\n';
 
+// 英译逐字期望值：同样在测试里独立抄一遍（不从源码读回）。
+// 段落结构与中文一致（三段、段间空行），末行行尾同样保留一个换行。
+const ABOUT_EXPECTED_EN =
+  'A song is worth writing down.\n' +
+  '\n' +
+  'Put the needle down, and for a second there is only that crackle — like beans popping. The year it came from, the city, the rain; the night it carried you through; the person it brings back. These things should not sink into memory, and should not become a post on a social platform. They should be a page of your own — private, quiet, somewhere it can stay.\n' +
+  '\n' +
+  'Music and notes may have a natural affinity for each other.\n';
+
+/** 段落切分（抹掉行尾空白后取非空行）——README 里手记没有中文原文那份行尾空格 */
+function aboutParagraphs(text) {
+  return text.split('\n').map((s) => s.trim()).filter((s) => s.length > 0);
+}
+
 test('「关于」手记：ABOUT_TEXT 逐字照录（含首行行尾空格与段落间空行）', () => {
   assert.equal(typeof about.ABOUT_TEXT, 'string', 'ABOUT_TEXT 是字符串常量');
   assert.equal(about.ABOUT_TEXT.length, ABOUT_EXPECTED.length, '长度必须一致');
@@ -808,14 +822,42 @@ test('「关于」手记：ABOUT_TEXT 逐字照录（含首行行尾空格与段
   assert.equal(about.ABOUT_TEXT.includes('她'), false, '不得出现原文没有的字（作者已确认删去行首那个「地」）');
 });
 
+test('「关于」手记：ABOUT_TEXT_EN 逐字照录（英译，与中文并列展示）', () => {
+  const en = about.ABOUT_TEXT_EN;
+  assert.equal(typeof en, 'string', 'ABOUT_TEXT_EN 是字符串常量');
+  assert.ok(en.trim().length > 0, 'ABOUT_TEXT_EN 非空');
+  assert.equal(en.length, ABOUT_EXPECTED_EN.length, '长度必须一致');
+  assert.equal(en, ABOUT_EXPECTED_EN, '英译必须与作者授权的那份逐字相同（不许改写 / 润色）');
+  assert.notEqual(en, ABOUT_EXPECTED, '英译与中文原文不能相同（否则等于没加译文）');
+  assert.equal(en.includes('\r'), false, '不得含 CR（CRLF 换行会破坏逐字保真）');
+
+  // 段落结构与中文一致：三段、段间空行、末行一个换行
+  const lines = en.split('\n');
+  assert.equal(lines.length, 6, '三段正文 + 两个段间空行 + 末尾换行切出的空串');
+  assert.equal(lines[1], '', '第一段与第二段之间是空行');
+  assert.equal(lines[3], '', '第二段与第三段之间是空行');
+  assert.equal(lines[0], 'A song is worth writing down.');
+  assert.equal(lines[4], 'Music and notes may have a natural affinity for each other.');
+  assert.equal(aboutParagraphs(en).length, 3, '段落数（非空行）为 3');
+  assert.equal(aboutParagraphs(ABOUT_EXPECTED).length, 3, '中文也是 3 段 —— 两份结构对齐');
+});
+
 test('「关于」手记：正文不进 i18n 词典（不是键、不翻译）', () => {
   // 词典测试强制 zh !== en；正文若进词典，要么被翻译（原文就没了），要么把中英抄成一样（词典测试会红）
   const values = Object.values(i18n.DICT).flatMap((e) => [e.zh, e.en]);
   assert.equal(values.includes(about.ABOUT_TEXT), false, '整段手记不得作为任何键的译文');
+  // 英译同理：它是「正文」，与中文并列展示，不跟语言开关走
+  assert.equal(values.includes(about.ABOUT_TEXT_EN), false, '英译手记不得作为任何键的译文');
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(i18n.DICT, about.ABOUT_TEXT_EN),
+    false,
+    '英译手记不得被当成词典键'
+  );
 
-  // 整行抄进词典同样算违规（拿正文里每个「整行」去词典里找子串）
-  const lines = about.ABOUT_TEXT.split('\n').map((s) => s.trim()).filter((s) => s.length >= 8);
-  assert.ok(lines.length >= 2, `探针：正文只切出 ${lines.length} 个可比对的行，切分逻辑可能已失效`);
+  // 整行抄进词典同样算违规（拿正文里每个「整行」去词典里找子串）——中英两份都查
+  const lines = [...aboutParagraphs(about.ABOUT_TEXT), ...aboutParagraphs(about.ABOUT_TEXT_EN)]
+    .filter((s) => s.length >= 8);
+  assert.ok(lines.length >= 4, `探针：正文只切出 ${lines.length} 个可比对的行，切分逻辑可能已失效`);
   const hits = [];
   for (const [k, entry] of Object.entries(i18n.DICT)) {
     for (const lang of ['zh', 'en']) {
@@ -848,4 +890,119 @@ test('「关于」页接线：设置面板确有 about 标签页，且渲染的�
   );
   assert.match(src, /REPO_URL/, '底部 GitHub 外链走 REPO_URL 常量');
   assert.match(about.REPO_URL, /^https:\/\/github\.com\/Louiss342\/Vinyl-life$/, '仓库地址');
+
+  // 接线顺序（只切 renderAbout 这一段：整份源码里的 import 行会让「谁在前」变得没意义）：
+  // 中文正文先建，英译后建 —— 真正的节点先后由下面假 DOM 的用例驱动验证
+  const renderAboutSrc = src.slice(src.indexOf('private renderAbout'));
+  assert.ok(renderAboutSrc.length > 0, '探针：settings.ts 里找得到 renderAbout');
+  assert.match(
+    renderAboutSrc,
+    /ABOUT_TEXT(?!_)[\s\S]{0,400}?ABOUT_TEXT_EN/,
+    'renderAbout 里英译要接在中文正文之后（不是只 import 进来）'
+  );
+});
+
+// ============ 「关于」页：中英并列的渲染顺序（假 DOM 驱动真实 renderAbout） ============
+// settings.ts 的其余标签页要整个 Obsidian App 才能跑，这里只驱动 renderAbout ——
+// 它只用得到 container 的 createDiv / createSpan / createEl，正是下面 fakeEl 覆盖的那部分。
+let settingsBundle = null;
+function settingsModule() {
+  if (settingsBundle) return settingsBundle;
+  const src = esbuild.buildSync({
+    entryPoints: [path.join(__dirname, '../src/settings.ts')],
+    bundle: true,
+    write: false,
+    format: 'cjs',
+    platform: 'node',
+    external: ['obsidian'],
+  }).outputFiles[0].text;
+  const module = { exports: {} };
+  vm.runInNewContext(src, {
+    module,
+    exports: module.exports,
+    require: (name) => {
+      if (name === 'obsidian') {
+        return {
+          App: class {},
+          ItemView: class {},
+          Menu: class {},
+          Modal: class {},
+          Notice: class {},
+          Plugin: class {},
+          PluginSettingTab: class {
+            constructor(app, plugin) {
+              this.app = app;
+              this.plugin = plugin;
+            }
+          },
+          Setting: class {},
+          TFile: class {},
+          TFolder: class {},
+          WorkspaceLeaf: class {},
+          FuzzySuggestModal: class {},
+          normalizePath: (p) => p,
+          setIcon: () => {},
+          requestUrl: async () => ({}),
+        };
+      }
+      return require(name);
+    },
+    console,
+    Buffer,
+    setTimeout,
+    clearTimeout,
+  });
+  settingsBundle = module.exports;
+  return settingsBundle;
+}
+
+test('「关于」页：中文正文在上、英译在下（渲染顺序 + 两份内容逐字进 DOM）', () => {
+  const mod = settingsModule();
+  const tab = new mod.VinylSettingTab({}, { manifest: { version: '9.9.9' } });
+  const root = fakeEl();
+  tab.renderAbout(root);
+
+  const nodes = collect(root);
+  const zh = nodes.findIndex((e) => e.classes.has('vinyl-about-text'));
+  const en = nodes.findIndex((e) => e.classes.has('vinyl-about-text-en'));
+  const meta = nodes.findIndex((e) => e.classes.has('vinyl-about-meta'));
+  assert.ok(zh >= 0, '中文正文块已渲染');
+  assert.ok(en >= 0, '英译块已渲染（缺了就是没接线）');
+  assert.ok(zh < en, '顺序：标题/版本 → 中文正文 → 英译 → 底部 MIT · GitHub');
+  assert.ok(en < meta, '底部许可行仍在两份正文之后');
+  assert.equal(nodes[zh].textContent, ABOUT_EXPECTED, '中文块原样进 DOM（textContent 不裁剪）');
+  assert.equal(nodes[en].textContent, ABOUT_EXPECTED_EN, '英文块原样进 DOM（textContent 不裁剪）');
+  assert.ok(
+    nodes.some((e) => String(e.textContent).includes('9.9.9')),
+    '版本号仍取自 manifest.version'
+  );
+});
+
+test('README：开头的中文手记下方跟着同一份英译（不加标题）', () => {
+  const readme = fs.readFileSync(path.join(__dirname, '../README.md'), 'utf8');
+  const zhParas = aboutParagraphs(ABOUT_EXPECTED);
+  const enParas = aboutParagraphs(ABOUT_EXPECTED_EN);
+  assert.equal(zhParas.length, 3, '探针：中文手记切出 3 段');
+  assert.equal(enParas.length, 3, '探针：英译切出 3 段');
+
+  for (const p of zhParas) assert.ok(readme.includes(p), `README 缺中文手记段落：${p.slice(0, 12)}…`);
+  for (const p of enParas) assert.ok(readme.includes(p), `README 缺英译手记段落：${p.slice(0, 12)}…`);
+
+  // 版式：中文三段在前，英文三段在后（README 里没有中文原文首行行尾那个空格，故按段落比）
+  const zhLast = readme.indexOf(zhParas[zhParas.length - 1]);
+  const enFirst = readme.indexOf(enParas[0]);
+  assert.ok(enFirst > zhLast, '英译要排在中文手记下方');
+  assert.ok(
+    readme.indexOf(enParas[2]) > readme.indexOf(enParas[0]),
+    '英文三段保持原顺序（不是倒着抄）'
+  );
+
+  // 英文块上方：只隔一个空行、不加标题（版式要求）
+  const between = readme.slice(zhLast, enFirst);
+  assert.equal(between.includes('#'), false, '英文块上方不加标题');
+  assert.deepEqual(
+    between.split('\n').filter((l) => l.trim()),
+    [zhParas[zhParas.length - 1]],
+    '中文手记与英译之间只隔一个空行'
+  );
 });

@@ -11,7 +11,7 @@ import { notice } from './util';
 import { Lang, LANGUAGES, t, tf } from './core/i18n';
 import { EMPTY_STATS, VinylStats, ensureStats } from './core/stats';
 import { DEFAULT_SHELF_PROPS } from './core/shelf-props';
-import { ABOUT_TEXT, REPO_URL } from './core/about';
+import { ABOUT_TEXT, ABOUT_TEXT_EN, REPO_URL } from './core/about';
 import {
   DeckStyle,
   RecordColor,
@@ -622,6 +622,10 @@ export class VinylSettingTab extends PluginSettingTab {
     // 作者手记：原文常量（core/about.ts），逐字照录、不走 i18n。
     // pre-wrap 保住换行与首行行尾空格；text 设的是 textContent，原样进 DOM 不做裁剪。
     about.createDiv({ text: ABOUT_TEXT, cls: 'vinyl-about-text' });
+
+    // 英译紧跟在中文正文下方（中文在上、英文在下）：两份都是原文常量，不随语言开关切换。
+    // 版式差异交给 vinyl-about-text-en（字号略小、颜色偏淡），读起来是「译文」而非第二段正文。
+    about.createDiv({ text: ABOUT_TEXT_EN, cls: 'vinyl-about-text-en' });
 
     const meta = about.createDiv({ cls: 'vinyl-about-meta' });
     meta.createSpan({ text: t('settings.aboutLicense') });

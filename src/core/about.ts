@@ -10,5 +10,17 @@ export const ABOUT_TEXT =
   '\n' +
   '音乐和笔记也许本身有着天然的亲和力。\n';
 
+// 作者手记的英译（作者已授权）：与中文原文**并列展示**（中文在上、英文在下），
+// 所以它同样不是 i18n 文案 —— 不建键、不进词典、不跟语言开关走（否则这页只剩一种语言，
+// 并列对照就没了）。上面对中文原文的逐字约束同样适用于这份英译：不改写、不润色、不补标题。
+// 逐字照录：段落之间是空行，末行行尾保留一个换行（与 ABOUT_TEXT 一致）。
+// 同样用 \n 转义写死，免得编辑器「保存时删除行尾空格」或 git 的 CRLF 换行转换把它悄悄改掉。
+export const ABOUT_TEXT_EN =
+  'A song is worth writing down.\n' +
+  '\n' +
+  'Put the needle down, and for a second there is only that crackle — like beans popping. The year it came from, the city, the rain; the night it carried you through; the person it brings back. These things should not sink into memory, and should not become a post on a social platform. They should be a page of your own — private, quiet, somewhere it can stay.\n' +
+  '\n' +
+  'Music and notes may have a natural affinity for each other.\n';
+
 /** 仓库地址（「关于」页底部的 GitHub 外链）。github.com 与产品名不翻译，故不进词典。 */
 export const REPO_URL = 'https://github.com/Louiss342/Vinyl-life';
