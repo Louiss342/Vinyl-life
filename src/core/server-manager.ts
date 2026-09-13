@@ -9,7 +9,8 @@ import * as path from 'path';
 import * as net from 'net';
 import { spawn, execFile, ChildProcess } from 'child_process';
 import { pluginAbsPath, sleep } from '../util';
-import { GATEWAY_HASH, GATEWAY_SOURCE } from './gateway-bundle';
+import { gunzipSync } from 'zlib';
+import { GATEWAY_HASH, GATEWAY_GZIP } from './gateway-bundle';
 
 export type ServerState = 'stopped' | 'starting' | 'running' | 'error';
 
@@ -189,7 +190,12 @@ export class ServerManager {
       if (!fs.existsSync(file)) {
         fs.mkdirSync(dir, { recursive: true });
         const tmp = `${file}.${process.pid}.tmp`;
-        fs.writeFileSync(tmp, GATEWAY_SOURCE, 'utf8');
+        // 内联的是 gzip+base64，这里还原成源码再落盘（内容与构建时的 server.js 逐字节一致）
+        fs.writeFileSync(
+          tmp,
+          gunzipSync(Buffer.from(GATEWAY_GZIP, 'base64')).toString('utf8'),
+          'utf8'
+        );
         fs.renameSync(tmp, file);
         // 清理同目录下旧版本网关文件（在用的删不掉会抛错，忽略即可）
         try {

@@ -5,6 +5,7 @@
 import esbuild from 'esbuild';
 import fs from 'fs';
 import crypto from 'crypto';
+import zlib from 'zlib';
 
 const NODE_BUILTINS = [
   'fs', 'path', 'net', 'http', 'https', 'child_process', 'os', 'crypto',
@@ -35,14 +36,18 @@ async function build() {
     external: NODE_BUILTINS,
   });
 
-  // 2) 网关源码 → TS 模块（构建中间产物，不提交；hash 用于临时文件名，升级即换新文件）
+  // 2) 网关源码 → TS 模块（构建中间产物，不提交）。
+  //    gzip + base64 后内联：88 KB 明文字符串会吃掉 main.js 三分之一体积，压缩后仅 ~20 KB；
+  //    运行时用 zlib.gunzipSync 还原（渲染进程可直接 require node 内建模块）。
+  //    hash 用于临时文件名，升级即换新文件。
   const src = fs.readFileSync('server.js', 'utf8');
   const hash = crypto.createHash('sha1').update(src).digest('hex').slice(0, 10);
+  const gz = zlib.gzipSync(Buffer.from(src, 'utf8'), { level: 9 }).toString('base64');
   fs.writeFileSync(
     GATEWAY_BUNDLE,
     '// 由 esbuild.config.mjs 构建时生成，请勿手改、勿提交（见 .gitignore）。\n' +
       `export const GATEWAY_HASH = ${JSON.stringify(hash)};\n` +
-      `export const GATEWAY_SOURCE = ${JSON.stringify(src)};\n`
+      `export const GATEWAY_GZIP = ${JSON.stringify(gz)};\n`
   );
 
   // 3) 前端插件产物（M1 起开启 minify，体积预算见 README）
