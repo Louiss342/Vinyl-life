@@ -7,7 +7,13 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { AlbumInfo, stripWikilink } from './album-index';
 import { Track, trackKey } from './track';
-import { isAudioFile, baseName, mimeFromName } from '../util';
+import {
+  isAudioFile,
+  baseName,
+  mimeFromName,
+  collectFolderAudios,
+  collectExternalAudios,
+} from '../util';
 
 export class LocalSource {
   private blobUrls = new Map<string, string>();
@@ -70,28 +76,16 @@ export class LocalSource {
     const clean = stripWikilink(raw);
     const folder = this.app.vault.getAbstractFileByPath(normalizePath(clean));
     if (!(folder instanceof TFolder)) return [];
-    const tracks: Track[] = [];
-    for (const child of folder.children) {
-      if (child instanceof TFile && isAudioFile(child.name)) {
-        tracks.push(this.vaultTrack(album, child));
-      }
-    }
-    return tracks.sort((a, b) => a.title.localeCompare(b.title, 'zh-CN'));
+    // 含子目录：文件夹导入会保留 CD1/CD2 结构，只扫顶层会变成「无本地音源」
+    return collectFolderAudios(folder)
+      .map((f) => this.vaultTrack(album, f))
+      .sort((a, b) => a.title.localeCompare(b.title, 'zh-CN'));
   }
 
   private scanExternalFolder(album: AlbumInfo, absDir: string): Track[] {
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(absDir, { withFileTypes: true });
-    } catch {
-      return [];
-    }
-    const tracks: Track[] = [];
-    for (const e of entries) {
-      if (!e.isFile() || !isAudioFile(e.name)) continue;
-      tracks.push(this.externalTrack(album, path.join(absDir, e.name)));
-    }
-    return tracks.sort((a, b) => a.title.localeCompare(b.title, 'zh-CN'));
+    return collectExternalAudios(absDir)
+      .map((p) => this.externalTrack(album, p))
+      .sort((a, b) => a.title.localeCompare(b.title, 'zh-CN'));
   }
 
   private async resolveAudioRef(album: AlbumInfo, ref: string): Promise<Track | null> {

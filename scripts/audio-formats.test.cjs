@@ -26,9 +26,12 @@ vm.runInNewContext(source, {
         App: class {},
         Plugin: class {},
         Notice: class {},
+        TFile: class {},
+        TFolder: class {},
         normalizePath: (p) => p,
       };
     }
+    if (name === 'fs') return { readdirSync: () => [] };
     if (name === 'path') return nodePath;
     throw new Error('Unexpected runtime import: ' + name);
   },

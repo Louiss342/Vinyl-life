@@ -1,7 +1,8 @@
 // Vinyl Life — 通用小工具
 
-import { App, Plugin, Notice, normalizePath } from 'obsidian';
+import { App, Plugin, Notice, TFile, TFolder, normalizePath } from 'obsidian';
 import * as path from 'path';
+import { readdirSync as fsReaddirSync } from 'fs';
 
 // 受支持的音频容器（插件本身不解码，最终取决于 Chromium/Electron 内置解码器）：
 //   mp3 · m4a / m4b / mp4（AAC · ALAC）· wav · ogg / oga（vorbis）· opus · aac（ADTS）· webm / weba
@@ -149,6 +150,42 @@ export function libraryCandidates(items: PickedAudio[]): LibraryCandidate[] {
   return [...map.entries()]
     .map(([name, files]) => ({ name, files }))
     .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+}
+
+/**
+ * 递归收集文件夹内的音频文件（含子目录）：文件夹导入会保留 CD1/CD2 结构，
+ * 只扫顶层的话这类专辑会被判成「没有本地音源」而无法播放。
+ */
+export function collectFolderAudios(folder: TFolder): TFile[] {
+  const out: TFile[] = [];
+  const walk = (f: TFolder) => {
+    for (const child of f.children) {
+      if (child instanceof TFolder) walk(child);
+      else if (child instanceof TFile && isAudioFile(child.name)) out.push(child);
+    }
+  };
+  walk(folder);
+  return out;
+}
+
+/** 递归收集库外目录内的音频绝对路径（同一目的，走 fs） */
+export function collectExternalAudios(dir: string, depth = 3): string[] {
+  const out: string[] = [];
+  const walk = (d: string, left: number) => {
+    let entries: any[];
+    try {
+      entries = fsReaddirSync(d, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const full = path.join(d, e.name);
+      if (e.isFile() && isAudioFile(e.name)) out.push(full);
+      else if (e.isDirectory() && left > 0) walk(full, left - 1);
+    }
+  };
+  walk(dir, depth);
+  return out;
 }
 
 /** 音乐库根目录提示（弹窗与专辑墙共用同一句判定说明） */

@@ -178,6 +178,22 @@ test('安全：文件夹内混有非音频文件 → 只删音频、文件夹保
   assert.deepEqual(Array.from(t.sharedAudioPaths), []);
 });
 
+test('音源检测：音频在子目录里也算本地音源（多碟专辑导入后）', () => {
+  const h = setup();
+  h.addFile('Vinyl Life/audio/A/CD1/01.flac', {});
+  h.addFile('Vinyl Life/audio/A/CD2/01.flac', {});
+  const note = h.addFile('Vinyl Life/Vinyl Note/A.md', {
+    tags: ['album'],
+    audioFolder: '[[Vinyl Life/audio/A]]',
+  });
+  const album = h.albumOf(note);
+  assert.equal(
+    h.mod.detectAlbumSources(h.app, album).local,
+    true,
+    '子目录里的音频必须被认到（否则专辑显示无音源、点击打不开）'
+  );
+});
+
 test('封面自动识别：音频文件夹内的约定图 / 封面目录同名图；显式 cover 优先', () => {
   const h = setup();
   // ① 音频文件夹里的 cover.jpg

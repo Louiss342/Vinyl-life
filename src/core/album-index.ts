@@ -3,7 +3,12 @@
 import { App, TFile, TFolder, normalizePath } from 'obsidian';
 import * as fs from 'fs';
 import * as path from 'path';
-import { isAudioFile, stripWikilink } from '../util';
+import {
+  isAudioFile,
+  stripWikilink,
+  collectFolderAudios,
+  collectExternalAudios,
+} from '../util';
 import { buildDisplayProps } from './shelf-props';
 
 // 兼容既有调用点（delete.ts / local-source.ts 从本模块 import stripWikilink）：真值已移至 util.ts
@@ -228,14 +233,15 @@ function folderRefHasAudio(app: App, ref: string): boolean {
   if (/^[a-zA-Z]:[\\/]/.test(raw) || path.isAbsolute(raw)) {
     try {
       if (!fs.existsSync(raw) || !fs.statSync(raw).isDirectory()) return false;
-      return fs.readdirSync(raw).some((n) => isAudioFile(n));
+      return collectExternalAudios(raw).length > 0;
     } catch {
       return false;
     }
   }
   const folder = app.vault.getAbstractFileByPath(normalizePath(stripWikilink(raw)));
   if (!(folder instanceof TFolder)) return false;
-  return folder.children.some((c) => c instanceof TFile && isAudioFile(c.name));
+  // 含子目录（文件夹导入保留 CD1/CD2 结构）
+  return collectFolderAudios(folder).length > 0;
 }
 
 function audioRefExists(app: App, ref: string): boolean {
