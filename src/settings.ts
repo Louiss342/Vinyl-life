@@ -171,6 +171,7 @@ export class VinylSettingTab extends PluginSettingTab {
           this.plugin.settings.language = v === 'en' ? 'en' : 'zh';
           await this.plugin.saveSettings();
           this.plugin.refreshLanguage();
+          this.display(); // 设置面板自身立即按新语言重绘（否则要重开标签页才变）
         });
       });
 
