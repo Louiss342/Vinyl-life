@@ -113,6 +113,73 @@ test('i18n：源码里用到的每个 t()/tf() 键都在词典里（防拼错）
   assert.deepEqual(missing, [], '源码里用到了词典里没有的键');
 });
 
+// 收集 src/ 下所有 .ts（新写的源码扫描测试共用）
+function srcTsFiles(dir = path.join(__dirname, '../src'), out = []) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) srcTsFiles(p, out);
+    else if (e.name.endsWith('.ts')) out.push(p);
+  }
+  return out;
+}
+
+// ============ 提示气泡防护：同一元素不得同时设 aria-label 与 title ============
+// 背景：Obsidian 会按 aria-label 渲染自己那套样式化提示，浏览器又会为 title 弹原生提示；
+// 同一元素上两个属性并存 ⇒ 悬停时弹两个气泡。
+// 启发式（纯源码扫描，不执行 DOM）：
+//   ① 行邻域内同一个接收者既 setAttribute('aria-label', X) 又 setAttribute('title', X)（文案相同才判失败）；
+//   ② 同一个 attr: { … } 对象字面量里同时出现 aria-label 与 title 键（同一元素，必然双提示；这条是确定的）。
+// 局限：启发式不是语义分析——把 aria-label 与 title 拆到相隔很远的两个函数里、或同一文案写成不同
+//   表达式（如 t('k') 与 tf('k', {})）时可能漏检；同理，接收者重名（两个作用域里都叫 b）在窗口内可能误报，
+//   但误报只会让人肉核对一眼，不会放过真问题。
+// 反向不查：只设 title、没有 aria-label 的元素（如队列行的拖拽提示）是合法的单提示写法，保持原样。
+test('源码防护：同一元素不得同时设 aria-label 与 title（否则弹两个提示气泡）', () => {
+  const files = srcTsFiles();
+  assert.ok(files.length > 0, '没扫到源文件');
+
+  const WINDOW = 5; // 行邻域：成对写法通常紧挨着，bindLabel 里最多隔一两行
+  const norm = (s) => s.replace(/\s+/g, ''); // 抹掉空白再比，写法差异不该放过同文案
+  const ariaRe = /(\w+)\.setAttribute\(\s*['"]aria-label['"]\s*,\s*([^;]+?)\s*\)\s*;/;
+  const titleRe = /(\w+)\.setAttribute\(\s*['"]title['"]\s*,\s*([^;]+?)\s*\)\s*;/;
+  const problems = [];
+  let ariaSeen = 0;
+
+  for (const f of files) {
+    const src = fs.readFileSync(f, 'utf8');
+    const rel = path.relative(__dirname, f);
+    const lines = src.split(/\r?\n/);
+
+    lines.forEach((line, i) => {
+      const a = ariaRe.exec(line);
+      if (!a) return;
+      ariaSeen++;
+      for (let j = Math.max(0, i - WINDOW); j <= Math.min(lines.length - 1, i + WINDOW); j++) {
+        if (j === i) continue;
+        const tt = titleRe.exec(lines[j]);
+        if (tt && tt[1] === a[1] && norm(tt[2]) === norm(a[2])) {
+          problems.push(
+            `${rel}:${j + 1} → ${tt[1]}.setAttribute('title', ${tt[2]}) 与第 ${i + 1} 行的 aria-label 同文案重复`
+          );
+        }
+      }
+    });
+
+    // attr: { … }：两个键同处一个对象 = 同一元素必然双提示（无启发式成分）
+    const objRe = /attr:\s*\{([^}]*)\}/g;
+    let om;
+    while ((om = objRe.exec(src))) {
+      if (/['"]?aria-label['"]?\s*:/.test(om[1]) && /['"]?title['"]?\s*:/.test(om[1])) {
+        const line = src.slice(0, om.index).split(/\r?\n/).length;
+        problems.push(`${rel}:${line} → attr 对象里同时设了 aria-label 与 title`);
+      }
+    }
+  }
+
+  // 探针：扫描逻辑或正则一旦失效（比如源码改用别的写法），这里会先响
+  assert.ok(ariaSeen >= 6, `只扫到 ${ariaSeen} 处 aria-label 赋值，扫描逻辑可能已失效`);
+  assert.deepEqual(problems, [], '同一元素别同时设 aria-label 与 title：Obsidian 提示 + 浏览器原生提示会叠成两个气泡');
+});
+
 test('i18n：tf() 占位符替换（缺变量 / 缺键时原样保留，不吞信息）', () => {
   i18n.setLanguage('zh');
   assert.equal(
@@ -384,9 +451,10 @@ test('播放器：切语言后 applyLanguage 就地更新按钮提示与头部�
   const hasLabel = (v) => all.some((e) => e.getAttribute('aria-label') === v);
   const hasText = (v) => all.some((e) => e.textContent === v);
 
-  const noteBtn = all.find((e) => e.getAttribute('title') === '在专辑笔记追加此刻感想');
-  assert.ok(noteBtn, '建壳时「追加感想」的 tooltip 应为中文');
-  assert.equal(noteBtn.getAttribute('aria-label'), '在专辑笔记追加此刻感想');
+  // 提示只走 aria-label（Obsidian 的原生样式化提示）；再设 title 会叠出第二个浏览器原生气泡
+  const noteBtn = all.find((e) => e.getAttribute('aria-label') === '在专辑笔记追加此刻感想');
+  assert.ok(noteBtn, '建壳时「追加感想」的提示应为中文');
+  assert.equal(noteBtn.getAttribute('title'), null, '追加感想钮不得再设 title');
   assert.ok(hasLabel('上一首') && hasLabel('播放 / 暂停') && hasLabel('下一首'), '控制钮提示');
   assert.ok(hasLabel('选择专辑'), '换碟钮提示');
   assert.ok(hasLabel('恢复原有顺序'), '恢复顺序钮提示');
@@ -401,8 +469,8 @@ test('播放器：切语言后 applyLanguage 就地更新按钮提示与头部�
   assert.ok(hasLabel('Previous track') && hasLabel('Play / pause') && hasLabel('Next track'));
   assert.ok(hasLabel('Choose album'), '选择专辑 → Choose album');
   assert.ok(hasLabel('Restore original order'), '恢复原有顺序 → Restore original order');
-  assert.equal(noteBtn.getAttribute('title'), 'Append current thoughts to the album note');
   assert.equal(noteBtn.getAttribute('aria-label'), 'Append current thoughts to the album note');
+  assert.equal(noteBtn.getAttribute('title'), null, '切语言也不该多出 title');
   assert.equal(view.els.headerTitle.textContent, 'Vinyl player', '头部标题跟着换');
   assert.equal(view.els.headerTitle.getAttribute('title'), 'Vinyl player', '头部 tooltip 也跟着换');
   assert.ok(hasText('Empty queue'), '空队列 → Empty queue');
@@ -411,7 +479,7 @@ test('播放器：切语言后 applyLanguage 就地更新按钮提示与头部�
 
   mod.setLanguage('zh');
   view.applyLanguage();
-  assert.equal(noteBtn.getAttribute('title'), '在专辑笔记追加此刻感想', '切回中文仍是原文案');
+  assert.equal(noteBtn.getAttribute('aria-label'), '在专辑笔记追加此刻感想', '切回中文仍是原文案');
   assert.equal(view.els.headerTitle.textContent, '黑胶播放器');
 });
 

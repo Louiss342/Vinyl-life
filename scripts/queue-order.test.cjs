@@ -649,8 +649,8 @@ test('player-view：恢复按钮常显、走引擎恢复，本地专辑只提示
   const src = fs.readFileSync(path.join(__dirname, '../src/views/player-view.ts'), 'utf8');
   assert.ok(/setIcon\(restoreBtn, 'undo-2'\)/.test(src), '图标用 undo-2');
   assert.ok(
-    /restoreBtn\.setAttribute\('title', t\('player\.restoreOriginal'\)\)/.test(src),
-    '按钮要有 title（与同行 ✎ 按钮同款写法）'
+    /restoreBtn\.setAttribute\('aria-label', t\('player\.restoreOriginal'\)\)/.test(src),
+    '按钮要有 aria-label 提示（只此一处，不再另设 title——两个都设会叠成两个气泡）'
   );
   assert.ok(
     /const restoreBtn = orderRow\.createEl\('button', \{ cls: 'vinyl-btn vinyl-btn-small' \}\)/.test(

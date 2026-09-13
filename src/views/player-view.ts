@@ -313,18 +313,14 @@ export class VinylPlayerView extends ItemView {
     const queueTitle = orderRow.createDiv({ cls: 'vinyl-queue-title' });
     const noteBtn = orderRow.createEl('button', { cls: 'vinyl-btn vinyl-btn-small' });
     setIcon(noteBtn, 'pencil');
-    this.bindLabel(() => {
-      noteBtn.setAttribute('aria-label', t('player.appendNote'));
-      noteBtn.setAttribute('title', t('player.appendNote'));
-    });
+    // 只设 aria-label：Obsidian 自己会按它渲染样式化提示，再设 title 会同时弹出浏览器原生提示（两个气泡）
+    this.bindLabel(() => noteBtn.setAttribute('aria-label', t('player.appendNote')));
     noteBtn.addEventListener('click', () => this.plugin.appendListeningNote());
     // 恢复按钮始终显示（本地专辑也显示：点按只提示不支持，见 restoreOrder）
     const restoreBtn = orderRow.createEl('button', { cls: 'vinyl-btn vinyl-btn-small' });
     setIcon(restoreBtn, 'undo-2');
-    this.bindLabel(() => {
-      restoreBtn.setAttribute('aria-label', t('player.restoreOriginal'));
-      restoreBtn.setAttribute('title', t('player.restoreOriginal'));
-    });
+    // 同上：只留 aria-label，避免「Obsidian 提示 + 原生 title 提示」叠成两个气泡
+    this.bindLabel(() => restoreBtn.setAttribute('aria-label', t('player.restoreOriginal')));
     restoreBtn.addEventListener('click', () => this.restoreOrder());
 
     const queueBox = c.createDiv({ cls: 'vinyl-queue' });

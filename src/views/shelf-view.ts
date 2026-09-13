@@ -261,8 +261,8 @@ export class VinylShelfView extends ItemView {
       // Obsidian 原生图标按钮（浅色底 + 黑色线形图标，随主题自适应，清晰易识别）
       const b = bar.createEl('button', { cls: 'clickable-icon vinyl-toolbar-icon' });
       setIcon(b, icon);
+      // 只设 aria-label：Obsidian 按它渲染样式化提示，再设 title 会多弹一个浏览器原生提示（两个气泡）
       b.setAttribute('aria-label', title);
-      b.setAttribute('title', title);
       b.addEventListener('click', fn);
       return b;
     };
@@ -497,8 +497,8 @@ export class VinylShelfView extends ItemView {
     const iconBtn = (icon: string, title: string, fn: () => void) => {
       const b = row.createEl('button', { cls: 'clickable-icon vinyl-props-icon' });
       setIcon(b, icon);
+      // 同上：只留 aria-label（title 与它同文案时会叠成两个提示气泡）
       b.setAttribute('aria-label', title);
-      b.setAttribute('title', title);
       b.addEventListener('click', (ev) => {
         ev.stopPropagation();
         fn();
