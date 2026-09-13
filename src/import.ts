@@ -304,24 +304,69 @@ export async function importLocalAudio(
 // ============ C. 从文件新建本地专辑（拖到空白处） ============
 
 /**
- * 本地专辑笔记骨架：与「导入专辑」生成的字段一致，能自动的填好、其余留空待填。
- * 空属性（`artist:` 之类）在 Obsidian 属性面板里就是一行空字段，点进去填即可。
+ * 内置模板：与「导入专辑」生成的字段一致，能自动的填好、其余留空待填。
+ * 空属性在 Obsidian 属性面板里就是一行空字段，点进去填即可
+ *（用空字符串而非 null：processFrontMatter 会把 null 回写成 `key: null`，面板会显示 "null"）。
  */
-export function buildLocalAlbumNote(audioFolderRef?: string): string {
-  // 用空字符串而不是 null：Obsidian 的 processFrontMatter 会把 null 回写成 `key: null`，
-  // 属性面板里会显示成 "null"；空字符串则是干净的空字段。
-  const lines = [
-    '---',
-    'tags: [album]',
-    'artist: ""',
-    'year: ""',
-    'genre: ""',
-    'rating: ""',
-    'cover: ""',
-  ];
-  if (audioFolderRef) lines.push(`audioFolder: "[[${audioFolderRef}]]"`);
-  lines.push('---', '', '## 感想', '');
-  return lines.join('\n');
+export const DEFAULT_ALBUM_TEMPLATE = [
+  '---',
+  'tags: [album]',
+  'artist: ""',
+  'year: ""',
+  'genre: ""',
+  'rating: ""',
+  'cover: ""',
+  '{{audioFolder}}',
+  '---',
+  '',
+  '## 感想',
+  '',
+].join('\n');
+
+/** 占位符替换：{{title}} / {{audioFolder}} / {{date}} / {{time}}；未识别的原样保留 */
+export function renderAlbumTemplate(
+  tpl: string,
+  vars: { title: string; audioFolder?: string; now?: Date }
+): string {
+  const d = vars.now || new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const map: Record<string, string> = {
+    title: vars.title,
+    audioFolder: vars.audioFolder ? `audioFolder: "[[${vars.audioFolder}]]"` : '',
+    date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+    time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
+  };
+  const out = String(tpl).replace(
+    /\{\{\s*(\w+)\s*\}\}/g,
+    (_m, k: string) => map[k] ?? _m
+  );
+  // frontmatter 里因占位符落空而多出的空行清掉（YAML 里空行无害，但没必要留着）
+  return out.replace(/^---\r?\n([\s\S]*?)\r?\n---/, (_m, body: string) => {
+    const kept = body.split(/\r?\n/).filter((l) => l.trim() !== '');
+    return `---\n${kept.join('\n')}\n---`;
+  });
+}
+
+/** 生成本地专辑笔记正文：优先用设置里指定的模板文件，读不到则回落内置模板 */
+export async function buildLocalAlbumNote(
+  ctx: ImportContext,
+  title: string,
+  audioFolderRef?: string
+): Promise<string> {
+  const cfg = String(ctx.settings().albumNoteTemplate || '').trim();
+  if (cfg) {
+    const f = ctx.app.vault.getAbstractFileByPath(normalizePath(cfg));
+    if (f instanceof TFile) {
+      try {
+        return renderAlbumTemplate(await ctx.app.vault.read(f), { title, audioFolder: audioFolderRef });
+      } catch (e) {
+        console.warn('[vinyl] 读取专辑模板失败，改用内置模板', e);
+      }
+    } else {
+      console.warn('[vinyl] 专辑模板文件不存在：' + cfg);
+    }
+  }
+  return renderAlbumTemplate(DEFAULT_ALBUM_TEMPLATE, { title, audioFolder: audioFolderRef });
 }
 
 export async function createAlbumFromFiles(
@@ -348,7 +393,7 @@ export async function createAlbumFromFiles(
     mode === 'copy'
       ? normalizePath(`${ctx.settings().audioFolder}/${safeTitle}`)
       : undefined;
-  const file = await ctx.app.vault.create(notePath, buildLocalAlbumNote(audioRef));
+  const file = await ctx.app.vault.create(notePath, await buildLocalAlbumNote(ctx, safeTitle, audioRef));
   // metadataCache 尚未索引新文件 → 用已知 frontmatter 直接构造
   const fm: Record<string, unknown> = { tags: ['album'] };
   if (audioRef) fm.audioFolder = `[[${audioRef}]]`;

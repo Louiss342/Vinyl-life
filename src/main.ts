@@ -1,6 +1,6 @@
 // Vinyl Life —— 主入口（M4：导入+增强 + M3 交接动效 + M2 专辑墙 + M1 双源播放底座）
 // 本地源（零后端）+ 网易云源（懒加载 Node 网关，M0 已验证）统一为 Track 队列。
-import { Plugin, Notice, TFile } from 'obsidian';
+import { Plugin, Notice, TFile, normalizePath } from 'obsidian';
 import * as fs from 'fs';
 import { VinylSettings, DEFAULT_SETTINGS, VinylSettingTab } from './settings';
 import { ServerManager } from './core/server-manager';
@@ -24,6 +24,7 @@ import {
   getAlbumInfo,
   findAlbumNotes,
   detectAlbumSources,
+  setAlbumTemplatePath,
 } from './core/album-index';
 import { buildAlbumQueue, QueueDeps } from './core/queue';
 import { normalizeShelfProps, normalizeShelfPropLabels } from './core/shelf-props';
@@ -44,6 +45,7 @@ import {
   importNeteaseAlbum,
   importLocalAudio,
   createAlbumFromFiles,
+  DEFAULT_ALBUM_TEMPLATE,
 } from './import';
 import { AlbumImportModal, LocalImportModal } from './views/import-modal';
 import { DeleteAlbumModal } from './views/delete-album-modal';
@@ -223,6 +225,11 @@ export default class VinylLifePlugin extends Plugin {
       name: 'M5 自检：QQ 音乐源（登录 + 专辑播放）',
       callback: () => this.runQqSelfTest(),
     });
+    this.addCommand({
+      id: 'create-album-template',
+      name: '创建本地专辑模板文件（可编辑）',
+      callback: () => void this.createAlbumTemplate(),
+    });
     this.addSettingTab(new VinylSettingTab(this.app, this));
 
     console.log('[vinyl] M4 导入+增强 · M3 交接动效 · M2 专辑墙 · M1 双源底座已加载');
@@ -255,6 +262,8 @@ export default class VinylLifePlugin extends Plugin {
     if (!Object.keys(SPIN_SPEEDS).includes(this.settings.turntableSpeed)) {
       this.settings.turntableSpeed = DEFAULT_SETTINGS.turntableSpeed;
     }
+    // 模板文件路径注入索引层（避免它自己被当成专辑）
+    setAlbumTemplatePath(this.settings.albumNoteTemplate);
     // 配色项（M8：原「主题 follow/dark」已被「播放器配色」取代，旧值直接忽略）
     this.settings.playerDeck = normalizeDeckStyle(data?.playerDeck);
     this.settings.recordColor = normalizeRecordColor(data?.recordColor);
@@ -281,7 +290,32 @@ export default class VinylLifePlugin extends Plugin {
   }
 
   async saveSettings() {
+    // 模板文件本身不能被当成专辑展示（模板里通常也写着 tags: [album]）
+    setAlbumTemplatePath(this.settings.albumNoteTemplate);
     await this.saveData(this.settings);
+  }
+
+  // 生成一份可编辑的模板文件并写进设置（内容 = 内置模板，随便改）
+  async createAlbumTemplate() {
+    const root = this.settings.albumFolder.split('/').slice(0, -1).join('/');
+    const path = normalizePath(`${root ? root + '/' : ''}模板/专辑笔记模板.md`);
+    let file: TFile;
+    const existing = this.app.vault.getAbstractFileByPath(path);
+    if (existing instanceof TFile) {
+      file = existing;
+    } else {
+      try {
+        await ensureFolder(this.app, path.split('/').slice(0, -1).join('/'));
+        file = await this.app.vault.create(path, DEFAULT_ALBUM_TEMPLATE);
+      } catch (e) {
+        notice(`创建模板失败：${(e as Error).message}`);
+        return;
+      }
+    }
+    this.settings.albumNoteTemplate = path;
+    await this.saveSettings();
+    await this.app.workspace.getLeaf(false).openFile(file);
+    notice(`模板已就绪：${path} —— 随便改，之后导入本地专辑按它生成笔记`);
   }
 
   // 三个数据目录不存在则创建（新用户首次启用装完即用；用户改过路径设置也会补齐）

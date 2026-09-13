@@ -23,6 +23,8 @@ export type ShelfColumns = 'auto' | number;
 
 export interface VinylSettings {
   albumFolder: string;
+  /** 本地专辑笔记模板文件（vault 相对路径；空 = 内置模板） */
+  albumNoteTemplate: string;
   coverFolder: string;
   audioFolder: string;
   /** 本地音频导入落库模式 */
@@ -53,6 +55,7 @@ export interface VinylSettings {
 
 export const DEFAULT_SETTINGS: VinylSettings = {
   albumFolder: 'Vinyl Life/Vinyl Note',
+  albumNoteTemplate: '',
   coverFolder: 'Vinyl Life/covers',
   audioFolder: 'Vinyl Life/audio',
   importMode: 'copy',
@@ -161,6 +164,24 @@ export class VinylSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.coverFolder)
           .onChange(async (v) => {
             this.plugin.settings.coverFolder = v.trim() || DEFAULT_SETTINGS.coverFolder;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    this.section(c, '模板');
+    new Setting(c)
+      .setName('本地专辑笔记模板')
+      .setDesc(
+        '留空 = 用内置模板。可指定 vault 内任意 .md（如 Vinyl Life/模板/专辑笔记模板.md）；' +
+          '支持占位符 {{title}} / {{audioFolder}} / {{date}} / {{time}}，' +
+          '不需要的占位符留空行会被自动清掉。'
+      )
+      .addText((t) =>
+        t
+          .setPlaceholder('例如：Vinyl Life/模板/专辑笔记模板.md')
+          .setValue(this.plugin.settings.albumNoteTemplate)
+          .onChange(async (v) => {
+            this.plugin.settings.albumNoteTemplate = v.trim();
             await this.plugin.saveSettings();
           })
       );

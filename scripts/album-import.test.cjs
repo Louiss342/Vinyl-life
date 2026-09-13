@@ -68,6 +68,7 @@ function setup() {
     getAbstractFileByPath: (p) =>
       files.get(p) || (folders.has(p) ? { path: p, children: [] } : null),
     getMarkdownFiles: () => [...files.values()],
+    read: async (f) => f._content ?? '',
     createFolder: async (p) => {
       let cur = '';
       for (const part of String(p).split('/')) {
@@ -107,6 +108,14 @@ function setup() {
     },
   };
 
+  // 稳定的设置对象（测试可改，如 albumNoteTemplate）
+  const settings = {
+    albumFolder: 'Vinyl Life/Vinyl Note',
+    coverFolder: 'Vinyl Life/covers',
+    audioFolder: 'Vinyl Life/audio',
+    importMode: 'copy',
+    albumNoteTemplate: '',
+  };
   const module = { exports: {} };
   vm.runInNewContext(source, {
     module,
@@ -161,11 +170,7 @@ function setup() {
 
   const ctx = {
     app,
-    settings: () => ({
-      albumFolder: 'Vinyl Life/Vinyl Note',
-      coverFolder: 'Vinyl Life/covers',
-      audioFolder: 'Vinyl Life/audio',
-    }),
+    settings: () => settings,
     client: {
       album: async (id) => {
         calls.neteaseAlbum.push(id);
@@ -184,7 +189,7 @@ function setup() {
     },
   };
 
-  return { mod, ctx, files, folders, binaries, calls, app };
+  return { mod, ctx, files, folders, binaries, calls, app, settings };
 }
 
 // ============ 链接识别 ============
@@ -249,6 +254,36 @@ test('文件夹导入：复制模式保留子目录结构（同名文件不再�
     '两个 CD 里的同名曲各自落位'
   );
   assert.deepEqual(Array.from(res.skippedExisting), [], '不把同名文件误判成重复');
+});
+
+test('模板：可用设置指定的模板文件（占位符替换 + 落空行清理）', async () => {
+  const h = setup();
+  h.files.set(
+    '模板/album.md',
+    new TFile(
+      '模板/album.md',
+      '---\ntags: [album]\nartist: ""\n{{audioFolder}}\nnote: {{title}} @ {{date}}\n---\n\n## 感想\n'
+    )
+  );
+  h.settings.albumNoteTemplate = '模板/album.md';
+  await h.mod.createAlbumFromFiles(h.ctx, [new File(['x'], '01.flac')], 'A', 'copy');
+  const c = h.files.get('Vinyl Life/Vinyl Note/A.md')._content;
+  assert.match(c, /audioFolder: "\[\[Vinyl Life\/audio\/A\]\]"/, '占位符填入音频目录');
+  assert.match(c, /note: A @ \d{4}-\d{2}-\d{2}/, '标题与日期占位符');
+  assert.doesNotMatch(c, /\{\{/, '不得残留占位符');
+  assert.match(c, /## 感想/, '模板正文保留');
+
+  // 外链模式：{{audioFolder}} 落空 → 整行被清掉，其他字段保留
+  const h2 = setup();
+  h2.files.set(
+    '模板/album.md',
+    new TFile('模板/album.md', '---\ntags: [album]\n{{audioFolder}}\nartist: ""\n---\n')
+  );
+  h2.settings.albumNoteTemplate = '模板/album.md';
+  await h2.mod.createAlbumFromFiles(h2.ctx, [new File(['x'], 'b.flac')], 'B', 'link');
+  const c2 = h2.files.get('Vinyl Life/Vinyl Note/B.md')._content;
+  assert.doesNotMatch(c2, /audioFolder/, '落空的占位符行被清掉');
+  assert.match(c2, /artist: ""/, '其他字段保留');
 });
 
 test('本地专辑骨架：属性齐备可填空 + 复制模式预写 audioFolder', async () => {

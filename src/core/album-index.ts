@@ -196,8 +196,17 @@ export function buildAlbumInfo(
   };
 }
 
+// 模板文件本身不能被当成专辑展示（模板里通常也写着 tags: [album]）；
+// 由插件在加载/保存设置时注入（避免 findAlbumNotes 的每个调用点都传参数）。
+let albumTemplatePath = '';
+
+export function setAlbumTemplatePath(p: string): void {
+  albumTemplatePath = String(p || '').trim();
+}
+
 export function findAlbumNotes(app: App): TFile[] {
   return app.vault.getMarkdownFiles().filter((f) => {
+    if (albumTemplatePath && f.path === albumTemplatePath) return false;
     const fm = app.metadataCache.getFileCache(f)?.frontmatter;
     return !!fm && hasAlbumTag(fm);
   });
