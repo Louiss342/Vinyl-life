@@ -243,16 +243,19 @@
   padding: 0 2px;
 }
 
-/* 拖拽：被拖行半透明 + 落点行上/下缘指示线 */
-.vinyl-props-row.is-dragging {
+/* 拖拽：被拖行半透明 + 落点行上/下缘指示线（属性行与播放队列行共用同一套落点视觉） */
+.vinyl-props-row.is-dragging,
+.vinyl-queue-item.is-dragging {
   opacity: 0.5;
 }
 
-.vinyl-props-row.is-drop-before {
+.vinyl-props-row.is-drop-before,
+.vinyl-queue-item.is-drop-before {
   box-shadow: inset 0 2px 0 0 var(--interactive-accent);
 }
 
-.vinyl-props-row.is-drop-after {
+.vinyl-props-row.is-drop-after,
+.vinyl-queue-item.is-drop-after {
   box-shadow: inset 0 -2px 0 0 var(--interactive-accent);
 }
 

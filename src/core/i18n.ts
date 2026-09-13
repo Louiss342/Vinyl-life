@@ -86,6 +86,7 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   },
   'player.loading': { zh: '♪ 正在取碟…', en: '♪ Loading album…' },
   'player.emptyQueue': { zh: '空队列', en: 'Empty queue' },
+  'player.dragToReorder': { zh: '拖拽调整顺序', en: 'Drag to reorder' },
 
   // —— 导入弹窗：专辑导入（网易云 / QQ 音乐） ——
   'import.title': { zh: '导入专辑', en: 'Import album' },

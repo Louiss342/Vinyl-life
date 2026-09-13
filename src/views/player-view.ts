@@ -58,6 +58,13 @@ function fillRange(el: HTMLInputElement, ratio: number, color: string) {
 const FILL_RED = '#ff4757';
 const FILL_SILVER = '#c8c8d0';
 
+/** 拖拽落点 → 结果下标：drop 落在第 target 行的前 / 后（与 shelf-props 的 resolveDropIndex 同构）。
+ *  被拖行先移除、其后的行左移一位，故落点在它之后时要减一；落到自己身上返回原位（无副作用）。 */
+export function resolveQueueDropIndex(from: number, target: number, after: boolean): number {
+  const to = target + (after ? 1 : 0);
+  return from < to ? to - 1 : to;
+}
+
 // 唱臂角度（deg，与 styles.css 的 .vinyl-turntable-arm 几何配套）：
 //   停放 = 归位到唱臂支架卡口（唱针离开唱片）；
 //   播放 = 唱针落在导入槽（外圈 ≈0.96R），随播放向内圈导出槽（≈0.40R，停在标签外）缓移。
@@ -84,6 +91,10 @@ export class VinylPlayerView extends ItemView {
   private lastHeaderText = '';
   private lastVol = -1;
   private onVisibility = () => this.syncVisibility();
+  // 队列拖拽态：dragging 抑制拖拽尾巴上的 click（见 endQueueDrag），dragFrom 是被拖行的下标
+  private dragging = false;
+  private dragFrom = -1;
+  private clickBlockUntil = 0;
 
   constructor(leaf: WorkspaceLeaf, plugin: VinylLifePlugin) {
     super(leaf);
@@ -261,13 +272,18 @@ export class VinylPlayerView extends ItemView {
     noteBtn.addEventListener('click', () => this.plugin.appendListeningNote());
 
     const queueBox = c.createDiv({ cls: 'vinyl-queue' });
-    // 队列点击委托（重建不丢监听）
+    // 队列点击委托（重建不丢监听）。拖拽与点击共存：拖拽中 / 拖拽刚收尾的 click 一律不当切歌，
+    // 否则手一松就会被拖拽尾巴上的 click 切到别的曲子
     queueBox.addEventListener('click', (ev) => {
+      if (this.isQueueClickBlocked()) return;
       const row = (ev.target as HTMLElement).closest('.vinyl-queue-item') as HTMLElement | null;
       if (row && row.dataset.idx != null) {
         this.plugin.engine.playIndex(Number(row.dataset.idx));
       }
     });
+    // 兜底：dragend 万一没触发，下一次按下即解除拖拽态（否则点击切歌会被永久抑制）。
+    // 这里只复位拖拽态、不设 click 抑制窗口，否则随后的正常点击会被误伤
+    queueBox.addEventListener('pointerdown', () => this.resetQueueDrag());
 
     this.els = {
       headerTitle,
@@ -432,6 +448,7 @@ export class VinylPlayerView extends ItemView {
       s.queue.forEach((t, i) => {
         const row = els.queueBox.createDiv({ cls: 'vinyl-queue-item' });
         row.dataset.idx = String(i);
+        this.bindQueueDrag(row, i);
         row.createSpan({ text: String(i + 1).padStart(2, '0'), cls: 'vinyl-idx' });
         row.createSpan({ text: t.title, cls: 'vinyl-q-title' });
         row.createSpan({
@@ -446,6 +463,77 @@ export class VinylPlayerView extends ItemView {
       });
     }
     this.renderedQueue = s.queue;
+  }
+
+  // —— 队列行拖拽排序 ——
+  // 行与行之间的落点用「行内上/下半 ⇒ 插到该行前/后」判定（与专辑墙卡片属性同款交互与落点类）。
+  // 重排只调引擎的 moveTrack，队列重建由引擎的 emit 驱动（视图不自己动 DOM 顺序）。
+  private bindQueueDrag(row: HTMLElement, index: number) {
+    row.setAttribute('draggable', 'true');
+    row.setAttribute('title', t('player.dragToReorder')); // 悬浮提示：这一行可以拖着换位
+    row.addEventListener('dragstart', (ev) => {
+      this.dragging = true;
+      this.dragFrom = index;
+      row.addClass('is-dragging');
+      if (ev.dataTransfer) {
+        ev.dataTransfer.effectAllowed = 'move';
+        ev.dataTransfer.setData('text/plain', String(index)); // 不设 data 时部分环境不启动拖拽
+      }
+    });
+    row.addEventListener('dragover', (ev) => {
+      if (this.dragFrom < 0) return;
+      ev.preventDefault();
+      if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+      const rect = row.getBoundingClientRect();
+      this.setQueueDropIndicator(row, ev.clientY > rect.top + rect.height / 2);
+    });
+    row.addEventListener('dragleave', (ev) => {
+      if (this.dragFrom < 0) return;
+      // 只在真的离开这一行时清指示：行内子元素之间移动也会冒泡出 dragleave
+      const to = ev.relatedTarget as Node | null;
+      if (to && row.contains(to)) return;
+      row.removeClass('is-drop-before', 'is-drop-after');
+    });
+    row.addEventListener('drop', (ev) => {
+      ev.preventDefault();
+      const from = this.dragFrom;
+      const rect = row.getBoundingClientRect();
+      const after = ev.clientY > rect.top + rect.height / 2;
+      this.endQueueDrag();
+      if (from < 0) return;
+      // 引擎按「结果下标」重排，并保证正在播的那首仍是当前曲
+      this.plugin.engine.moveTrack(from, resolveQueueDropIndex(from, index, after));
+    });
+    row.addEventListener('dragend', () => this.endQueueDrag());
+  }
+
+  // 拖拽落点指示：清掉旧指示，标记当前行前/后插入位（复用专辑墙的属性行同款类）
+  private setQueueDropIndicator(target: HTMLElement, after: boolean) {
+    for (const row of this.queueRows) row.removeClass('is-drop-before', 'is-drop-after');
+    target.addClass(after ? 'is-drop-after' : 'is-drop-before');
+  }
+
+  private clearQueueDropIndicators() {
+    for (const row of this.queueRows) {
+      row.removeClass('is-drop-before', 'is-drop-after', 'is-dragging');
+    }
+  }
+
+  /** 拖拽尾巴上的 click 不是切歌意图 → 不响应（拖拽中 / 收尾 200ms 窗口双保险） */
+  private isQueueClickBlocked(): boolean {
+    return this.dragging || Date.now() < this.clickBlockUntil;
+  }
+
+  // 拖拽收尾：复位拖拽态并压制紧随其后的 click（拖完手一松的 click 不是切歌意图）
+  private endQueueDrag() {
+    if (this.dragging) this.clickBlockUntil = Date.now() + 200;
+    this.resetQueueDrag();
+  }
+
+  private resetQueueDrag() {
+    this.dragging = false;
+    this.dragFrom = -1;
+    this.clearQueueDropIndicators();
   }
 
   // 落盘入场（交接 C 阶段）：唱片滑入转盘

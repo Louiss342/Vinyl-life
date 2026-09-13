@@ -54,6 +54,9 @@ export interface VinylSettings {
   shelfPropLabels: Record<string, string>;
   /** 播放统计（次数/最近播放，仅存本插件 data.json，不写笔记） */
   stats: VinylStats;
+  /** 每张专辑记住自己的自定义队列顺序（专辑笔记路径 → trackKey 顺序）。
+   *  只影响「下次播这张专辑时的排列」，不是「重启后恢复整条队列」 */
+  queueOrder: Record<string, string[]>;
 }
 
 export const DEFAULT_SETTINGS: VinylSettings = {
@@ -75,7 +78,21 @@ export const DEFAULT_SETTINGS: VinylSettings = {
   shelfProps: [...DEFAULT_SHELF_PROPS],
   shelfPropLabels: {},
   stats: EMPTY_STATS,
+  queueOrder: {},
 };
+
+/** data.json → queueOrder。脏数据一律丢弃：非对象容器 / 非数组值 / 数组里的非字符串项；
+ *  返回全新对象（不与 DEFAULT_SETTINGS 共享引用，防就地改写污染默认值）。 */
+export function normalizeQueueOrder(raw: unknown): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  for (const [albumPath, keys] of Object.entries(raw as Record<string, unknown>)) {
+    if (!albumPath || !Array.isArray(keys)) continue;
+    const clean = keys.filter((k): k is string => typeof k === 'string' && !!k);
+    if (clean.length) out[albumPath] = clean; // 空顺序 = 没存过，不留空壳
+  }
+  return out;
+}
 
 type TabKey = 'general' | 'appearance' | 'source';
 

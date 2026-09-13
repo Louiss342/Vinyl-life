@@ -1,7 +1,7 @@
 // 播放引擎（M1 底座）：统一面向 Track 解析可播放地址、推进队列、状态快照事件。
 // M3 的交接动效与黑胶转盘视觉接在此状态之上（IDLE → HANDOFF → PLAYING）。
 import { App } from 'obsidian';
-import { Track, trackKey } from './track';
+import { Track, trackKey, applyTrackOrder, reorderTracks } from './track';
 import { AlbumInfo } from './album-index';
 import { LocalSource } from './local-source';
 import { NeteaseService } from './netease';
@@ -39,6 +39,12 @@ export interface EngineDeps {
   settings: () => VinylSettings;
   /** 曲目成功开播钩子（播放统计用；重试路径不触发） */
   onTrackPlay?: (track: Track, albumNotePath?: string, albumTitle?: string) => void;
+  /** 读取该专辑存过的自定义队列顺序（返回 undefined = 没存过，按原顺序播）。
+   *  可选：既有测试 / 无设置场景不传也不影响。 */
+  savedOrder?: (albumNotePath: string) => string[] | undefined;
+  /** 队列被拖拽重排后的钩子（持久化用；orderKeys = 新顺序的 trackKey 列表）。
+   *  可选：不传则重排只影响本次会话。 */
+  onQueueOrderChange?: (albumNotePath: string, orderKeys: string[]) => void;
 }
 
 export class PlaybackEngine {
@@ -160,7 +166,10 @@ export class PlaybackEngine {
     this.errorMsg = '';
     // 切换专辑：回收上一张的 Blob，保留本队列需要的
     this.deps.local.clearBlobs(this.deps.local.keysOf(tracks));
-    this.queue = tracks;
+    // 该专辑存过自定义顺序 → 套用（新增曲目按原相对顺序补在后面）；
+    // 没存过（或钩子未接线）走原始顺序，行为与旧版一致
+    const saved = this.deps.savedOrder?.(albumNotePath);
+    this.queue = saved && saved.length ? applyTrackOrder(tracks, saved) : tracks;
     this.index = -1;
     this.albumNotePath = albumNotePath;
     this.albumTitle = albumTitle;
@@ -171,6 +180,28 @@ export class PlaybackEngine {
     this.vaultBlobRetried.clear();
     this.urlRefetched.clear();
     this.emit();
+  }
+
+  /** 拖拽重排队列：把 from 处的曲目移到 to 位（to = 结果下标）。
+   *  正在播放的那首歌必须继续是「当前」——先记住它（对象引用 + trackKey 双保险），
+   *  重排后按新位置重置 index，否则 UI 高亮 / next() 的推进基准会跟着下标漂到别的曲子上。 */
+  moveTrack(from: number, to: number) {
+    if (from === to) return;
+    if (from < 0 || to < 0 || from >= this.queue.length || to >= this.queue.length) return;
+    // 双保险：对象引用（同队列内唯一）+ trackKey（同一首歌换了实例也能追上）
+    const current = this.index >= 0 ? this.queue[this.index] : undefined;
+    const currentKey = current ? trackKey(current) : '';
+    this.queue = reorderTracks(this.queue, from, to);
+    if (current) {
+      let i = this.queue.indexOf(current);
+      if (i < 0 && currentKey) i = this.queue.findIndex((t) => trackKey(t) === currentKey);
+      if (i >= 0) this.index = i;
+    }
+    // 音频不动（同一首歌继续播），只广播新队列 → 视图重建行并重贴 is-current
+    this.emit();
+    if (this.albumNotePath) {
+      this.deps.onQueueOrderChange?.(this.albumNotePath, this.queue.map((t) => trackKey(t)));
+    }
   }
 
   // 卸载当前音源（换专辑 / 复位共用；removeAttribute + load 是 Chromium 释放媒体的标准姿势）
@@ -210,9 +241,12 @@ export class PlaybackEngine {
     this.errorMsg = '';
     this.emit();
     const track = this.queue[i];
+    // 「还在等这一首吗」按下标判定会在拖拽重排后误判（下标变了、曲子没变）→ 卡在 loading。
+    // 统一改成判「当前曲目还是不是这一首」：切走 / 换专辑照样丢弃，重排不再打断加载。
+    const stillCurrent = () => this.queue[this.index] === track;
     try {
       const url = await this.resolveUrl(track);
-      if (this.index !== i) return; // 期间用户已切走
+      if (!stillCurrent()) return; // 期间用户已切走
       // 实际音质档（网易云可能已逐级降档；本地音轨无此项）
       this.quality = this.levelCache.get(trackKey(track)) || '';
       this.audio.src = url;
@@ -223,7 +257,7 @@ export class PlaybackEngine {
         this.deps.onTrackPlay?.(track, this.albumNotePath, this.albumTitle);
       }
     } catch (e) {
-      if (this.index !== i) return;
+      if (!stillCurrent()) return;
       this.status = 'error';
       this.errorMsg = String((e as Error).message || e);
       this.emit();
@@ -342,8 +376,9 @@ export class PlaybackEngine {
     const idx = this.index;
     const track = idx >= 0 ? this.queue[idx] : undefined;
     if (!track) return;
-    // 出错的是「事件触发时的那一首」：await 之后若已切歌，兜底结果一律丢弃
-    const stillCurrent = () => this.index === idx && this.queue[idx] === track;
+    // 出错的是「事件触发时的那一首」：await 之后若已切歌，兜底结果一律丢弃。
+    // 判「当前曲目还是不是这一首」而非下标——拖拽重排只换位置不换曲子，不该丢弃兜底结果。
+    const stillCurrent = () => this.queue[this.index] === track;
     // vault 流式失败 → readBinary→Blob 兜底（M0 V1-B 预案）
     if (track.source === 'local-vault' && !this.vaultBlobRetried.has(track.file.path)) {
       this.vaultBlobRetried.add(track.file.path);

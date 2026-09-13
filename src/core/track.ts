@@ -47,6 +47,37 @@ export function trackKey(t: Track): string {
   }
 }
 
+// —— 队列顺序（纯函数：不碰引擎状态，便于单测与持久化复用）——
+
+/** 队列重排内核：把 from 处的元素移到结果数组的 to 位（to = 结果下标，先移除再插入）。
+ *  越界（from / to 不在 0..length-1）返回原数组副本；任何情况下都不改原数组。 */
+export function reorderTracks(tracks: Track[], from: number, to: number): Track[] {
+  const next = [...tracks];
+  if (!Number.isInteger(from) || !Number.isInteger(to)) return next;
+  if (from < 0 || from >= tracks.length) return next;
+  if (to < 0 || to >= tracks.length) return next;
+  if (from === to) return next;
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return next;
+}
+
+/** 按持久化的 trackKey 顺序重排队列。
+ *  不在 orderKeys 里的曲目（新增 / 改名 / 换了音源）按原相对顺序排在后面——绝不能丢；
+ *  orderKeys 里已不存在的键（曲目被删）直接跳过。 */
+export function applyTrackOrder(tracks: Track[], orderKeys: string[]): Track[] {
+  const rest = [...tracks];
+  if (!Array.isArray(orderKeys) || !orderKeys.length) return rest;
+  const out: Track[] = [];
+  for (const key of orderKeys) {
+    if (typeof key !== 'string' || !key) continue;
+    const i = rest.findIndex((t) => trackKey(t) === key);
+    if (i < 0) continue; // 顺序里的曲目已不在队列中
+    out.push(rest.splice(i, 1)[0]);
+  }
+  return out.concat(rest);
+}
+
 export function trackSourceLabel(t: Track): string {
   if (t.source === 'netease') return '网易云';
   if (t.source === 'qq') return 'QQ音乐';

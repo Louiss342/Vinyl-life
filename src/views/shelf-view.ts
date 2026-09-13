@@ -1,7 +1,16 @@
 // 专辑墙视图（M2 自绘 ItemView，v0.4.1 工具栏版）：
 //   工具栏：标题计数 / 搜索（防抖）/ 刷新 / 排序 / 音源筛选 / 卡片属性 / 导入专辑 / 导入本地音频
 //   点击卡片 = 黑胶交接（M3）；拖拽音频入库（M4）；播放中卡片高亮 + 唱片离墙。
-import { ItemView, WorkspaceLeaf, Menu, setIcon, TFile, CachedMetadata } from 'obsidian';
+import {
+  ItemView,
+  WorkspaceLeaf,
+  Menu,
+  setIcon,
+  TFile,
+  TFolder,
+  TAbstractFile,
+  CachedMetadata,
+} from 'obsidian';
 import type VinylLifePlugin from '../main';
 import type { PlayerSnapshot } from '../core/player-state';
 import {
@@ -21,7 +30,7 @@ import {
   resolveDropIndex,
   toggleShelfProp,
 } from '../core/shelf-props';
-import { notice, isAudioFile, collectDroppedFiles, droppedRootName } from '../util';
+import { notice, isAudioFile, isImageFile, collectDroppedFiles, droppedRootName } from '../util';
 import { t, tf } from '../core/i18n';
 import { SetCoverModal } from './set-cover-modal';
 
@@ -120,6 +129,27 @@ export class VinylShelfView extends ItemView {
           this.scheduleRefresh();
         }
       })
+    );
+    // 性能：vault 层事件比 metadataCache 更频繁（音频/封面是普通文件，不走 md 缓存），
+    // 只认「音频 / 图片 / 文件夹」三类，其余（笔记、插件文件、配置…）直接早退，不触发任何工作。
+    //   音频增删改 → 本地音源角标；图片增删改 → 封面自动识别；文件夹增删改名 → 专辑音频目录失效。
+    // 导入一批音频会连着触发几十个 create，统一交给 scheduleRefresh 防抖合并（500ms 内只扫一次库）。
+    const onVaultChanged = (f: TAbstractFile, oldPath?: string) => {
+      if (f instanceof TFolder) {
+        this.scheduleRefresh();
+        return;
+      }
+      if (!(f instanceof TFile)) return;
+      // rename 时旧名一并判：音频/封面被改名成其他后缀等于离开了专辑目录，角标同样要重算
+      const related = (name: string) => isAudioFile(name) || isImageFile(name);
+      if (related(f.name) || (!!oldPath && related(oldPath))) this.scheduleRefresh();
+    };
+    this.registerEvent(this.plugin.app.vault.on('create', (f: TAbstractFile) => onVaultChanged(f)));
+    this.registerEvent(this.plugin.app.vault.on('delete', (f: TAbstractFile) => onVaultChanged(f)));
+    this.registerEvent(
+      this.plugin.app.vault.on('rename', (f: TAbstractFile, oldPath: string) =>
+        onVaultChanged(f, oldPath)
+      )
     );
     this.unsub = this.plugin.engine.subscribe((s) => this.updatePlaying(s));
     this.render();

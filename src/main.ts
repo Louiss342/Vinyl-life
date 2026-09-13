@@ -2,7 +2,7 @@
 // 本地源（零后端）+ 网易云源（懒加载 Node 网关，M0 已验证）统一为 Track 队列。
 import { Plugin, Notice, TFile, normalizePath } from 'obsidian';
 import * as fs from 'fs';
-import { VinylSettings, DEFAULT_SETTINGS, VinylSettingTab } from './settings';
+import { VinylSettings, DEFAULT_SETTINGS, VinylSettingTab, normalizeQueueOrder } from './settings';
 import { ServerManager } from './core/server-manager';
 import { ServerClient } from './core/server-client';
 import { WebClient } from './core/web-client';
@@ -112,6 +112,9 @@ export default class VinylLifePlugin extends Plugin {
       settings: () => this.settings,
       onTrackPlay: (track, albumPath, albumTitle) =>
         this.recordPlay(track, albumPath, albumTitle),
+      // 队列自定义顺序：读设置（没存过 = undefined，按原顺序播）/ 拖拽后写入并防抖落盘
+      savedOrder: (albumPath) => this.settings.queueOrder[albumPath],
+      onQueueOrderChange: (albumPath, keys) => this.rememberQueueOrder(albumPath, keys),
     });
     this.handoff = new HandoffController(this);
 
@@ -252,6 +255,8 @@ export default class VinylLifePlugin extends Plugin {
     // 且浅拷贝会让设置与 DEFAULT_SETTINGS 共享引用（push 即污染默认值）；归一化同时完成旧 boolean 结构迁移
     this.settings.shelfProps = normalizeShelfProps(data?.shelfProps);
     this.settings.shelfPropLabels = normalizeShelfPropLabels(data?.shelfPropLabels);
+    // 队列自定义顺序：非对象 / 非字符串数组一律丢弃（data.json 可能被手改或来自旧版本）
+    this.settings.queueOrder = normalizeQueueOrder(data?.queueOrder);
     // 外观项归一（data.json 可能来自旧版本或被手改）
     if (!DISC_DIRECTIONS.includes(this.settings.discDirection)) {
       this.settings.discDirection = DEFAULT_SETTINGS.discDirection;
@@ -498,6 +503,13 @@ export default class VinylLifePlugin extends Plugin {
       track.title
     );
     this.scheduleStatsSave();
+  }
+
+  /** 队列拖拽重排后的持久化写入口（按专辑笔记路径记顺序；与统计共用 5 秒防抖落盘） */
+  rememberQueueOrder(albumPath: string, orderKeys: string[]) {
+    if (!albumPath) return;
+    this.settings.queueOrder = { ...this.settings.queueOrder, [albumPath]: [...orderKeys] };
+    this.scheduleStatsSave(); // saveSettings 会落整份设置，不必另起定时器
   }
 
   private statsSaveTimer: number | null = null;
