@@ -312,6 +312,12 @@ export default class VinylLifePlugin extends Plugin {
       const v = leaf.view as unknown as { render?: () => void };
       if (typeof v.render === 'function') v.render();
     }
+    // 播放器的壳只建一次（见 player-view 的增量渲染）：不能重建 DOM（会打断转盘旋转与入场动画、
+    // 丢掉播放进度），改为就地重放文案标签——按钮 aria-label / title 与队列提示随语言切换
+    for (const leaf of this.app.workspace.getLeavesOfType(PLAYER_VIEW_TYPE)) {
+      const v = leaf.view;
+      if (v instanceof VinylPlayerView) v.applyLanguage();
+    }
   }
 
   // 生成一份可编辑的模板文件并写进设置（内容 = 内置模板，随便改）

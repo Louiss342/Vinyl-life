@@ -85,6 +85,13 @@ export class VinylPlayerView extends ItemView {
   private lastArmAngle = NaN;
   private playIcon: 'play' | 'pause' | '' = '';
   private lastReadout = '';
+  // 最近一次快照：切语言时重放一次，让取自快照的文案（头部标题）按新语言重算
+  private lastSnapshot: PlayerSnapshot | null = null;
+  // 随语言变的标签登记（见 bindLabel）：壳只建一次，切语言时不能重建 DOM 兜底
+  // （重建会打断转盘旋转与入场动画、丢掉进度），只能把赋值动作记下来逐条重放。
+  private labelEls: Array<() => void> = [];
+  // 空队列提示节点（随队列重建；切语言时就地改文本，不重建节点）
+  private emptyQueueEl: HTMLElement | null = null;
   // 条件更新缓存（值不变不写 DOM，减少样式失效与 :has() 重算）
   private lastRatio = -1;
   private lastTimeText = '';
@@ -181,6 +188,32 @@ export class VinylPlayerView extends ItemView {
 
   // ============ 壳（只建一次） ============
 
+  // 登记一个「随语言变」的标签动作：建壳时立刻应用一次，之后 applyLanguage() 重放。
+  // 动作里照常写 t() 字面量键，i18n 的键扫描测试才覆盖得到（别把 key 抽成字符串参数）。
+  private bindLabel(apply: () => void) {
+    this.labelEls.push(apply);
+    apply();
+  }
+
+  // 语言切换后就地更新（不重建 DOM）：只重放登记过的标签赋值，转盘旋转 / 入场动画 / 播放进度都不受影响
+  applyLanguage() {
+    for (const apply of this.labelEls) apply();
+    this.applyQueueLabels();
+    // 头部标题的文案由快照决定（专辑名 / 取碟中 / 错误提示），由 update 统一维护：
+    // 把按语言缓存的值清掉再重放一次同一份快照，标题与悬浮提示即按新语言重算。
+    // 同一份快照下其余条件更新全部命中缓存 → 不会产生别的 DOM 写入。
+    if (this.lastSnapshot) {
+      this.lastHeaderText = '';
+      this.update(this.lastSnapshot);
+    }
+  }
+
+  // 队列文案（行拖拽提示 / 空态）不挂在壳上、随队列重建，故单独就地刷新（只改属性与文本，不重建节点）
+  private applyQueueLabels() {
+    for (const row of this.queueRows) row.setAttribute('title', t('player.dragToReorder'));
+    if (this.emptyQueueEl) this.emptyQueueEl.textContent = t('player.emptyQueue');
+  }
+
   private ensureShell(): PlayerEls {
     if (this.els) return this.els;
     const c = this.contentEl;
@@ -192,7 +225,7 @@ export class VinylPlayerView extends ItemView {
     const headerTitle = header.createDiv({ cls: 'vinyl-player-header-title', text: t('player.title') });
     const swapBtn = header.createEl('button', { cls: 'vinyl-btn vinyl-btn-small' });
     setIcon(swapBtn, 'disc-3');
-    swapBtn.setAttribute('aria-label', t('player.pickAlbum'));
+    this.bindLabel(() => swapBtn.setAttribute('aria-label', t('player.pickAlbum')));
     swapBtn.addEventListener('click', (ev) => this.showAlbumMenu(ev));
 
     // 设备面板（胡桃木底座，样式见 .vinyl-deck）
@@ -236,9 +269,9 @@ export class VinylPlayerView extends ItemView {
     setIcon(prevBtn, 'skip-back');
     setIcon(playBtn, 'play');
     setIcon(nextBtn, 'skip-forward');
-    prevBtn.setAttribute('aria-label', t('player.prev'));
-    playBtn.setAttribute('aria-label', t('player.playPause'));
-    nextBtn.setAttribute('aria-label', t('player.next'));
+    this.bindLabel(() => prevBtn.setAttribute('aria-label', t('player.prev')));
+    this.bindLabel(() => playBtn.setAttribute('aria-label', t('player.playPause')));
+    this.bindLabel(() => nextBtn.setAttribute('aria-label', t('player.next')));
     prevBtn.addEventListener('click', () => this.plugin.engine.prev());
     playBtn.addEventListener('click', () => this.plugin.engine.toggle());
     nextBtn.addEventListener('click', () => this.plugin.engine.next());
@@ -267,14 +300,18 @@ export class VinylPlayerView extends ItemView {
     const queueTitle = orderRow.createDiv({ cls: 'vinyl-queue-title' });
     const noteBtn = orderRow.createEl('button', { cls: 'vinyl-btn vinyl-btn-small' });
     setIcon(noteBtn, 'pencil');
-    noteBtn.setAttribute('aria-label', t('player.appendNote'));
-    noteBtn.setAttribute('title', t('player.appendNote'));
+    this.bindLabel(() => {
+      noteBtn.setAttribute('aria-label', t('player.appendNote'));
+      noteBtn.setAttribute('title', t('player.appendNote'));
+    });
     noteBtn.addEventListener('click', () => this.plugin.appendListeningNote());
     // 恢复按钮始终显示（本地专辑也显示：点按只提示不支持，见 restoreOrder）
     const restoreBtn = orderRow.createEl('button', { cls: 'vinyl-btn vinyl-btn-small' });
     setIcon(restoreBtn, 'undo-2');
-    restoreBtn.setAttribute('aria-label', t('player.restoreOriginal'));
-    restoreBtn.setAttribute('title', t('player.restoreOriginal'));
+    this.bindLabel(() => {
+      restoreBtn.setAttribute('aria-label', t('player.restoreOriginal'));
+      restoreBtn.setAttribute('title', t('player.restoreOriginal'));
+    });
     restoreBtn.addEventListener('click', () => this.restoreOrder());
 
     const queueBox = c.createDiv({ cls: 'vinyl-queue' });
@@ -352,6 +389,7 @@ export class VinylPlayerView extends ItemView {
 
   private update(s: PlayerSnapshot) {
     const els = this.ensureShell();
+    this.lastSnapshot = s;
 
     // 专辑切换 → 落盘入场（C 阶段）/ 清空回位
     const albumPath = s.albumNotePath || null;
@@ -461,11 +499,14 @@ export class VinylPlayerView extends ItemView {
   }
 
   private rebuildQueue(els: PlayerEls, s: PlayerSnapshot) {
+    // 「Vinyl order」是丝印品牌式的固定英文标签（与 'Vinyl Life' 同款）：中英同形，
+    // 建 i18n 键会撞上「中英不得逐字相同」的词典测试，故保持硬编码。
     els.queueTitle.textContent = 'Vinyl order';
     els.queueBox.empty();
     this.queueRows = [];
+    this.emptyQueueEl = null;
     if (!s.queue.length) {
-      els.queueBox.createDiv({ text: t('player.emptyQueue'), cls: 'vinyl-muted' });
+      this.emptyQueueEl = els.queueBox.createDiv({ text: t('player.emptyQueue'), cls: 'vinyl-muted' });
     } else {
       s.queue.forEach((t, i) => {
         const row = els.queueBox.createDiv({ cls: 'vinyl-queue-item' });
@@ -484,6 +525,7 @@ export class VinylPlayerView extends ItemView {
         this.queueRows.push(row);
       });
     }
+    this.applyQueueLabels(); // 行拖拽提示统一在这里按当前语言写（切语言时由 applyLanguage 重放）
     this.renderedQueue = s.queue;
   }
 
@@ -492,7 +534,6 @@ export class VinylPlayerView extends ItemView {
   // 重排只调引擎的 moveTrack，队列重建由引擎的 emit 驱动（视图不自己动 DOM 顺序）。
   private bindQueueDrag(row: HTMLElement, index: number) {
     row.setAttribute('draggable', 'true');
-    row.setAttribute('title', t('player.dragToReorder')); // 悬浮提示：这一行可以拖着换位
     row.addEventListener('dragstart', (ev) => {
       this.dragging = true;
       this.dragFrom = index;

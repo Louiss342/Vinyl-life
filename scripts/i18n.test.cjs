@@ -174,3 +174,264 @@ test('i18n：语言切换后新建的登录 provider 文案跟着变（不能被
   mod.exports.setLanguage('zh');
   assert.equal(mod.exports.qqQrProvider().title, 'QQ 音乐登录', '切回中文仍是原文案');
 });
+
+// ============ 播放器视图：源码防护 + 切语言后就地更新 ============
+
+// 提取源码里的字符串字面量内容（跳过注释），用于「不得硬编码中文」的断言。
+// 只处理 ' " ` 三种引号与 // /* */ 注释；不处理正则字面量（本文件里没有含引号的正则）。
+function stringLiterals(src) {
+  const out = [];
+  const n = src.length;
+  let i = 0;
+  while (i < n) {
+    const ch = src[i];
+    const next = src[i + 1];
+    if (ch === '/' && next === '/') {
+      while (i < n && src[i] !== '\n') i++;
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      i += 2;
+      while (i < n && !(src[i] === '*' && src[i + 1] === '/')) i++;
+      i += 2;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') {
+      const quote = ch;
+      let v = '';
+      i++;
+      while (i < n && src[i] !== quote) {
+        if (src[i] === '\\') {
+          v += src[i + 1];
+          i += 2;
+          continue;
+        }
+        v += src[i];
+        i++;
+      }
+      i++;
+      out.push(v);
+      continue;
+    }
+    i++;
+  }
+  return out;
+}
+
+test('i18n：播放器视图源码不得硬编码中文文案（注释不算；防「壳只建一次」漏翻回潮）', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../src/views/player-view.ts'), 'utf8');
+  const lits = stringLiterals(src);
+  assert.ok(lits.length >= 30, `只解析出 ${lits.length} 个字符串字面量，解析逻辑可能已失效`);
+  const bad = lits.filter((s) => /[一-鿿]/.test(s));
+  assert.deepEqual(
+    bad,
+    [],
+    '提示 / 标签文案应改走 t()（随语言的标签用 bindLabel 登记，切语言时由 applyLanguage 重放）'
+  );
+});
+
+test('i18n：refreshLanguage 会把已打开的播放器也接上（applyLanguage）', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../src/main.ts'), 'utf8');
+  // 只做接线断言：行为由下面「切语言后就地更新」的用例覆盖（main.ts 需要整个 Obsidian App 才能驱动）
+  assert.match(src, /getLeavesOfType\(PLAYER_VIEW_TYPE\)[\s\S]{0,200}?applyLanguage\(\)/);
+});
+
+// —— 假 DOM：只实现播放器壳与队列用到的那部分成员 ——
+function fakeEl(tag = 'div') {
+  const vars = new Map();
+  const el = {
+    tag,
+    children: [],
+    attrs: new Map(),
+    classes: new Set(),
+    dataset: {},
+    textContent: '',
+    style: { display: '', setProperty: (k, v) => vars.set(k, v) },
+    vars,
+    empty() {
+      el.children = [];
+    },
+    addClass(...names) {
+      for (const n of String(names.join(' ')).split(/\s+/).filter(Boolean)) el.classes.add(n);
+    },
+    removeClass(...names) {
+      for (const n of String(names.join(' ')).split(/\s+/).filter(Boolean)) el.classes.delete(n);
+    },
+    toggleClass(name, on) {
+      const want = on === undefined ? !el.classes.has(name) : !!on;
+      if (want) el.classes.add(name);
+      else el.classes.delete(name);
+    },
+    setAttribute(k, v) {
+      el.attrs.set(k, String(v));
+    },
+    getAttribute(k) {
+      return el.attrs.has(k) ? el.attrs.get(k) : null;
+    },
+    addEventListener() {},
+    createDiv(o) {
+      return el.createEl('div', o);
+    },
+    createSpan(o) {
+      return el.createEl('span', o);
+    },
+    createEl(t, o) {
+      const child = fakeEl(typeof t === 'string' ? t : 'div');
+      el.children.push(child);
+      const opts = typeof o === 'string' ? { cls: o } : o || {};
+      if (opts.cls) child.addClass(opts.cls);
+      if (opts.text != null) child.textContent = String(opts.text);
+      if (opts.attr) for (const [k, v] of Object.entries(opts.attr)) child.setAttribute(k, v);
+      return child;
+    },
+    getAnimations: () => [],
+    animate: () => ({}),
+    closest: () => null,
+  };
+  el.classList = {
+    toggle: (n, on) => el.toggleClass(n, on),
+    add: (...n) => el.addClass(...n),
+    remove: (...n) => el.removeClass(...n),
+  };
+  return el;
+}
+
+function collect(el, out = []) {
+  out.push(el);
+  for (const c of el.children) collect(c, out);
+  return out;
+}
+
+let playerBundle = null;
+function playerModule() {
+  if (playerBundle) return playerBundle;
+  const src = esbuild.buildSync({
+    stdin: {
+      // setLanguage 从 bundle 内部取：外层 i18n 实例与 bundle 里的不是同一个
+      contents: `export * from '../src/views/player-view';\nexport { setLanguage } from '../src/core/i18n';\n`,
+      resolveDir: __dirname,
+      loader: 'ts',
+    },
+    bundle: true,
+    write: false,
+    format: 'cjs',
+    platform: 'node',
+    external: ['obsidian'],
+  }).outputFiles[0].text;
+  class ItemView {
+    constructor() {
+      this.contentEl = fakeEl();
+    }
+  }
+  const module = { exports: {} };
+  vm.runInNewContext(src, {
+    module,
+    exports: module.exports,
+    require: (name) => {
+      if (name === 'obsidian') {
+        return {
+          App: class {},
+          ItemView,
+          Menu: class {},
+          Modal: class {},
+          FuzzySuggestModal: class {},
+          Notice: class {},
+          Plugin: class {},
+          TFile: class {},
+          TFolder: class {},
+          normalizePath: (p) => p,
+          setIcon: () => {},
+        };
+      }
+      return require(name);
+    },
+    console,
+    Buffer,
+  });
+  playerBundle = module.exports;
+  return playerBundle;
+}
+
+// 引擎快照最小面（播放器只读这些字段）
+function snap(over = {}) {
+  return {
+    status: 'idle',
+    queue: [],
+    index: -1,
+    currentTime: 0,
+    duration: 0,
+    volume: 0.8,
+    albumNotePath: null,
+    albumTitle: '',
+    sourceLabel: '',
+    ...over,
+  };
+}
+
+function makePlayerView(mod) {
+  const view = new mod.VinylPlayerView({}, { settings: {} });
+  const root = fakeEl();
+  view.contentEl = root;
+  return { view, root };
+}
+
+test('播放器：切语言后 applyLanguage 就地更新按钮提示与头部（不重建 DOM）', () => {
+  const mod = playerModule();
+  mod.setLanguage('zh');
+  const { view, root } = makePlayerView(mod);
+  view.update(snap()); // 首帧建壳（zh）
+  const all = collect(root);
+  const hasLabel = (v) => all.some((e) => e.getAttribute('aria-label') === v);
+  const hasText = (v) => all.some((e) => e.textContent === v);
+
+  const noteBtn = all.find((e) => e.getAttribute('title') === '在专辑笔记追加此刻感想');
+  assert.ok(noteBtn, '建壳时「追加感想」的 tooltip 应为中文');
+  assert.equal(noteBtn.getAttribute('aria-label'), '在专辑笔记追加此刻感想');
+  assert.ok(hasLabel('上一首') && hasLabel('播放 / 暂停') && hasLabel('下一首'), '控制钮提示');
+  assert.ok(hasLabel('选择专辑'), '换碟钮提示');
+  assert.ok(hasLabel('恢复原有顺序'), '恢复顺序钮提示');
+  assert.ok(hasText('黑胶播放器'), '头部标题');
+  assert.ok(hasText('空队列'), '空队列提示');
+
+  const vinylBefore = view.els.vinyl;
+  const headerBefore = view.els.headerTitle;
+  mod.setLanguage('en');
+  view.applyLanguage();
+
+  assert.ok(hasLabel('Previous track') && hasLabel('Play / pause') && hasLabel('Next track'));
+  assert.ok(hasLabel('Choose album'), '选择专辑 → Choose album');
+  assert.ok(hasLabel('Restore original order'), '恢复原有顺序 → Restore original order');
+  assert.equal(noteBtn.getAttribute('title'), 'Append current thoughts to the album note');
+  assert.equal(noteBtn.getAttribute('aria-label'), 'Append current thoughts to the album note');
+  assert.equal(view.els.headerTitle.textContent, 'Vinyl player', '头部标题跟着换');
+  assert.equal(view.els.headerTitle.getAttribute('title'), 'Vinyl player', '头部 tooltip 也跟着换');
+  assert.ok(hasText('Empty queue'), '空队列 → Empty queue');
+  assert.equal(view.els.vinyl, vinylBefore, '就地改文案：转盘节点没被换掉（旋转动画不被打断）');
+  assert.equal(view.els.headerTitle, headerBefore, '壳只建一次：节点身份不变');
+
+  mod.setLanguage('zh');
+  view.applyLanguage();
+  assert.equal(noteBtn.getAttribute('title'), '在专辑笔记追加此刻感想', '切回中文仍是原文案');
+  assert.equal(view.els.headerTitle.textContent, '黑胶播放器');
+});
+
+test('播放器：队列行的拖拽提示随语言就更新（不重建队列行）', () => {
+  const mod = playerModule();
+  mod.setLanguage('zh');
+  const { view } = makePlayerView(mod);
+  const queue = [{ source: 'local-vault', path: 'a.mp3', title: 'A', duration: 65 }];
+  view.update(snap({ queue, index: 0, status: 'paused' }));
+  const row = view.queueRows[0];
+  assert.ok(row, '队列行已建');
+  assert.equal(row.getAttribute('title'), '拖拽调整顺序');
+
+  mod.setLanguage('en');
+  view.applyLanguage();
+  assert.equal(row.getAttribute('title'), 'Drag to reorder');
+  assert.equal(view.queueRows[0], row, '就地改属性：队列行没被重建');
+  assert.equal(row.getAttribute('draggable'), 'true', '非文案属性不受影响');
+
+  mod.setLanguage('zh');
+  view.applyLanguage();
+  assert.equal(row.getAttribute('title'), '拖拽调整顺序');
+});
