@@ -9,7 +9,7 @@ import type { PlayerSnapshot } from '../core/player-state';
 import { AlbumInfo, findAlbumNotes, getAlbumInfo, hasAlbumTag } from '../core/album-index';
 import type { Track } from '../core/track';
 import { trackSourceLabel, trackSourceClass, qualityText } from '../core/track';
-import { fmtTime } from '../util';
+import { fmtTime, notice } from '../util';
 import { SPIN_SPEEDS } from '../core/disc-motion';
 import { DECK_STYLES, RECORD_COLORS, deckClass, recordClass } from '../core/appearance';
 import { t } from '../core/i18n';
@@ -262,7 +262,7 @@ export class VinylPlayerView extends ItemView {
     brandRow.createDiv({ cls: 'vinyl-deck-brand', text: 'Vinyl Life' });
     const qualityEl = brandRow.createDiv({ cls: 'vinyl-quality' });
 
-    // Vinyl order 行：标题 + ✎ 追加感想（P1 感想联动）
+    // Vinyl order 行：标题 + ✎ 追加感想（P1 感想联动）+ ↺ 恢复原有顺序
     const orderRow = c.createDiv({ cls: 'vinyl-order-row' });
     const queueTitle = orderRow.createDiv({ cls: 'vinyl-queue-title' });
     const noteBtn = orderRow.createEl('button', { cls: 'vinyl-btn vinyl-btn-small' });
@@ -270,6 +270,12 @@ export class VinylPlayerView extends ItemView {
     noteBtn.setAttribute('aria-label', t('player.appendNote'));
     noteBtn.setAttribute('title', t('player.appendNote'));
     noteBtn.addEventListener('click', () => this.plugin.appendListeningNote());
+    // 恢复按钮始终显示（本地专辑也显示：点按只提示不支持，见 restoreOrder）
+    const restoreBtn = orderRow.createEl('button', { cls: 'vinyl-btn vinyl-btn-small' });
+    setIcon(restoreBtn, 'undo-2');
+    restoreBtn.setAttribute('aria-label', t('player.restoreOriginal'));
+    restoreBtn.setAttribute('title', t('player.restoreOriginal'));
+    restoreBtn.addEventListener('click', () => this.restoreOrder());
 
     const queueBox = c.createDiv({ cls: 'vinyl-queue' });
     // 队列点击委托（重建不丢监听）。拖拽与点击共存：拖拽中 / 拖拽刚收尾的 click 一律不当切歌，
@@ -324,6 +330,22 @@ export class VinylPlayerView extends ItemView {
       menu.addItem((it) => it.setTitle(t('player.noAlbumNotes')).setDisabled(true));
     }
     menu.showAtMouseEvent(ev);
+  }
+
+  // 「恢复原有顺序」（Vinyl order 行的 ↺ 按钮）：
+  //   本地专辑按扫出来的文件名顺序播放，那本身就是它的「原有顺序」→ 只提示，不做任何事；
+  //   在线专辑交给引擎就地排回原始顺序（不重新联网取专辑），并清掉存过的自定义顺序。
+  //   队列来源看当前曲目（snapshot().current?.source）；还没开始播（index = -1）时退到队首曲目，
+  //   否则「打开本地专辑但没点播放」会误走在线分支，把本地队列也重排一遍。
+  private restoreOrder() {
+    const snap = this.plugin.engine.snapshot();
+    const source = snap.current?.source || snap.queue[0]?.source;
+    if (source === 'local-vault' || source === 'local-external') {
+      notice(t('player.restoreLocalUnsupported'));
+      return;
+    }
+    this.plugin.engine.restoreOriginalOrder();
+    notice(t('player.restoreDone'));
   }
 
   // ============ 增量更新 ============

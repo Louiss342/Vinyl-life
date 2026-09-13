@@ -45,11 +45,17 @@ export interface EngineDeps {
   /** 队列被拖拽重排后的钩子（持久化用；orderKeys = 新顺序的 trackKey 列表）。
    *  可选：不传则重排只影响本次会话。 */
   onQueueOrderChange?: (albumNotePath: string, orderKeys: string[]) => void;
+  /** 队列被「恢复原有顺序」后的钩子（持久化用：删掉该专辑存过的自定义顺序）。
+   *  可选：不传则恢复只影响本次会话。 */
+  onQueueOrderClear?: (albumNotePath: string) => void;
 }
 
 export class PlaybackEngine {
   private audio = new Audio();
   private queue: Track[] = [];
+  /** 本专辑的「原始顺序」（构建出来的自然顺序：在线源 = 专辑曲目顺序，本地 = 扫描文件名顺序）。
+   *  只在 setQueue 里按构建结果写一次，拖拽不碰它——「恢复原有顺序」靠它把队列排回去。 */
+  private originalOrder: string[] = [];
   private index = -1;
   private status: PlayerStatus = 'idle';
   private errorMsg = '';
@@ -166,6 +172,9 @@ export class PlaybackEngine {
     this.errorMsg = '';
     // 切换专辑：回收上一张的 Blob，保留本队列需要的
     this.deps.local.clearBlobs(this.deps.local.keysOf(tracks));
+    // 先记下「原始顺序」（= 构建出来的自然顺序），再套用自定义顺序：
+    // 它是「恢复原有顺序」的基准，拖拽不得改动，故只认这里的构建结果
+    this.originalOrder = tracks.map((t) => trackKey(t));
     // 该专辑存过自定义顺序 → 套用（新增曲目按原相对顺序补在后面）；
     // 没存过（或钩子未接线）走原始顺序，行为与旧版一致
     const saved = this.deps.savedOrder?.(albumNotePath);
@@ -204,6 +213,31 @@ export class PlaybackEngine {
     }
   }
 
+  /** 恢复专辑原有顺序：按 setQueue 记下的原始顺序就地重排（纯排序，不重新联网 / 不重新扫描）。
+   *  正在播放的那首必须仍是「当前」——与 moveTrack 同一套「对象引用 → trackKey」双保险重定位 index；
+   *  音频 src 一律不碰（同一首歌继续播）。返回是否真的动过队列：
+   *  已是原始顺序 = 空操作，不 emit 也不惊动持久化层（与 moveTrack 的越界空操作同款语义）。 */
+  restoreOriginalOrder(): boolean {
+    if (!this.queue.length || !this.originalOrder.length) return false;
+    // applyTrackOrder 搬的是同一批对象引用 → 逐位比较对象即可判定「顺序有没有变」
+    const next = applyTrackOrder(this.queue, this.originalOrder);
+    if (next.every((t, i) => t === this.queue[i])) return false;
+    const current = this.index >= 0 ? this.queue[this.index] : undefined;
+    const currentKey = current ? trackKey(current) : '';
+    this.queue = next;
+    if (current) {
+      let i = this.queue.indexOf(current);
+      if (i < 0 && currentKey) i = this.queue.findIndex((t) => trackKey(t) === currentKey);
+      if (i >= 0) this.index = i;
+    }
+    // 音频不动（同一首歌继续播），只广播新队列 → 视图重建行并重贴 is-current
+    this.emit();
+    if (this.albumNotePath) {
+      this.deps.onQueueOrderClear?.(this.albumNotePath);
+    }
+    return true;
+  }
+
   // 卸载当前音源（换专辑 / 复位共用；removeAttribute + load 是 Chromium 释放媒体的标准姿势）
   private unloadAudio() {
     this.audio.pause();
@@ -218,6 +252,7 @@ export class PlaybackEngine {
     this.deps.local.clearBlobs(this.deps.local.keysOf(this.queue));
     this.unloadAudio();
     this.queue = [];
+    this.originalOrder = [];
     this.index = -1;
     this.status = 'idle';
     this.errorMsg = '';

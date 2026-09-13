@@ -87,6 +87,12 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'player.loading': { zh: '♪ 正在取碟…', en: '♪ Loading album…' },
   'player.emptyQueue': { zh: '空队列', en: 'Empty queue' },
   'player.dragToReorder': { zh: '拖拽调整顺序', en: 'Drag to reorder' },
+  'player.restoreOriginal': { zh: '恢复原有顺序', en: 'Restore original order' },
+  'player.restoreDone': { zh: '已恢复专辑原有顺序', en: 'Original album order restored' },
+  'player.restoreLocalUnsupported': {
+    zh: '本地专辑按文件名顺序播放，不支持恢复原有顺序',
+    en: 'Local albums play in file-name order; restoring is not supported',
+  },
 
   // —— 导入弹窗：专辑导入（网易云 / QQ 音乐） ——
   'import.title': { zh: '导入专辑', en: 'Import album' },

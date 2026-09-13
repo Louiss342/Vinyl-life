@@ -2,7 +2,8 @@
 //   A 部分纯函数：reorderTracks（含越界）/ applyTrackOrder（缺失键、新增曲目排后面保序）；
 //   B 部分引擎：moveTrack 后「正在播的那首仍是当前曲目」+ 顺序持久化钩子 + setQueue 套用存过的顺序；
 //   C 部分设置归一化：normalizeQueueOrder 丢弃脏数据 + 默认值不被就地改写；
-//   D 部分视图：落点换算（行前/后 → 结果下标）+ 落点视觉复用专辑墙的同一套 CSS。
+//   D 部分视图：落点换算（行前/后 → 结果下标）+ 落点视觉复用专辑墙的同一套 CSS；
+//   E 部分恢复原有顺序：restoreOriginalOrder 就地排回原始顺序（不重扫）+ 当前曲目保位 + 清条目钩子。
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -189,6 +190,7 @@ const ALBUM = '专辑/Abbey Road.md';
 
 function makeEngine({ saved, withHooks = true, gate } = {}) {
   const orderEvents = [];
+  const clearEvents = [];
   const local = {
     buildTracks: async () => [],
     clearBlobs() {},
@@ -212,9 +214,10 @@ function makeEngine({ saved, withHooks = true, gate } = {}) {
   if (withHooks) {
     deps.savedOrder = (p) => saved?.[p];
     deps.onQueueOrderChange = (p, list) => orderEvents.push([p, Array.from(list)]);
+    deps.onQueueOrderClear = (p) => clearEvents.push(p);
   }
   const engine = new PlaybackEngine(deps);
-  return { engine, orderEvents, audio: audioInstances[audioInstances.length - 1] };
+  return { engine, orderEvents, clearEvents, audio: audioInstances[audioInstances.length - 1] };
 }
 
 function setTracks(engine, tracks, albumPath = ALBUM) {
@@ -556,5 +559,119 @@ test('player-view：队列行可拖拽，且点击委托走拖拽抑制判定', 
   assert.ok(
     /engine\.moveTrack\(from, resolveQueueDropIndex\(from, index, after\)\)/.test(src),
     '落点必须交给引擎的 moveTrack 重排（视图不自己动队列）'
+  );
+});
+
+// ============ E. 恢复专辑原有顺序 ============
+
+test('restoreOriginalOrder：套用自定义顺序后能排回原始顺序，当前曲目仍是当前曲目', async () => {
+  const { engine, clearEvents, audio } = makeEngine({ saved: { [ALBUM]: ['ne:3', 'ne:1'] } });
+  setTracks(engine, [ne(1), ne(2), ne(3)]);
+  assert.deepEqual(keys(engine.snapshot().queue), ['ne:3', 'ne:1', 'ne:2'], '先套用存过的顺序');
+  await engine.playIndex(0); // 正在播 ne:3
+  const srcBefore = audio.src;
+
+  assert.equal(engine.restoreOriginalOrder(), true, '确实动过队列');
+  const snap = engine.snapshot();
+  assert.deepEqual(keys(snap.queue), ['ne:1', 'ne:2', 'ne:3'], '就地排回原始顺序（不重新联网）');
+  assert.equal(trackKey(snap.current), 'ne:3', '正在播的那首仍是当前曲目');
+  assert.equal(snap.index, 2, 'index 指向它的新位置');
+  assert.equal(audio.src, srcBefore, '音频地址不重解析（播放不中断）');
+  assert.equal(audio.paused, false, '恢复顺序不该停播');
+  assert.deepEqual(clearEvents, [ALBUM], '把「清掉该专辑自定义顺序」交给持久化钩子');
+  assert.deepEqual(Array.from(engine.snapshot().queue, (t) => trackKey(t)), [
+    'ne:1',
+    'ne:2',
+    'ne:3',
+  ]);
+
+  assert.equal(engine.restoreOriginalOrder(), false, '已是原始顺序 → 空操作');
+  assert.deepEqual(clearEvents, [ALBUM], '空操作不重复通知，也不动队列');
+  assert.equal(audio.src, srcBefore);
+});
+
+test('restoreOriginalOrder：原始顺序不受拖拽影响（拖完再恢复仍回到最初的顺序）', async () => {
+  const { engine, clearEvents } = makeEngine({ saved: {} });
+  setTracks(engine, [ne(1), ne(2), ne(3), ne(4)]);
+  await engine.playIndex(3); // 正在播 ne:4
+  engine.moveTrack(3, 0); // [4,1,2,3]
+  engine.moveTrack(1, 3); // [4,2,3,1]
+  assert.deepEqual(keys(engine.snapshot().queue), ['ne:4', 'ne:2', 'ne:3', 'ne:1'], '拖过两轮');
+
+  assert.equal(engine.restoreOriginalOrder(), true);
+  const snap = engine.snapshot();
+  assert.deepEqual(keys(snap.queue), ['ne:1', 'ne:2', 'ne:3', 'ne:4'], '回到最初的顺序');
+  assert.equal(trackKey(snap.current), 'ne:4', '当前曲目还是拖拽前那首');
+  assert.equal(snap.index, 3, 'index 跟着它走');
+  assert.deepEqual(clearEvents, [ALBUM]);
+});
+
+test('restoreOriginalOrder：没有自定义顺序时不报错（顺序本就是原始的，队列不变）', () => {
+  const { engine, clearEvents } = makeEngine({ saved: {} });
+  setTracks(engine, [ne(1), ne(2), ne(3)]);
+  assert.doesNotThrow(() => engine.restoreOriginalOrder());
+  assert.deepEqual(keys(engine.snapshot().queue), ['ne:1', 'ne:2', 'ne:3'], '队列保持不变');
+  assert.equal(engine.snapshot().index, -1, '没在播就还是没在播');
+  assert.deepEqual(clearEvents, [], '顺序没变 → 不惊动持久化层');
+
+  // 钩子未接线（既有调用方）同样不崩
+  const bare = makeEngine({ withHooks: false });
+  setTracks(bare.engine, [ne(1), ne(2)]);
+  assert.doesNotThrow(() => bare.engine.restoreOriginalOrder());
+});
+
+test('restoreOriginalOrder：换专辑后按新专辑的原始顺序恢复（原始顺序随 setQueue 换）', async () => {
+  const other = '专辑/别的.md';
+  const { engine, clearEvents } = makeEngine({
+    saved: { [ALBUM]: ['ne:2', 'ne:1'], [other]: ['ne:9', 'ne:8'] },
+  });
+  setTracks(engine, [ne(1), ne(2)]);
+  setTracks(engine, [ne(7), ne(8), ne(9)], other);
+  assert.deepEqual(keys(engine.snapshot().queue), ['ne:9', 'ne:8', 'ne:7'], '第二张按它自己的顺序');
+  assert.equal(engine.restoreOriginalOrder(), true);
+  assert.deepEqual(keys(engine.snapshot().queue), ['ne:7', 'ne:8', 'ne:9'], '回到第二张的原始顺序');
+  assert.deepEqual(clearEvents, [other], '清的是当前这张专辑的条目');
+});
+
+test('main.ts：恢复原有顺序的接线（删设置里的条目 + 复用已有防抖落盘）', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../src/main.ts'), 'utf8');
+  assert.ok(
+    /onQueueOrderClear: \(albumPath\) => this\.forgetQueueOrder\(albumPath\)/.test(src),
+    '「恢复原有顺序」后的清条目钩子必须接线'
+  );
+  assert.ok(
+    /forgetQueueOrder\(albumPath: string\)[\s\S]{0,400}?scheduleStatsSave\(\)/.test(src),
+    '删条目后必须复用已有的 5 秒防抖落盘（不另起定时器）'
+  );
+});
+
+test('player-view：恢复按钮常显、走引擎恢复，本地专辑只提示', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../src/views/player-view.ts'), 'utf8');
+  assert.ok(/setIcon\(restoreBtn, 'undo-2'\)/.test(src), '图标用 undo-2');
+  assert.ok(
+    /restoreBtn\.setAttribute\('title', t\('player\.restoreOriginal'\)\)/.test(src),
+    '按钮要有 title（与同行 ✎ 按钮同款写法）'
+  );
+  assert.ok(
+    /const restoreBtn = orderRow\.createEl\('button', \{ cls: 'vinyl-btn vinyl-btn-small' \}\)/.test(
+      src
+    ),
+    '恢复按钮复用 Vinyl order 行已有的按钮样式'
+  );
+  assert.ok(
+    /snap\.current\?\.source \|\| snap\.queue\[0\]\?\.source/.test(src),
+    '按队列来源判断（当前曲目，未开播时退到队首）'
+  );
+  assert.ok(
+    /if \(source === 'local-vault' \|\| source === 'local-external'\) \{\s*notice\(t\('player\.restoreLocalUnsupported'\)\);\s*return;/.test(
+      src
+    ),
+    '本地专辑只提示、不做任何事'
+  );
+  assert.ok(
+    /private restoreOrder\(\)[\s\S]{0,600}?engine\.restoreOriginalOrder\(\)[\s\S]{0,200}?notice\(t\('player\.restoreDone'\)\)/.test(
+      src
+    ),
+    '非本地来源才调引擎恢复并提示已恢复'
   );
 });
