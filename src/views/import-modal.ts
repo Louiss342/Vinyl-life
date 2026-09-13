@@ -318,7 +318,7 @@ export class LocalImportModal extends Modal {
             const { cand } = chosen[i];
             status.setText(`正在导入 ${i + 1}/${chosen.length}：${cand.name}…`);
             try {
-              const album = await createAlbumFromFiles(this.ctx, cand.files, cand.name);
+              const album = await createAlbumFromFiles(this.ctx, cand.files, cand.name, mode);
               if (!album) {
                 failed++;
                 continue;
@@ -366,7 +366,7 @@ export class LocalImportModal extends Modal {
             status.setText('请填写专辑名');
             return;
           }
-          album = await createAlbumFromFiles(this.ctx, audio, name);
+          album = await createAlbumFromFiles(this.ctx, audio, name, mode);
           created = !!album;
         } else {
           album = this.albums.find((a) => a.path === sel.value) || null;

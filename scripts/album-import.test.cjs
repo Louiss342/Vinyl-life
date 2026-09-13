@@ -251,6 +251,26 @@ test('文件夹导入：复制模式保留子目录结构（同名文件不再�
   assert.deepEqual(Array.from(res.skippedExisting), [], '不把同名文件误判成重复');
 });
 
+test('本地专辑骨架：属性齐备可填空 + 复制模式预写 audioFolder', async () => {
+  const h = setup();
+  await h.mod.createAlbumFromFiles(h.ctx, [new File(['x'], '01.flac')], 'A', 'copy');
+  const note = h.files.get('Vinyl Life/Vinyl Note/A.md');
+  assert.ok(note, '应建笔记');
+  for (const key of ['artist', 'year', 'genre', 'rating', 'cover']) {
+    assert.match(note._content, new RegExp(`^${key}: ""$`, 'm'), `${key} 应留空待填`);
+  }
+  assert.match(
+    note._content,
+    /audioFolder: "\[\[Vinyl Life\/audio\/A\]\]"/,
+    '复制模式预写音频目录'
+  );
+  assert.match(note._content, /## 感想/, '正文留感想区');
+
+  await h.mod.createAlbumFromFiles(h.ctx, [new File(['x'], 'b.flac')], 'B', 'link');
+  const noteB = h.files.get('Vinyl Life/Vinyl Note/B.md');
+  assert.doesNotMatch(noteB._content, /audioFolder/, '外链模式不预写 audioFolder');
+});
+
 test('从文件新建专辑：可指定专辑名（弹窗「新建专辑」路径）', async () => {
   const h = setup();
   const files = [new File(['x'], '01.flac'), new File(['x'], '02.flac')];

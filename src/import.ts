@@ -303,17 +303,38 @@ export async function importLocalAudio(
 
 // ============ C. 从文件新建本地专辑（拖到空白处） ============
 
+/**
+ * 本地专辑笔记骨架：与「导入专辑」生成的字段一致，能自动的填好、其余留空待填。
+ * 空属性（`artist:` 之类）在 Obsidian 属性面板里就是一行空字段，点进去填即可。
+ */
+export function buildLocalAlbumNote(audioFolderRef?: string): string {
+  // 用空字符串而不是 null：Obsidian 的 processFrontMatter 会把 null 回写成 `key: null`，
+  // 属性面板里会显示成 "null"；空字符串则是干净的空字段。
+  const lines = [
+    '---',
+    'tags: [album]',
+    'artist: ""',
+    'year: ""',
+    'genre: ""',
+    'rating: ""',
+    'cover: ""',
+  ];
+  if (audioFolderRef) lines.push(`audioFolder: "[[${audioFolderRef}]]"`);
+  lines.push('---', '', '## 感想', '');
+  return lines.join('\n');
+}
+
 export async function createAlbumFromFiles(
   ctx: ImportContext,
   files: File[],
-  titleOverride?: string
+  titleOverride?: string,
+  mode: 'copy' | 'link' = 'copy'
 ): Promise<AlbumInfo | null> {
   const audioFiles = files.filter((f) => isAudioFile(f.name));
   if (!audioFiles.length) return null;
   const title = (titleOverride || '').trim() || baseName(audioFiles[0].name);
-  const notePath = normalizePath(
-    `${ctx.settings().albumFolder}/${sanitizeFileName(title)}.md`
-  );
+  const safeTitle = sanitizeFileName(title);
+  const notePath = normalizePath(`${ctx.settings().albumFolder}/${safeTitle}.md`);
   const existing = ctx.app.vault.getAbstractFileByPath(notePath);
   if (existing instanceof TFile) {
     const info = getAlbumInfo(ctx.app, existing);
@@ -322,7 +343,14 @@ export async function createAlbumFromFiles(
     throw new Error(`已存在同名文件「${notePath}」，请先改名或移走后再拖入`);
   }
   await ensureFolder(ctx.app, ctx.settings().albumFolder);
-  const file = await ctx.app.vault.create(notePath, '---\ntags: [album]\n---\n');
+  // 复制模式：音频目录现在就已知（与 importLocalAudio 的落位规则一致），直接写进骨架
+  const audioRef =
+    mode === 'copy'
+      ? normalizePath(`${ctx.settings().audioFolder}/${safeTitle}`)
+      : undefined;
+  const file = await ctx.app.vault.create(notePath, buildLocalAlbumNote(audioRef));
   // metadataCache 尚未索引新文件 → 用已知 frontmatter 直接构造
-  return buildAlbumInfo(ctx.app, file, { tags: ['album'] });
+  const fm: Record<string, unknown> = { tags: ['album'] };
+  if (audioRef) fm.audioFolder = `[[${audioRef}]]`;
+  return buildAlbumInfo(ctx.app, file, fm);
 }

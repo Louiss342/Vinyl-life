@@ -351,7 +351,12 @@ export default class VinylLifePlugin extends Plugin {
     try {
       let target = album;
       if (!target) {
-        target = await createAlbumFromFiles(this.importCtx(), audioFiles, scan?.rootName);
+        target = await createAlbumFromFiles(
+          this.importCtx(),
+          audioFiles,
+          scan?.rootName,
+          this.settings.importMode
+        );
         if (!target) {
           notice('从文件新建专辑失败');
           return;
