@@ -69,6 +69,12 @@ begins, so the connection between "this note" and "this sound" stays visible.
   right frontmatter, then download the cover through the local gateway (avoids CORS).
 - Drag local audio files in, in one of two modes: **copy into the vault**, or **link by reference**
   to a path outside the vault.
+- **Pick or drop a folder** to import a whole album in one go: the folder name becomes the album
+  title, every supported audio file inside (including subfolders) is imported, and the subfolder
+  layout is kept — `audio/<album>/CD1/01.flac`. Non-audio files (covers, cue sheets, logs) are
+  ignored. If the folder has no audio of its own and contains several *non-disc* subfolders with
+  audio, the plugin assumes you picked a music-library root and asks for a specific album folder
+  instead of merging everything into one album.
 
 ### Notes integration
 
@@ -277,7 +283,7 @@ pre-releases.
 - **网易云音乐** —— 扫码登录 / 官方登录页浏览器登录 / 手动粘贴 Cookie / 从 Mineradio 迁移。
 - **QQ 音乐** —— 扫码登录 / 官方登录页浏览器登录 / 手动粘贴 Cookie。
 
-**主要功能**：专辑墙（卡片网格、黑胶弹出动效、音源角标、播放高亮、搜索/排序/筛选/卡片属性/导入工具栏）；播放器（黑胶转盘、唱臂姿态、队列、进度、音量，可停靠侧栏、主区或独立弹出窗口）；黑胶交接动效；专辑链接一键建笔记并代理下载封面，本地音频拖拽入库（复制进 vault 或外链引用）；播放中一键在专辑笔记追加时间戳感想；播放统计写入插件 `data.json`（不写笔记）；播放器配色、唱片颜色、转速、专辑墙列数等外观设置。
+**主要功能**：专辑墙（卡片网格、黑胶弹出动效、音源角标、播放高亮、搜索/排序/筛选/卡片属性/导入工具栏）；播放器（黑胶转盘、唱臂姿态、队列、进度、音量，可停靠侧栏、主区或独立弹出窗口）；黑胶交接动效；专辑链接一键建笔记并代理下载封面，本地音频拖拽入库（复制进 vault 或外链引用；**选/拖一个文件夹即整张专辑导入**，按文件夹名建专辑并保留子目录结构 `audio/<专辑>/CD1/01.flac`）；播放中一键在专辑笔记追加时间戳感想；播放统计写入插件 `data.json`（不写笔记）；播放器配色、唱片颜色、转速、专辑墙列数等外观设置。
 
 ### 需要 Node.js
 

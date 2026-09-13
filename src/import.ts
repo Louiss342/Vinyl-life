@@ -10,7 +10,7 @@ import {
   getAlbumInfo,
   parseQqAlbumMid,
 } from './core/album-index';
-import { isAudioFile, baseName, sanitizeFileName, ensureFolder } from './util';
+import { isAudioFile, baseName, sanitizeFileName, ensureFolder, relDirOf } from './util';
 // 以下仅作类型使用（import type 让测试打包不牵连整条服务链）
 import type { VinylSettings } from './settings';
 import type { NeteaseService } from './core/netease';
@@ -240,13 +240,24 @@ export async function importLocalAudio(
       copyDir = normalizePath(
         `${ctx.settings().audioFolder}/${sanitizeFileName(album.title)}`
       );
-      const p = normalizePath(`${copyDir}/${safeName}`);
+      // 文件夹导入：保留子目录结构（audio/<专辑>/CD1/01.flac），散选文件则平铺
+      const relDir = relDirOf(f);
+      const destDir = relDir
+        ? normalizePath(
+            `${copyDir}/${relDir
+              .split('/')
+              .filter(Boolean)
+              .map((seg) => sanitizeFileName(seg))
+              .join('/')}`
+          )
+        : copyDir;
+      const p = normalizePath(`${destDir}/${safeName}`);
       if (ctx.app.vault.getAbstractFileByPath(p)) {
         skippedExisting.push(f.name); // 已存在跳过
         continue;
       }
       const ab = await f.arrayBuffer();
-      await ensureFolder(ctx.app, copyDir);
+      await ensureFolder(ctx.app, destDir);
       await ctx.app.vault.createBinary(p, ab);
       added.push(p);
     } else {

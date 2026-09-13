@@ -230,6 +230,27 @@ test('本地导入：不支持的格式 / 已存在 分开计数（不再混为�
   assert.deepEqual(Array.from(res.skippedExisting), ['dup.wav'], '已存在单独成列');
 });
 
+test('文件夹导入：复制模式保留子目录结构（同名文件不再互相「已存在」）', async () => {
+  const h = setup();
+  const album = { title: 'A', file: { path: 'Vinyl Life/Vinyl Note/A.md' } };
+  const mk = (name, rel) => {
+    const f = new File(['x'], name);
+    Object.defineProperty(f, 'webkitRelativePath', { value: rel });
+    return f;
+  };
+  const files = [
+    mk('01.flac', 'Abbey Road/CD1/01.flac'),
+    mk('01.flac', 'Abbey Road/CD2/01.flac'),
+  ];
+  const res = await h.mod.importLocalAudio(h.ctx, album, files, 'copy');
+  assert.deepEqual(
+    Array.from(res.added).sort(),
+    ['Vinyl Life/audio/A/CD1/01.flac', 'Vinyl Life/audio/A/CD2/01.flac'],
+    '两个 CD 里的同名曲各自落位'
+  );
+  assert.deepEqual(Array.from(res.skippedExisting), [], '不把同名文件误判成重复');
+});
+
 test('从文件新建专辑：可指定专辑名（弹窗「新建专辑」路径）', async () => {
   const h = setup();
   const files = [new File(['x'], '01.flac'), new File(['x'], '02.flac')];

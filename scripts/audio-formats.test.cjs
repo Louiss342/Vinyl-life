@@ -95,3 +95,39 @@ test('suggestAlbumTitle：同目录多文件 → 目录名；单文件 / 跨目�
   assert.equal(u.suggestAlbumTitle([mk('x.flac')]), 'x', '没有 path 信息也不报错');
   assert.equal(u.suggestAlbumTitle([mk('cover.jpg', 'D:/A/cover.jpg')]), '', '非音频不参与推断');
 });
+
+test('文件夹分析：根层音频 → 一张专辑；多个子目录 → 判定为音乐库', () => {
+  const f = (relPath) => ({ file: { name: relPath.split('/').pop() }, relPath });
+
+  const one = u.analyzeFolder('Abbey Road', [
+    f('Abbey Road/01.flac'),
+    f('Abbey Road/02.flac'),
+    f('Abbey Road/cover.jpg'),
+  ]);
+  assert.equal(one.verdict, 'album');
+  assert.equal(one.files.length, 2, '只收受支持的音频');
+  assert.equal(one.others, 1, '封面等非音频单独计数');
+  assert.equal(one.rootAudio, 2);
+
+  const cd = u.analyzeFolder('Abbey Road', [
+    f('Abbey Road/CD1/01.flac'),
+    f('Abbey Road/CD2/01.flac'),
+  ]);
+  assert.equal(cd.verdict, 'album', '子目录都是碟号（CD1 / CD2）→ 仍是同一张专辑');
+  assert.equal(cd.audioSubfolders, 2);
+  assert.equal(cd.rootAudio, 0);
+
+  const single = u.analyzeFolder('Abbey Road', [f('Abbey Road/disc/01.flac')]);
+  assert.equal(single.verdict, 'album', '只有一个子目录 → 仍是这张专辑');
+
+  const lib = u.analyzeFolder('Music', [f('Music/A/01.flac'), f('Music/B/01.flac')]);
+  assert.equal(lib.verdict, 'library', '多个普通子文件夹各含音频 → 像音乐库根目录，不糊成一张');
+
+  const empty = u.analyzeFolder('Empty', [f('Empty/notes.txt')]);
+  assert.equal(empty.verdict, 'empty');
+  assert.equal(empty.files.length, 0);
+
+  assert.equal(u.relDirOfPath('A/CD1/01.flac'), 'CD1');
+  assert.equal(u.relDirOfPath('A/01.flac'), '', '根层文件没有子目录');
+  assert.equal(u.relDirOfPath('01.flac'), '', '没有文件夹前缀也不报错');
+});
