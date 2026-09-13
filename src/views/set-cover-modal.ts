@@ -5,6 +5,7 @@ import { App, FuzzySuggestModal, Modal, TFile } from 'obsidian';
 import type VinylLifePlugin from '../main';
 import type { AlbumInfo } from '../core/album-index';
 import { ensureFolder, isImageFile, notice, sanitizeFileName } from '../util';
+import { t, tf } from '../core/i18n';
 
 class VaultImageSuggest extends FuzzySuggestModal<TFile> {
   constructor(
@@ -12,7 +13,7 @@ class VaultImageSuggest extends FuzzySuggestModal<TFile> {
     private onPick: (f: TFile) => void
   ) {
     super(app);
-    this.setPlaceholder('在库中选择一张图片…');
+    this.setPlaceholder(t('cover.pickInVault'));
   }
 
   getItems(): TFile[] {
@@ -37,7 +38,7 @@ export class SetCoverModal extends Modal {
     private album: AlbumInfo
   ) {
     super(app);
-    this.titleEl.setText(`设置封面 — ${album.title}`);
+    this.titleEl.setText(tf('cover.title', { title: album.title }));
   }
 
   async onOpen() {
@@ -53,9 +54,9 @@ export class SetCoverModal extends Modal {
     }
 
     const row = c.createDiv({ cls: 'vinyl-import-actions' });
-    const vaultBtn = row.createEl('button', { text: '从库中选择图片…', cls: 'mod-cta' });
-    const fileBtn = row.createEl('button', { text: '选择本地图片…' });
-    const removeBtn = row.createEl('button', { text: '移除封面' });
+    const vaultBtn = row.createEl('button', { text: t('cover.fromVault'), cls: 'mod-cta' });
+    const fileBtn = row.createEl('button', { text: t('cover.fromLocal') });
+    const removeBtn = row.createEl('button', { text: t('cover.remove') });
     const fileInput = row.createEl('input', { attr: { type: 'file', accept: 'image/*' } });
     fileInput.style.display = 'none';
     this.fileInput = fileInput;
@@ -63,9 +64,7 @@ export class SetCoverModal extends Modal {
     const status = c.createDiv({ cls: 'vinyl-muted' });
     c.createDiv({
       cls: 'vinyl-muted',
-      text:
-        '也可以不设置：把 cover.jpg / folder.jpg / front.jpg 放进专辑的音频文件夹，' +
-        '或把与专辑同名的图片放进封面目录，插件会自动识别。',
+      text: t('cover.conventionHint'),
     });
 
     vaultBtn.addEventListener('click', () => {
@@ -87,7 +86,7 @@ export class SetCoverModal extends Modal {
         await this.apply(`[[${path}]]`, f.name);
       } catch (e) {
         console.error('[vinyl] 设置封面失败', e);
-        status.setText(`❌ 设置失败：${(e as Error).message || e}`);
+        status.setText(`${t('cover.setFailed')}${(e as Error).message || e}`);
       }
     });
     removeBtn.addEventListener('click', () => void this.apply(null, ''));
@@ -100,11 +99,11 @@ export class SetCoverModal extends Modal {
         if (cover) fm.cover = cover;
         else delete fm.cover;
       });
-      notice(cover ? `封面已更新（${label}）` : '已移除封面');
+      notice(cover ? tf('cover.updated', { label }) : t('cover.removed'));
       this.close();
     } catch (e) {
       console.error('[vinyl] 写入封面失败', e);
-      notice(`设置封面失败：${(e as Error).message}`);
+      notice(tf('cover.writeFailed', { msg: (e as Error).message }));
     }
   }
 

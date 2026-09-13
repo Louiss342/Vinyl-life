@@ -4,6 +4,7 @@
 import { App, Modal } from 'obsidian';
 import { ServerManager } from '../core/server-manager';
 import type { LoginState } from '../core/auth';
+import { t, tf } from '../core/i18n';
 
 export interface QrAuthLike {
   beginQr(): Promise<{ key: string; qrimg: string }>;
@@ -35,30 +36,31 @@ export interface QrProvider {
   noSessionHint?: string;
 }
 
-export const NETEASE_QR_PROVIDER: QrProvider = {
-  id: 'netease',
-  title: '网易云登录',
-  appHint: '请用网易云音乐 App 扫码',
-  manualHint:
-    '浏览器打开 music.163.com 登录 → F12 → Application（应用）→ Cookies → music.163.com，复制 MUSIC_U 的 Value，按 MUSIC_U=复制的值 粘贴到下面。此方法也可读取 HttpOnly Cookie。',
-  placeholder: 'MUSIC_U=xxx; __csrf=yyy; ...',
-  tempPng: 'qr-login-tmp.png',
-  // 新用户首次扫码时网关会现场注册匿名设备身份，该接口可能限流 → 失败态给出浏览器登录指引
-  noSessionHint:
-    '❌ 已授权但未取得有效登录会话（新设备的匿名注册可能被网易云限流）。请刷新二维码重试；仍不行请改用「网易云浏览器登录（官方登录页）」，也可手动粘贴 Cookie。',
-};
+// 用函数而不是常量：语言在设置里切换后，文案要跟着变（常量在模块加载时就定型了）
+export function neteaseQrProvider(): QrProvider {
+  return {
+    id: 'netease',
+    title: t('login.netease.title'),
+    appHint: t('login.netease.appHint'),
+    manualHint: t('login.netease.manualHint'),
+    placeholder: 'MUSIC_U=xxx; __csrf=yyy; ...',
+    tempPng: 'qr-login-tmp.png',
+    // 新用户首次扫码时网关会现场注册匿名设备身份，该接口可能限流 → 失败态给出浏览器登录指引
+    noSessionHint: t('login.netease.noSessionHint'),
+  };
+}
 
-export const QQ_QR_PROVIDER: QrProvider = {
-  id: 'qq',
-  title: 'QQ 音乐登录',
-  appHint: '请用手机 QQ 扫码（此为 QQ 互联二维码，QQ 音乐 App 的「扫一扫」识别不了）',
-  fallbackHint:
-    '若扫码后长时间停在「已扫码」，请改用设置里的「QQ 浏览器登录」——在官方页面里微信 / QQ 扫码都能完成登录（已实测可用）。',
-  manualHint:
-    '浏览器打开 y.qq.com 登录 → F12 → Application（应用）→ Cookies → y.qq.com，复制 qm_keyst 的 Value，按 qm_keyst=复制的值 粘贴到下面。此方法也可读取 HttpOnly Cookie。',
-  placeholder: 'qm_keyst=xxx; uin=123456789; ...',
-  tempPng: 'qr-login-tmp-qq.png',
-};
+export function qqQrProvider(): QrProvider {
+  return {
+    id: 'qq',
+    title: t('login.qq.title'),
+    appHint: t('login.qq.appHint'),
+    fallbackHint: t('login.qq.fallbackHint'),
+    manualHint: t('login.qq.manualHint'),
+    placeholder: 'qm_keyst=xxx; uin=123456789; ...',
+    tempPng: 'qr-login-tmp-qq.png',
+  };
+}
 
 export class QrLoginModal extends Modal {
   private deps: QrLoginDeps;
@@ -82,7 +84,7 @@ export class QrLoginModal extends Modal {
   ) {
     super(app);
     this.deps = deps;
-    this.provider = opts?.provider ?? NETEASE_QR_PROVIDER;
+    this.provider = opts?.provider ?? neteaseQrProvider();
     this.showQr = opts?.qr ?? true;
     this.showManual = opts?.manual ?? true;
     this.onLogin = opts?.onLogin;
@@ -97,10 +99,10 @@ export class QrLoginModal extends Modal {
 
     if (this.showQr) {
       const qrSec = c.createDiv({ cls: 'vinyl-qr-section' });
-      qrSec.createEl('h4', { text: '扫码登录' });
+      qrSec.createEl('h4', { text: t('login.qrSection') });
       const img = qrSec.createEl('img', { attr: { width: '220', height: '220' } });
-      const qrStatus = qrSec.createEl('div', { text: '正在生成二维码…', cls: 'vinyl-muted' });
-      const refreshBtn = qrSec.createEl('button', { text: '刷新二维码' });
+      const qrStatus = qrSec.createEl('div', { text: t('login.generating'), cls: 'vinyl-muted' });
+      const refreshBtn = qrSec.createEl('button', { text: t('login.refreshQr') });
       if (this.provider.fallbackHint) {
         qrSec.createEl('div', { text: this.provider.fallbackHint, cls: 'vinyl-muted' });
       }
@@ -111,7 +113,7 @@ export class QrLoginModal extends Modal {
         refreshBtn.disabled = true;
         img.onerror = null;
         img.removeAttribute('src');
-        qrStatus.textContent = '正在生成二维码…';
+        qrStatus.textContent = t('login.generating');
         try {
           const { key, qrimg } = await this.deps.auth.beginQr();
           if (generation !== this.qrGeneration) return;
@@ -128,14 +130,14 @@ export class QrLoginModal extends Modal {
               if (generation !== this.qrGeneration) return;
               img.src = this.app.vault.adapter.getResourcePath(tmpPath);
             } catch (e) {
-              if (generation === this.qrGeneration) qrStatus.textContent = '二维码渲染失败：' + (e as Error).message;
+              if (generation === this.qrGeneration) qrStatus.textContent = t('login.qrRenderFailed') + (e as Error).message;
             }
           };
           img.src = qrimg.startsWith('data:image/') ? qrimg : 'data:image/png;base64,' + qrimg;
           qrStatus.textContent = this.provider.appHint;
           this.poll(key, qrStatus, start, generation);
         } catch (e) {
-          if (generation === this.qrGeneration) qrStatus.textContent = '生成二维码失败：' + (e as Error).message;
+          if (generation === this.qrGeneration) qrStatus.textContent = t('login.qrGenFailed') + (e as Error).message;
         } finally {
           if (generation === this.qrGeneration) refreshBtn.disabled = false;
         }
@@ -146,7 +148,7 @@ export class QrLoginModal extends Modal {
 
     if (this.showManual) {
       if (this.showQr) c.createEl('hr');
-      c.createEl('h4', { text: '手动粘贴 Cookie（兜底）' });
+      c.createEl('h4', { text: t('login.manualSection') });
       c.createEl('div', {
         text: this.provider.manualHint,
         cls: 'vinyl-muted',
@@ -154,16 +156,16 @@ export class QrLoginModal extends Modal {
       const ta = c.createEl('textarea', {
         attr: { placeholder: this.provider.placeholder },
       });
-      const saveBtn = c.createEl('button', { text: '保存 Cookie', cls: 'mod-cta' });
+      const saveBtn = c.createEl('button', { text: t('login.saveCookie'), cls: 'mod-cta' });
       const manualStatus = c.createEl('div', { cls: 'vinyl-muted' });
       saveBtn.addEventListener('click', async () => {
         const val = ta.value.trim();
         if (!val) {
-          manualStatus.textContent = '请输入 Cookie 内容';
+          manualStatus.textContent = t('login.cookieEmpty');
           return;
         }
         saveBtn.disabled = true;
-        manualStatus.textContent = '正在保存并验证…';
+        manualStatus.textContent = t('login.verifying');
         this.manualAbort?.abort();
         const abort = new AbortController();
         this.manualAbort = abort;
@@ -173,15 +175,15 @@ export class QrLoginModal extends Modal {
           const st = await this.deps.auth.getStatus();
           if (abort.signal.aborted) return;
           if (st.loggedIn) {
-            manualStatus.textContent = `✅ Cookie 有效，已登录：${st.nick}（${st.userId}）${
-              st.vipType === 11 ? ' · VIP' : ''
-            }`;
+            manualStatus.textContent =
+              tf('login.cookieOk', { nick: String(st.nick), id: String(st.userId) }) +
+              (st.vipType === 11 ? ' · VIP' : '');
             void this.onLogin?.(st);
           } else {
-            manualStatus.textContent = '❌ 登录态无效（Cookie 可能过期或格式不对）';
+            manualStatus.textContent = t('login.cookieInvalid');
           }
         } catch (e) {
-          if (!abort.signal.aborted) manualStatus.textContent = '保存失败：' + (e as Error).message;
+          if (!abort.signal.aborted) manualStatus.textContent = t('login.saveFailed') + (e as Error).message;
         } finally {
           if (this.manualAbort === abort) this.manualAbort = null;
           if (!abort.signal.aborted) saveBtn.disabled = false;
@@ -201,15 +203,15 @@ export class QrLoginModal extends Modal {
         const code = typeof result === 'number' ? result : result.code;
         if (generation !== this.qrGeneration) return;
         if (code === 800) {
-          statusEl.textContent = '二维码已过期，正在刷新…';
+          statusEl.textContent = t('login.qrExpired');
           await restart();
           return;
         } else if (code === 801) {
-          statusEl.textContent = '等待扫码，' + this.provider.appHint + '…';
+          statusEl.textContent = t('login.waitScan') + this.provider.appHint + '…';
         } else if (code === 802) {
-          statusEl.textContent = '已扫码，请在手机上确认登录…';
+          statusEl.textContent = t('login.scannedConfirm');
         } else if (code === 803) {
-          statusEl.textContent = '授权成功，正在读取登录态…';
+          statusEl.textContent = t('login.authorizing');
           // 新网关直接复用 803 前已经验证过的账号，避免紧接着重复请求远端导致假失败。
           // 数字返回值仍兼容旧网关与测试替身。
           const st = typeof result === 'number' || !result.state
@@ -217,22 +219,22 @@ export class QrLoginModal extends Modal {
             : result.state;
           if (generation !== this.qrGeneration) return;
           if (st.loggedIn) {
-            statusEl.textContent = `✅ 已登录：${st.nick || ''}（${st.userId ?? ''}）${
-              st.vipType === 11 ? ' · VIP' : ''
-            }。登录会话已保存。`;
+            statusEl.textContent = tf('login.loggedIn', {
+              nick: st.nick || '',
+              id: st.userId ?? '',
+              vip: st.vipType === 11 ? ' · VIP' : '',
+            });
             void this.onLogin?.(st);
           } else {
-            statusEl.textContent =
-              this.provider.noSessionHint ??
-              '❌ 已授权但未取得有效登录会话，请刷新二维码重试，或使用「手动粘贴 Cookie」。';
+            statusEl.textContent = this.provider.noSessionHint ?? t('login.noSession');
           }
           return;
         } else {
-          statusEl.textContent = `扫码状态异常（${code}），正在重试；也可刷新二维码。`;
+          statusEl.textContent = tf('login.qrAbnormal', { code });
         }
       } catch (e) {
         if (generation !== this.qrGeneration) return;
-        statusEl.textContent = '扫码检查失败：' + (e as Error).message + '。正在重试，也可刷新二维码。';
+        statusEl.textContent = tf('login.qrCheckFailed', { msg: (e as Error).message });
       }
       // 下一次检查等本次请求完成后再安排，避免慢请求重入。
       this.poll(key, statusEl, restart, generation);

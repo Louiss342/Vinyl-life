@@ -12,6 +12,7 @@ import { trackSourceLabel, trackSourceClass, qualityText } from '../core/track';
 import { fmtTime } from '../util';
 import { SPIN_SPEEDS } from '../core/disc-motion';
 import { DECK_STYLES, RECORD_COLORS, deckClass, recordClass } from '../core/appearance';
+import { t } from '../core/i18n';
 
 export const PLAYER_VIEW_TYPE = 'vinyl-player';
 
@@ -94,7 +95,7 @@ export class VinylPlayerView extends ItemView {
   }
 
   getDisplayText() {
-    return '黑胶播放器';
+    return t('player.title');
   }
 
   getIcon() {
@@ -177,10 +178,10 @@ export class VinylPlayerView extends ItemView {
 
     // 头部：标题 + 换碟圆钮
     const header = c.createDiv({ cls: 'vinyl-player-header' });
-    const headerTitle = header.createDiv({ cls: 'vinyl-player-header-title', text: '黑胶播放器' });
+    const headerTitle = header.createDiv({ cls: 'vinyl-player-header-title', text: t('player.title') });
     const swapBtn = header.createEl('button', { cls: 'vinyl-btn vinyl-btn-small' });
     setIcon(swapBtn, 'disc-3');
-    swapBtn.setAttribute('aria-label', '选择专辑');
+    swapBtn.setAttribute('aria-label', t('player.pickAlbum'));
     swapBtn.addEventListener('click', (ev) => this.showAlbumMenu(ev));
 
     // 设备面板（胡桃木底座，样式见 .vinyl-deck）
@@ -224,9 +225,9 @@ export class VinylPlayerView extends ItemView {
     setIcon(prevBtn, 'skip-back');
     setIcon(playBtn, 'play');
     setIcon(nextBtn, 'skip-forward');
-    prevBtn.setAttribute('aria-label', '上一首');
-    playBtn.setAttribute('aria-label', '播放 / 暂停');
-    nextBtn.setAttribute('aria-label', '下一首');
+    prevBtn.setAttribute('aria-label', t('player.prev'));
+    playBtn.setAttribute('aria-label', t('player.playPause'));
+    nextBtn.setAttribute('aria-label', t('player.next'));
     prevBtn.addEventListener('click', () => this.plugin.engine.prev());
     playBtn.addEventListener('click', () => this.plugin.engine.toggle());
     nextBtn.addEventListener('click', () => this.plugin.engine.next());
@@ -255,8 +256,8 @@ export class VinylPlayerView extends ItemView {
     const queueTitle = orderRow.createDiv({ cls: 'vinyl-queue-title' });
     const noteBtn = orderRow.createEl('button', { cls: 'vinyl-btn vinyl-btn-small' });
     setIcon(noteBtn, 'pencil');
-    noteBtn.setAttribute('aria-label', '在专辑笔记追加此刻感想');
-    noteBtn.setAttribute('title', '在专辑笔记追加此刻感想');
+    noteBtn.setAttribute('aria-label', t('player.appendNote'));
+    noteBtn.setAttribute('title', t('player.appendNote'));
     noteBtn.addEventListener('click', () => this.plugin.appendListeningNote());
 
     const queueBox = c.createDiv({ cls: 'vinyl-queue' });
@@ -304,7 +305,7 @@ export class VinylPlayerView extends ItemView {
       );
     }
     if (!this.albums.length) {
-      menu.addItem((it) => it.setTitle('（没有找到专辑笔记）').setDisabled(true));
+      menu.addItem((it) => it.setTitle(t('player.noAlbumNotes')).setDisabled(true));
     }
     menu.showAtMouseEvent(ev);
   }
@@ -333,14 +334,14 @@ export class VinylPlayerView extends ItemView {
       s.status === 'error' && s.error
         ? `⚠ ${s.error}`
         : s.status === 'loading'
-          ? '♪ 正在取碟…'
+          ? t('player.loading')
           : s.albumTitle
             ? `♪ ${s.albumTitle}`
-            : '黑胶播放器';
+            : t('player.title');
     if (headerText !== this.lastHeaderText) {
       this.lastHeaderText = headerText;
       els.headerTitle.textContent = headerText;
-      els.headerTitle.setAttribute('title', s.albumTitle || '黑胶播放器');
+      els.headerTitle.setAttribute('title', s.albumTitle || t('player.title'));
       els.headerTitle.toggleClass('is-error', s.status === 'error' && !!s.error);
     }
 
@@ -426,7 +427,7 @@ export class VinylPlayerView extends ItemView {
     els.queueBox.empty();
     this.queueRows = [];
     if (!s.queue.length) {
-      els.queueBox.createDiv({ text: '空队列', cls: 'vinyl-muted' });
+      els.queueBox.createDiv({ text: t('player.emptyQueue'), cls: 'vinyl-muted' });
     } else {
       s.queue.forEach((t, i) => {
         const row = els.queueBox.createDiv({ cls: 'vinyl-queue-item' });

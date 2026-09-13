@@ -237,11 +237,11 @@ test('QQ 扫码弹窗文案：QQ 音乐 / qm_keyst / y.qq.com，且不含 MUSIC_
   assert.match(text, /qm_keyst/);
   assert.match(text, /y\.qq\.com/);
   assert.doesNotMatch(text, /MUSIC_U/);
-  assert.equal(h.exports.QQ_QR_PROVIDER.tempPng, 'qr-login-tmp-qq.png');
+  assert.equal(h.exports.qqQrProvider().tempPng, 'qr-login-tmp-qq.png');
 });
 
 function setupQrProvider() {
-  // provider 常量从编译产物获取（保证测的是真实导出）
+  // provider 从编译产物获取（保证测的是真实导出；用函数取是为了切语言后文案跟着变）
   const module = { exports: {} };
   vm.runInNewContext(qrSource, {
     module,
@@ -250,7 +250,7 @@ function setupQrProvider() {
     window: { setInterval: () => 0, clearInterval: () => {}, setTimeout: () => 0, clearTimeout: () => {} },
     Buffer,
   });
-  return module.exports.QQ_QR_PROVIDER;
+  return module.exports.qqQrProvider();
 }
 
 test('QQ 扫码状态机复用 800/801/802/803 协议', async () => {
@@ -415,7 +415,7 @@ test('QQ 浏览器弹窗：标题走 provider，且源码不含已废弃的跳�
     {
       auth: { getStatus: async () => ({ loggedIn: false, cookieBytes: 0, serverOk: true }) },
       browserLogin: { open: async () => false, active: false, check() {} },
-      provider: module.exports.QQ_WEB,
+      provider: module.exports.qqWebProvider(),
     }
   );
   await modal.onOpen();

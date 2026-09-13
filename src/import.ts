@@ -11,6 +11,7 @@ import {
   parseQqAlbumMid,
 } from './core/album-index';
 import { isAudioFile, baseName, sanitizeFileName, ensureFolder, relDirOf } from './util';
+import { t, tf } from './core/i18n';
 // 以下仅作类型使用（import type 让测试打包不牵连整条服务链）
 import type { VinylSettings } from './settings';
 import type { NeteaseService } from './core/netease';
@@ -61,8 +62,7 @@ export async function importAlbum(ctx: ImportContext, input: string): Promise<Im
   if (!link) {
     return {
       ok: false,
-      detail:
-        '无法识别链接：请粘贴网易云专辑链接（music.163.com/#/album?id=… 或纯数字 ID）或 QQ 音乐专辑链接（y.qq.com/n/ryqq/albumDetail/…）',
+      detail: t('import.badLink'),
     };
   }
   return link.source === 'qq' ? importQqAlbum(ctx, input) : importNeteaseAlbum(ctx, input);
@@ -96,14 +96,14 @@ export async function importNeteaseAlbum(
 ): Promise<ImportResult> {
   const id = parseNeteaseInput(input);
   if (!id) {
-    return { ok: false, detail: '无法解析专辑 ID（请粘贴专辑链接或纯数字 ID）' };
+    return { ok: false, detail: t('import.badId') };
   }
 
   // 查重先于接口请求：已有同 neteaseId 的笔记 → 直接指路（也避免离线/接口故障时误报失败）
   for (const f of findAlbumNotes(ctx.app)) {
     const info = getAlbumInfo(ctx.app, f);
     if (info?.neteaseId === id) {
-      return { ok: false, detail: `已存在「${info.title}」，无需重复导入`, file: f };
+      return { ok: false, detail: tf('import.duplicate', { title: info.title }), file: f };
     }
   }
 
@@ -111,18 +111,18 @@ export async function importNeteaseAlbum(
   try {
     body = await ctx.client.album(id);
   } catch (e) {
-    return { ok: false, detail: `获取专辑失败：${(e as Error).message}` };
+    return { ok: false, detail: tf('import.fetchFailed', { msg: (e as Error).message }) };
   }
   const album = body?.album;
   if (!album?.name) {
-    return { ok: false, detail: `专辑接口无数据（code=${body?.code}）` };
+    return { ok: false, detail: tf('import.albumNoData', { code: String(body?.code) }) };
   }
 
   // 建笔记
   const name = sanitizeFileName(album.name);
   const notePath = normalizePath(`${ctx.settings().albumFolder}/${name}.md`);
   if (ctx.app.vault.getAbstractFileByPath(notePath)) {
-    return { ok: false, detail: `笔记已存在：${notePath}` };
+    return { ok: false, detail: tf('import.noteExists', { path: notePath }) };
   }
   const artist = album.artist?.name || '';
   const year = album.publishTime
@@ -142,7 +142,12 @@ export async function importNeteaseAlbum(
   const file = await ctx.app.vault.create(notePath, lines.join('\n'));
   return {
     ok: true,
-    detail: `已导入「${album.name}」（${artist}${year ? `, ${year}` : ''}，${body.songs?.length ?? 0} 曲）`,
+    detail: tf('import.neteaseDone', {
+      name: album.name,
+      artist,
+      year: year ? `, ${year}` : '',
+      n: body.songs?.length ?? 0,
+    }),
     file,
   };
 }
@@ -154,7 +159,7 @@ export async function importQqAlbum(ctx: ImportContext, input: string): Promise<
   if (!mid) {
     return {
       ok: false,
-      detail: '无法解析 QQ 音乐专辑 ID（请粘贴专辑链接，如 https://y.qq.com/n/ryqq/albumDetail/004VSvF52mQoQp）',
+      detail: t('import.badQqId'),
     };
   }
 
@@ -162,7 +167,7 @@ export async function importQqAlbum(ctx: ImportContext, input: string): Promise<
   for (const f of findAlbumNotes(ctx.app)) {
     const info = getAlbumInfo(ctx.app, f);
     if (info?.qqId === mid) {
-      return { ok: false, detail: `已存在「${info.title}」，无需重复导入`, file: f };
+      return { ok: false, detail: tf('import.duplicate', { title: info.title }), file: f };
     }
   }
 
@@ -176,7 +181,7 @@ export async function importQqAlbum(ctx: ImportContext, input: string): Promise<
   if (!album?.name) {
     return {
       ok: false,
-      detail: body?.msg || `QQ 音乐专辑接口无数据（code=${body?.code}）`,
+      detail: body?.msg || tf('import.qqNoData', { code: String(body?.code) }),
     };
   }
 
@@ -201,9 +206,12 @@ export async function importQqAlbum(ctx: ImportContext, input: string): Promise<
   const file = await ctx.app.vault.create(notePath, lines.join('\n'));
   return {
     ok: true,
-    detail: `已导入「${album.name}」（${artist}${year ? `, ${year}` : ''}${
-      album.trackCount ? `，${album.trackCount} 曲` : ''
-    }）`,
+    detail: tf('import.qqDone', {
+      name: album.name,
+      artist,
+      year: year ? `, ${year}` : '',
+      tracks: album.trackCount ? tf('import.qqTracks', { n: album.trackCount }) : '',
+    }),
     file,
   };
 }
@@ -385,7 +393,7 @@ export async function createAlbumFromFiles(
     const info = getAlbumInfo(ctx.app, existing);
     if (info) return info;
     // 同名文件存在但不是专辑笔记 → 不覆盖，给出可读提示
-    throw new Error(`已存在同名文件「${notePath}」，请先改名或移走后再拖入`);
+    throw new Error(tf('import.nameConflict', { path: notePath }));
   }
   await ensureFolder(ctx.app, ctx.settings().albumFolder);
   // 复制模式：音频目录现在就已知（与 importLocalAudio 的落位规则一致），直接写进骨架

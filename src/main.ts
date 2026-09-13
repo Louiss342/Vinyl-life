@@ -16,7 +16,7 @@ import { PlaybackEngine } from './core/player-state';
 import { VinylPlayerView, PLAYER_VIEW_TYPE } from './views/player-view';
 import { VinylShelfView, SHELF_VIEW_TYPE } from './views/shelf-view';
 import { HandoffController } from './animation/handoff';
-import { QrLoginModal, QQ_QR_PROVIDER } from './views/qr-login-modal';
+import { QrLoginModal, qqQrProvider } from './views/qr-login-modal';
 import {
   AlbumInfo,
   buildAlbumInfo,
@@ -50,9 +50,9 @@ import {
 import { AlbumImportModal, LocalImportModal } from './views/import-modal';
 import { DeleteAlbumModal } from './views/delete-album-modal';
 import { collectAlbumDeleteTargets, deleteAlbumAssets } from './delete';
-import { WebLoginModal, QQ_WEB } from './views/web-login-modal';
+import { WebLoginModal, qqWebProvider } from './views/web-login-modal';
 import { StatsModal } from './views/stats-modal';
-import { setLanguage } from './core/i18n';
+import { setLanguage, t, tf } from './core/i18n';
 import { ensureStats, recordTrackPlay } from './core/stats';
 import { Track, trackKey } from './core/track';
 
@@ -119,116 +119,116 @@ export default class VinylLifePlugin extends Plugin {
     this.registerView(PLAYER_VIEW_TYPE, (leaf) => new VinylPlayerView(leaf, this));
     this.registerView(SHELF_VIEW_TYPE, (leaf) => new VinylShelfView(leaf, this));
     // 图标与播放器视图一致（disc-3），方便一眼认出是 Vinyl Life
-    this.addRibbonIcon('disc-3', 'Vinyl Life 专辑墙', () => this.openShelf());
+    this.addRibbonIcon('disc-3', t('cmd.ribbonShelf'), () => this.openShelf());
     this.addCommand({
       id: 'open-shelf',
-      name: '打开专辑墙',
+      name: t('cmd.openShelf'),
       callback: () => this.openShelf(),
     });
     this.addCommand({
       id: 'open-shelf-sidebar',
-      name: '在侧栏打开专辑墙',
+      name: t('cmd.openShelfSidebar'),
       callback: () => this.openShelf('sidebar'),
     });
     this.addCommand({
       id: 'open-player',
-      name: '打开播放器',
+      name: t('cmd.openPlayer'),
       callback: () => this.openPlayer(),
     });
     this.addCommand({
       id: 'popout-player',
-      name: '弹出播放器窗口',
+      name: t('cmd.popoutPlayer'),
       callback: () => this.openPlayer('window'),
     });
     this.addCommand({
       id: 'netease-login',
-      name: '网易云扫码登录',
+      name: t('cmd.neteaseLogin'),
       callback: () => this.openLogin(),
     });
     this.addCommand({
       id: 'netease-web-login',
-      name: '网易云浏览器登录（官方登录页）',
+      name: t('cmd.neteaseWebLogin'),
       callback: () => new WebLoginModal(this.app, { auth: this.auth, browserLogin: this.browserLogin }).open(),
     });
     this.addCommand({
       id: 'qq-login',
-      name: 'QQ 音乐扫码登录',
+      name: t('cmd.qqLogin'),
       callback: () => this.openQqLogin(),
     });
     this.addCommand({
       id: 'qq-browser-login',
-      name: 'QQ 音乐浏览器登录（官方登录页）',
+      name: t('cmd.qqWebLogin'),
       callback: () =>
         new WebLoginModal(this.app, {
           auth: this.qqAuth,
           browserLogin: this.qqBrowserLogin,
-          provider: QQ_WEB,
+          provider: qqWebProvider(),
         }).open(),
     });
     this.addCommand({
       id: 'qq-logout',
-      name: '退出 QQ 音乐登录',
+      name: t('cmd.qqLogout'),
       callback: () => this.logoutQq(),
     });
     this.addCommand({
       id: 'netease-logout',
-      name: '退出网易云登录',
+      name: t('cmd.neteaseLogout'),
       callback: () => this.logout(),
     });
     this.addCommand({
       id: 'migrate-cookie',
-      name: '从 Mineradio 迁移登录 Cookie',
+      name: t('cmd.migrateCookie'),
       callback: () => this.migrate(),
     });
     this.addCommand({
       id: 'm1-selftest',
-      name: 'M1 自检：双源队列 + 播放验证',
+      name: t('cmd.m1SelfTest'),
       callback: () => this.runM1SelfTest(),
     });
     this.addCommand({
       id: 'm2-selftest',
-      name: 'M2 自检：专辑墙数据 + 音源角标',
+      name: t('cmd.m2SelfTest'),
       callback: () => this.runM2SelfTest(),
     });
     this.addCommand({
       id: 'm3-selftest',
-      name: 'M3 自检：交接状态机验证',
+      name: t('cmd.m3SelfTest'),
       callback: () => this.runM3SelfTest(),
     });
     this.addCommand({
       // id 保持不变：改了会让已绑定的快捷键失效
       id: 'import-netease',
-      name: '导入专辑',
+      name: t('cmd.importAlbum'),
       callback: () => this.openAlbumImport(),
     });
     this.addCommand({
       id: 'import-local',
-      name: '导入本地音频',
+      name: t('cmd.importLocal'),
       callback: () => this.openLocalImport(),
     });
     this.addCommand({
       id: 'append-listening-note',
-      name: '在专辑笔记追加此刻感想',
+      name: t('cmd.appendNote'),
       callback: () => this.appendListeningNote(),
     });
     this.addCommand({
       id: 'show-stats',
-      name: '显示播放统计',
+      name: t('cmd.showStats'),
       callback: () => new StatsModal(this.app, this.settings.stats).open(),
     });
     this.addCommand({
       id: 'm4-selftest',
-      name: 'M4 自检：导入 + 感想 + 统计验证',
+      name: t('cmd.m4SelfTest'),
       callback: () => this.runM4SelfTest(),
     });
     this.addCommand({
       id: 'qq-selftest',
-      name: 'M5 自检：QQ 音乐源（登录 + 专辑播放）',
+      name: t('cmd.qqSelfTest'),
       callback: () => this.runQqSelfTest(),
     });
     this.addCommand({
       id: 'create-album-template',
-      name: '创建本地专辑模板文件（可编辑）',
+      name: t('cmd.createTemplate'),
       callback: () => void this.createAlbumTemplate(),
     });
     this.addSettingTab(new VinylSettingTab(this.app, this));
@@ -320,14 +320,14 @@ export default class VinylLifePlugin extends Plugin {
         await ensureFolder(this.app, path.split('/').slice(0, -1).join('/'));
         file = await this.app.vault.create(path, DEFAULT_ALBUM_TEMPLATE);
       } catch (e) {
-        notice(`创建模板失败：${(e as Error).message}`);
+        notice(tf('notice.templateFailed', { msg: (e as Error).message }));
         return;
       }
     }
     this.settings.albumNoteTemplate = path;
     await this.saveSettings();
     await this.app.workspace.getLeaf(false).openFile(file);
-    notice(`模板已就绪：${path} —— 随便改，之后导入本地专辑按它生成笔记`);
+    notice(tf('notice.templateReady', { path }));
   }
 
   // 三个数据目录不存在则创建（新用户首次启用装完即用；用户改过路径设置也会补齐）
@@ -383,7 +383,7 @@ export default class VinylLifePlugin extends Plugin {
         )
       : null;
     if (scan?.verdict === 'library') {
-      notice(`${libraryRootHint(scan)}——请用命令「导入本地音频」选择具体的专辑文件夹（可批量勾选）`);
+      notice(tf('notice.libraryRoot', { hint: libraryRootHint(scan) }));
       return;
     }
     // 不支持的格式单独提示（此前是静默忽略：拖进来没反应，用户不知道为什么）
@@ -391,7 +391,7 @@ export default class VinylLifePlugin extends Plugin {
     const audioFiles = scan ? scan.files : pickedAudio;
     if (!scan && skipped.length) notice(skippedFormatsText(skipped.map((f) => f.name)));
     if (!audioFiles.length) {
-      if (scan) notice('这个文件夹里没有受支持的音频文件');
+      if (scan) notice(t('notice.noSupportedAudio'));
       return;
     }
     try {
@@ -404,7 +404,7 @@ export default class VinylLifePlugin extends Plugin {
           this.settings.importMode
         );
         if (!target) {
-          notice('从文件新建专辑失败');
+          notice(t('notice.createAlbumFailed'));
           return;
         }
       }
@@ -412,19 +412,25 @@ export default class VinylLifePlugin extends Plugin {
       const res = await importLocalAudio(this.importCtx(), target, audioFiles, mode);
       if (!res.added.length) {
         notice(
-          res.skippedExisting.length ? '没有可导入的音频（文件已存在）' : '没有可导入的音频'
+          res.skippedExisting.length
+            ? t('notice.nothingToImportExisting')
+            : t('notice.nothingToImport')
         );
         return;
       }
       notice(
-        `已导入 ${res.added.length} 个音频到「${target.title}」（${
-          mode === 'copy' ? '复制进 vault' : '外链引用'
-        }）` +
-          (res.skippedExisting.length ? `，跳过已存在 ${res.skippedExisting.length} 个` : '') +
-          (res.fallback ? '（部分文件无路径信息，已回退复制）' : '')
+        tf('notice.imported', {
+          n: res.added.length,
+          title: target.title,
+          mode: mode === 'copy' ? t('import.modeCopyShort') : t('import.modeLinkShort'),
+        }) +
+          (res.skippedExisting.length
+            ? tf('notice.importedSkipped', { n: res.skippedExisting.length })
+            : '') +
+          (res.fallback ? t('notice.importFallback') : '')
       );
     } catch (e) {
-      notice(`导入失败：${(e as Error).message}`);
+      notice(tf('notice.importFailed', { msg: (e as Error).message }));
       console.error('[vinyl] 导入异常', e);
     }
   }
@@ -450,7 +456,8 @@ export default class VinylLifePlugin extends Plugin {
     }
     if (this.engine.snapshot().albumNotePath === album.path) this.engine.clear();
     notice(
-      `已删除专辑「${album.title}」${removed ? `（含 ${removed} 项本地文件）` : ''}`
+      tf('notice.albumDeleted', { title: album.title }) +
+        (removed ? tf('notice.albumDeletedAssets', { n: removed }) : '')
     );
   }
 
@@ -460,7 +467,7 @@ export default class VinylLifePlugin extends Plugin {
     const albumPath = snap.albumNotePath;
     const file = albumPath ? this.app.vault.getAbstractFileByPath(albumPath) : null;
     if (!(file instanceof TFile)) {
-      notice('当前没有正在播放的专辑（先播放一张专辑再追加感想）');
+      notice(t('notice.noPlayingAlbum'));
       return;
     }
     const d = new Date();
@@ -479,7 +486,7 @@ export default class VinylLifePlugin extends Plugin {
       const lastLine = editor.lastLine();
       editor.setCursor({ line: lastLine, ch: editor.getLine(lastLine).length });
     }
-    notice(`已追加到「${file.basename}」`);
+    notice(tf('notice.appended', { name: file.basename }));
   }
 
   recordPlay(track: Track, albumPath?: string, albumTitle?: string) {
@@ -541,25 +548,25 @@ export default class VinylLifePlugin extends Plugin {
 
   async logout() {
     await this.auth.clear();
-    notice('已退出网易云登录');
+    notice(t('notice.neteaseLoggedOut'));
   }
 
   openQqLogin() {
     new QrLoginModal(
       this.app,
       { server: this.server, auth: this.qqAuth },
-      { provider: QQ_QR_PROVIDER }
+      { provider: qqQrProvider() }
     ).open();
   }
 
   async logoutQq() {
     await this.qqAuth.clear();
-    notice('已退出 QQ 音乐登录');
+    notice(t('notice.qqLoggedOut'));
   }
 
   async migrate() {
     const r = await this.auth.migrateMineradio();
-    notice(r.ok ? r.detail : `迁移失败：${r.detail}`);
+    notice(r.ok ? r.detail : tf('notice.migrateFailed', { detail: r.detail }));
   }
 
   // ============ M1 自检套件 ============

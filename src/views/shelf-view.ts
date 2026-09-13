@@ -22,7 +22,7 @@ import {
   toggleShelfProp,
 } from '../core/shelf-props';
 import { notice, isAudioFile, collectDroppedFiles, droppedRootName } from '../util';
-import { t } from '../core/i18n';
+import { t, tf } from '../core/i18n';
 import { SetCoverModal } from './set-cover-modal';
 
 export const SHELF_VIEW_TYPE = 'vinyl-shelf';
@@ -94,7 +94,7 @@ export class VinylShelfView extends ItemView {
   }
 
   getDisplayText() {
-    return '专辑墙';
+    return t('shelf.title');
   }
 
   getIcon() {
@@ -254,7 +254,7 @@ export class VinylShelfView extends ItemView {
     if (this.toolbarTitle) {
       this.toolbarTitle.textContent = filtered
         ? `专辑墙（${shown.length}/${this.entries.length}）`
-        : `专辑墙（${this.entries.length} 张）`;
+        : tf('shelf.titleWithCount', { n: this.entries.length });
     }
 
     if (!this.entries.length) {
@@ -394,28 +394,28 @@ export class VinylShelfView extends ItemView {
     const usage = collectShelfPropKeys(this.entries.map((e) => e.album));
     const counts = new Map(usage.map((u) => [u.key, u.count]));
 
-    pop.createDiv({ text: '已显示（拖拽调整顺序）', cls: 'vinyl-props-section' });
+    pop.createDiv({ text: t('props.shown'), cls: 'vinyl-props-section' });
     if (!selected.length) {
       pop.createDiv({
-        text: '未选择任何属性：卡片只显示标题。',
+        text: t('props.nonePicked'),
         cls: 'vinyl-props-hint',
       });
     }
     for (const key of selected) this.propsSelectedRow(pop, key, counts.get(key));
 
     pop.createDiv({ cls: 'vinyl-props-divider' });
-    pop.createDiv({ text: '可添加（来自笔记 frontmatter）', cls: 'vinyl-props-section' });
+    pop.createDiv({ text: t('props.available'), cls: 'vinyl-props-section' });
     const rest = usage.filter((u) => !selected.includes(u.key));
     if (!this.entries.length) {
-      pop.createDiv({ text: '还没有专辑笔记。先用工具栏「导入」建一张。', cls: 'vinyl-props-hint' });
+      pop.createDiv({ text: t('props.noAlbums'), cls: 'vinyl-props-hint' });
     } else if (!rest.length) {
-      pop.createDiv({ text: '已全部添加。', cls: 'vinyl-props-hint' });
+      pop.createDiv({ text: t('props.allAdded'), cls: 'vinyl-props-hint' });
     } else {
       for (const u of rest) this.propsAvailableRow(pop, u.key, u.count);
     }
 
     pop.createDiv({
-      text: '属性来自专辑笔记，部分省略；在笔记中添加属性后回到这里即可添加勾选。',
+      text: t('props.footer'),
       cls: 'vinyl-props-hint',
     });
   }
@@ -645,7 +645,7 @@ export class VinylShelfView extends ItemView {
     if (!e.local && !e.netease && !e.qq) {
       card
         .createDiv({ cls: 'vinyl-shelf-badges' })
-        .createSpan({ text: '收藏 ·', cls: 'vinyl-badge is-collect' });
+        .createSpan({ text: t('card.collect'), cls: 'vinyl-badge is-collect' });
     }
 
     card.addEventListener('click', () => this.playAlbum(e));
@@ -685,7 +685,7 @@ export class VinylShelfView extends ItemView {
     if (!e.local && !e.netease && !e.qq) {
       const leaf = this.plugin.app.workspace.getLeaf(false);
       await leaf.openFile(album.file);
-      notice('该专辑暂无音源（本地音频、neteaseId 或 QQ 音乐），已打开笔记');
+      notice(t('card.noSource'));
       return;
     }
     if (

@@ -3,6 +3,7 @@
 import { App, Plugin, Notice, TFile, TFolder, normalizePath } from 'obsidian';
 import * as path from 'path';
 import { readdirSync as fsReaddirSync } from 'fs';
+import { t, tf } from './core/i18n';
 
 // 受支持的音频容器（插件本身不解码，最终取决于 Chromium/Electron 内置解码器）：
 //   mp3 · m4a / m4b / mp4（AAC · ALAC）· wav · ogg / oga（vorbis）· opus · aac（ADTS）· webm / weba
@@ -190,7 +191,7 @@ export function collectExternalAudios(dir: string, depth = 3): string[] {
 
 /** 音乐库根目录提示（弹窗与专辑墙共用同一句判定说明） */
 export function libraryRootHint(scan: FolderScan): string {
-  return `「${scan.rootName}」根层没有音频，但有 ${scan.audioSubfolders} 个子文件夹各含音频——看起来是音乐库根目录`;
+  return tf('util.libraryRootHint', { name: scan.rootName, n: scan.audioSubfolders });
 }
 
 /** 碟号子目录（CD1 / Disc 2 / Vol.3 …）：属于同一张专辑 */
@@ -262,8 +263,12 @@ export function suggestAlbumTitle(files: File[]): string {
 
 /** 跳过提示文案（最多列 3 个文件名，避免提示过长） */
 export function skippedFormatsText(names: string[]): string {
-  const head = names.slice(0, 3).join('、');
-  return `已跳过 ${names.length} 个不支持的文件：${head}${names.length > 3 ? ' 等' : ''}`;
+  const head = names.slice(0, 3).join(t('common.listSep'));
+  return tf('util.skippedFormats', {
+    n: names.length,
+    names: head,
+    more: names.length > 3 ? t('util.skippedFormatsMore') : '',
+  });
 }
 
 export function baseName(name: string): string {
@@ -292,11 +297,11 @@ export function fmtTime(sec: number): string {
 // 网易云播放限制码 → 提示文案（M0 已定映射，方案 5.4）
 export function restrictionText(code: number | string | undefined | null): string {
   const c = String(code ?? '');
-  if (['401', '10407'].includes(c)) return '需登录（login_required）';
-  if (['403'].includes(c)) return '会员专享（vip_required）';
-  if (['404', '10404'].includes(c)) return '无版权/下架（copyright_unavailable）';
-  if (['405', '10411'].includes(c)) return '仅试听（trial_only）';
-  return c ? `未知限制码 ${c}` : '音源不可用';
+  if (['401', '10407'].includes(c)) return t('util.restrictionLoginRequired');
+  if (['403'].includes(c)) return t('util.restrictionVip');
+  if (['404', '10404'].includes(c)) return t('util.restrictionCopyright');
+  if (['405', '10411'].includes(c)) return t('util.restrictionTrial');
+  return c ? tf('util.restrictionUnknown', { code: c }) : t('util.restrictionUnavailable');
 }
 
 // 插件目录绝对路径（M0 三连坑：Obsidian 进程 cwd ≠ vault 根，相对路径静默失效）

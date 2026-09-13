@@ -4,6 +4,7 @@ import { App, Modal } from 'obsidian';
 import type VinylLifePlugin from '../main';
 import { AlbumInfo } from '../core/album-index';
 import { AlbumDeleteTargets, collectAlbumDeleteTargets, scanFolderContents } from '../delete';
+import { t, tf } from '../core/i18n';
 
 export class DeleteAlbumModal extends Modal {
   private targets: AlbumDeleteTargets;
@@ -15,97 +16,114 @@ export class DeleteAlbumModal extends Modal {
     private album: AlbumInfo
   ) {
     super(app);
-    this.titleEl.setText('删除专辑');
+    this.titleEl.setText(t('delete.title'));
     this.targets = collectAlbumDeleteTargets(app, album);
   }
 
   async onOpen() {
-    const t = this.targets;
+    // 特意不叫 t：t 已被 i18n 的查表函数占用
+    const targets = this.targets;
     const c = this.contentEl;
     c.empty();
     c.addClass('vinyl-delete-modal');
 
     const head = c.createDiv({ cls: 'vinyl-delete-head' });
-    head.createSpan({ text: `「${this.album.title}」`, cls: 'vinyl-delete-title' });
+    head.createSpan({ text: tf('delete.quoted', { title: this.album.title }), cls: 'vinyl-delete-title' });
     if (this.album.artist) head.createSpan({ text: this.album.artist, cls: 'vinyl-muted' });
     c.createDiv({ text: this.album.path, cls: 'vinyl-muted vinyl-delete-path' });
 
     const snap = this.plugin.engine.snapshot();
     if (snap.albumNotePath === this.album.path) {
-      c.createDiv({ text: '该专辑正在播放，删除后将停止播放。', cls: 'vinyl-error' });
+      c.createDiv({ text: t('delete.playingHint'), cls: 'vinyl-error' });
     }
 
     // —— 连带清理选项（有可删资产才出现）——
-    const audioFolderCount = t.audioFolders.reduce(
+    const audioFolderCount = targets.audioFolders.reduce(
       (n, f) => n + scanFolderContents(f).audios.length,
       0
     );
     let audioCb: HTMLInputElement | null = null;
-    if (t.audioFolders.length || t.audioFiles.length) {
+    if (targets.audioFolders.length || targets.audioFiles.length) {
       const parts: string[] = [];
-      for (const f of t.audioFolders) {
-        parts.push(`${f.path}（${scanFolderContents(f).audios.length} 个音频）`);
+      for (const f of targets.audioFolders) {
+        parts.push(
+          tf('delete.folderPart', { path: f.path, n: scanFolderContents(f).audios.length })
+        );
       }
-      if (t.audioFiles.length) {
-        parts.push(`零散文件 ${t.audioFiles.length} 个：${t.audioFiles.map((f) => f.name).join('、')}`);
+      if (targets.audioFiles.length) {
+        parts.push(
+          tf('delete.looseFiles', {
+            n: targets.audioFiles.length,
+            names: targets.audioFiles.map((f) => f.name).join(t('common.listSep')),
+          })
+        );
       }
       audioCb = this.optionRow(
         c,
-        `同时删除本地音频（${audioFolderCount + t.audioFiles.length} 个文件）`,
-        parts.join('；')
+        tf('delete.alsoAudio', { n: audioFolderCount + targets.audioFiles.length }),
+        parts.join(t('common.semicolon'))
       );
     }
 
     let coverCb: HTMLInputElement | null = null;
-    if (t.coverFile && !t.coverShared) {
-      coverCb = this.optionRow(c, '同时删除封面图', t.coverFile.path);
+    if (targets.coverFile && !targets.coverShared) {
+      coverCb = this.optionRow(c, t('delete.alsoCover'), targets.coverFile.path);
     }
 
     // —— 未纳入删除的资源提示 ——
-    for (const k of t.keptFolders) {
+    for (const k of targets.keptFolders) {
       c.createDiv({
-        text: `文件夹 ${k.path} 内另有 ${k.others.length} 个非音频文件（${k.others
-          .slice(0, 3)
-          .map((p) => p.split('/').pop())
-          .join('、')}${k.others.length > 3 ? ' 等' : ''}）：只删除其中 ${k.audios} 个音频，文件夹保留`,
+        text: tf('delete.keptFolder', {
+          path: k.path,
+          n: k.others.length,
+          names:
+            k.others
+              .slice(0, 3)
+              .map((p) => p.split('/').pop())
+              .join(t('common.listSep')) + (k.others.length > 3 ? t('delete.othersMore') : ''),
+          audios: k.audios,
+        }),
         cls: 'vinyl-muted vinyl-delete-hint',
       });
     }
-    if (t.sharedAudioPaths.length) {
+    if (targets.sharedAudioPaths.length) {
       c.createDiv({
-        text: `另有 ${t.sharedAudioPaths.length} 项音频被其他专辑引用，不会删除：${t.sharedAudioPaths.join('、')}`,
+        text: tf('delete.sharedAudio', {
+          n: targets.sharedAudioPaths.length,
+          paths: targets.sharedAudioPaths.join(t('common.listSep')),
+        }),
         cls: 'vinyl-muted vinyl-delete-hint',
       });
     }
-    if (t.externalAudioRefs.length) {
+    if (targets.externalAudioRefs.length) {
       c.createDiv({
-        text: `外链音频 ${t.externalAudioRefs.length} 项位于库外，不会被删除（笔记删除后需自行清理）`,
+        text: tf('delete.externalAudio', { n: targets.externalAudioRefs.length }),
         cls: 'vinyl-muted vinyl-delete-hint',
       });
     }
-    if (t.coverShared) {
+    if (targets.coverShared) {
       c.createDiv({
-        text: '封面图被其他专辑引用，不会删除',
+        text: t('delete.coverShared'),
         cls: 'vinyl-muted vinyl-delete-hint',
       });
     }
     c.createDiv({
-      text: '文件按 Obsidian「已删除文件」设置移入回收站或永久删除。',
+      text: t('delete.trashHint'),
       cls: 'vinyl-muted vinyl-delete-hint',
     });
 
     // —— 操作区 ——
     const status = c.createDiv({ cls: 'vinyl-muted vinyl-delete-status' });
     const row = c.createDiv({ cls: 'vinyl-import-actions vinyl-delete-actions' });
-    const cancelBtn = row.createEl('button', { text: '取消' });
-    const delBtn = row.createEl('button', { text: '删除', cls: 'mod-warning' });
+    const cancelBtn = row.createEl('button', { text: t('common.cancel') });
+    const delBtn = row.createEl('button', { text: t('common.delete'), cls: 'mod-warning' });
     cancelBtn.addEventListener('click', () => this.close());
     delBtn.addEventListener('click', async () => {
       if (this.busy) return;
       this.busy = true;
       cancelBtn.disabled = true;
       delBtn.disabled = true;
-      status.textContent = '正在删除…';
+      status.textContent = t('delete.deleting');
       try {
         await this.plugin.deleteAlbum(this.album, {
           audio: !!audioCb?.checked,
@@ -116,7 +134,7 @@ export class DeleteAlbumModal extends Modal {
         this.busy = false;
         cancelBtn.disabled = false;
         delBtn.disabled = false;
-        status.setText(`删除失败：${(e as Error).message}`);
+        status.setText(tf('delete.failed', { msg: (e as Error).message }));
         console.error('[vinyl] 删除专辑失败', e);
       }
     });

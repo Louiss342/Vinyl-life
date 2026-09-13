@@ -7,6 +7,7 @@ import { App, Modal } from 'obsidian';
 import type { LoginState } from '../core/auth';
 import type { BrowserLogin } from '../core/browser-login';
 import { notice } from '../util';
+import { t, tf } from '../core/i18n';
 
 export interface WebAuthLike {
   getStatus(): Promise<LoginState>;
@@ -19,17 +20,22 @@ export interface WebLoginProvider {
   qrFallback: string;
 }
 
-const NETEASE_WEB: WebLoginProvider = {
-  title: '网易云登录（浏览器）',
-  displayName: '网易云',
-  qrFallback: '网易云扫码登录',
-};
+// 用函数而不是常量：语言在设置里切换后，文案要跟着变（常量在模块加载时就定型了）
+function neteaseWebProvider(): WebLoginProvider {
+  return {
+    title: t('login.web.netease.title'),
+    displayName: t('login.web.netease.displayName'),
+    qrFallback: t('cmd.neteaseLogin'),
+  };
+}
 
-export const QQ_WEB: WebLoginProvider = {
-  title: 'QQ 音乐登录（浏览器）',
-  displayName: 'QQ 音乐',
-  qrFallback: 'QQ 音乐扫码登录',
-};
+export function qqWebProvider(): WebLoginProvider {
+  return {
+    title: t('login.web.qq.title'),
+    displayName: t('login.web.qq.displayName'),
+    qrFallback: t('cmd.qqLogin'),
+  };
+}
 
 export class WebLoginModal extends Modal {
   private accountEl!: HTMLElement;
@@ -49,7 +55,7 @@ export class WebLoginModal extends Modal {
     }
   ) {
     super(app);
-    this.provider = deps.provider ?? NETEASE_WEB;
+    this.provider = deps.provider ?? neteaseWebProvider();
     this.titleEl.setText(this.provider.title);
   }
 
@@ -60,40 +66,40 @@ export class WebLoginModal extends Modal {
     c.addClass('vinyl-web-login');
 
     this.accountEl = c.createDiv({ cls: 'vinyl-muted' });
-    this.accountEl.setText('正在读取当前账号…');
+    this.accountEl.setText(t('login.web.readingAccount'));
     void this.deps.auth
       .getStatus()
       .then((st) => {
         if (this.closed) return;
         this.accountEl.setText(
           st.loggedIn
-            ? `当前账号：${st.nick || ''}（${st.userId ?? ''}）；新登录验证通过后才会替换。`
-            : '当前未登录；登录完成后自动验证并接回账号。'
+            ? tf('login.web.account', { nick: st.nick || '', id: st.userId ?? '' })
+            : t('login.web.notLoggedIn')
         );
       })
       .catch(() => {
-        if (!this.closed) this.accountEl.setText('当前账号读取失败，可在设置页查看登录态。');
+        if (!this.closed) this.accountEl.setText(t('login.web.accountFailed'));
       });
 
     const steps = c.createDiv({ cls: 'vinyl-muted vinyl-web-steps' });
     steps.createDiv({
-      text: '第 1 步：点击下方按钮，在弹出的官方窗口内完成登录（扫码 / 账号密码均可）。',
+      text: t('login.web.step1'),
     });
     steps.createDiv({
-      text: '第 2 步：登录完成后无需操作——插件会自动检测、验证并接回账号；验证通过前不会覆盖现有登录。',
+      text: t('login.web.step2'),
     });
 
     const actions = c.createDiv({ cls: 'vinyl-import-actions' });
     actions
-      .createEl('button', { text: '打开官方登录窗口', cls: 'mod-cta' })
+      .createEl('button', { text: t('login.web.openWindow'), cls: 'mod-cta' })
       .addEventListener('click', () => this.start());
-    actions.createEl('button', { text: '检测登录' }).addEventListener('click', () => {
+    actions.createEl('button', { text: t('login.web.check') }).addEventListener('click', () => {
       if (this.deps.browserLogin.active) void this.deps.browserLogin.check();
       else this.start();
     });
 
     this.statusEl = c.createDiv({ cls: 'vinyl-muted' });
-    this.statusEl.setText('正在打开官方登录窗口…');
+    this.statusEl.setText(t('login.web.opening'));
     this.start();
   }
 
@@ -109,7 +115,10 @@ export class WebLoginModal extends Modal {
       login = this.deps.browserLogin.open((message) => this.setStatus(message));
     } catch (e) {
       this.setStatus(
-        `无法打开登录窗口：${(e as Error).message}（可改用「${this.provider.qrFallback}」或手动粘贴 Cookie）`
+        tf('login.web.openFailed', {
+          msg: (e as Error).message,
+          fallback: this.provider.qrFallback,
+        })
       );
       return;
     }
@@ -118,20 +127,23 @@ export class WebLoginModal extends Modal {
     void login
       .then((ok) => {
         if (ok) {
-          notice(`${this.provider.displayName}登录成功，已接回账号`);
+          notice(tf('login.web.success', { name: this.provider.displayName }));
           void this.deps.onLogin?.();
           if (this.closed) return;
-          this.setStatus('✅ 登录成功，账号已保存。');
+          this.setStatus(t('login.web.saved'));
           window.setTimeout(() => {
             if (!this.closed) this.close();
           }, 1200);
         } else {
-          this.setStatus('登录窗口已关闭，尚未完成登录。可点击「打开官方登录窗口」重试。');
+          this.setStatus(t('login.web.closed'));
         }
       })
       .catch((e) => {
         this.setStatus(
-          `无法打开登录窗口：${(e as Error).message}（可改用「${this.provider.qrFallback}」或手动粘贴 Cookie）`
+          tf('login.web.openFailed', {
+            msg: (e as Error).message,
+            fallback: this.provider.qrFallback,
+          })
         );
       });
   }
