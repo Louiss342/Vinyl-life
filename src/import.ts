@@ -215,13 +215,25 @@ export async function importLocalAudio(
   album: AlbumInfo,
   files: File[],
   mode: 'copy' | 'link'
-): Promise<{ added: string[]; fallback: boolean }> {
+): Promise<{
+  added: string[];
+  fallback: boolean;
+  /** 格式不受支持而跳过的文件名（与「已存在」区分开，便于给出准确提示） */
+  skippedUnsupported: string[];
+  /** 已存在（或本次选择内重复）而跳过的文件名 */
+  skippedExisting: string[];
+}> {
   const added: string[] = [];
+  const skippedUnsupported: string[] = [];
+  const skippedExisting: string[] = [];
   let fallback = false;
   let copyDir = '';
 
   for (const f of files) {
-    if (!isAudioFile(f.name)) continue;
+    if (!isAudioFile(f.name)) {
+      skippedUnsupported.push(f.name);
+      continue;
+    }
     const safeName = sanitizeFileName(f.name);
 
     if (mode === 'copy') {
@@ -229,7 +241,10 @@ export async function importLocalAudio(
         `${ctx.settings().audioFolder}/${sanitizeFileName(album.title)}`
       );
       const p = normalizePath(`${copyDir}/${safeName}`);
-      if (ctx.app.vault.getAbstractFileByPath(p)) continue; // 已存在跳过
+      if (ctx.app.vault.getAbstractFileByPath(p)) {
+        skippedExisting.push(f.name); // 已存在跳过
+        continue;
+      }
       const ab = await f.arrayBuffer();
       await ensureFolder(ctx.app, copyDir);
       await ctx.app.vault.createBinary(p, ab);
@@ -237,7 +252,8 @@ export async function importLocalAudio(
     } else {
       const abs = (f as any).path as string | undefined;
       if (abs && typeof abs === 'string') {
-        if (!added.includes(abs)) added.push(abs);
+        if (added.includes(abs)) skippedExisting.push(f.name);
+        else added.push(abs);
       } else {
         // 非 Electron 拖拽（无文件路径）→ 回退复制进 vault
         fallback = true;
@@ -255,7 +271,7 @@ export async function importLocalAudio(
     }
   }
 
-  if (!added.length) return { added, fallback };
+  if (!added.length) return { added, fallback, skippedUnsupported, skippedExisting };
 
   // 更新笔记 frontmatter（复制 → audioFolder；外链 → audio 列表追加）
   await ctx.app.fileManager.processFrontMatter(album.file, (fm) => {
@@ -271,7 +287,7 @@ export async function importLocalAudio(
       fm.audio = list;
     }
   });
-  return { added, fallback };
+  return { added, fallback, skippedUnsupported, skippedExisting };
 }
 
 // ============ C. 从文件新建本地专辑（拖到空白处） ============

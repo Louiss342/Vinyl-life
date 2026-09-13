@@ -6,7 +6,7 @@ import {
   importAlbum,
   importLocalAudio,
 } from '../import';
-import { notice, isAudioFile } from '../util';
+import { notice, isAudioFile, skippedFormatsText } from '../util';
 
 // ============ 专辑导入（网易云 / QQ 音乐） ============
 
@@ -144,11 +144,15 @@ export class LocalImportModal extends Modal {
       const mode = modeSel.value === 'link' ? 'link' : 'copy';
       status.textContent = `正在导入 ${files.length} 个文件（${mode === 'copy' ? '复制进 vault' : '外链引用'}）…`;
       const res = await importLocalAudio(this.ctx, album, files, mode);
-      const skipped = files.length - res.added.length;
-      status.textContent = `✅ 已导入 ${res.added.length} 个音频${skipped > 0 ? `，跳过重复 ${skipped} 个` : ''}${
-        res.fallback ? '（部分文件无路径信息，已回退复制进 vault）' : ''
-      }`;
+      const detail: string[] = [];
+      if (res.skippedExisting.length) detail.push(`跳过已存在 ${res.skippedExisting.length} 个`);
+      if (res.skippedUnsupported.length) detail.push(`跳过不支持 ${res.skippedUnsupported.length} 个`);
+      status.textContent =
+        (res.added.length ? `✅ 已导入 ${res.added.length} 个音频` : '⚠️ 没有可导入的音频') +
+        (detail.length ? `，${detail.join('，')}` : '') +
+        (res.fallback ? '（部分文件无路径信息，已回退复制进 vault）' : '');
       notice(status.textContent);
+      if (res.skippedUnsupported.length) notice(skippedFormatsText(res.skippedUnsupported));
       this.close();
     });
 

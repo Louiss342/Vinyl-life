@@ -91,6 +91,14 @@ function setup() {
   };
   const app = {
     vault,
+    // importLocalAudio 落库后要写 frontmatter（本地导入用例依赖）
+    fileManager: {
+      processFrontMatter: async (file, fn) => {
+        const fm = {};
+        fn(fm);
+        file._fm = fm;
+      },
+    },
     metadataCache: {
       getFileCache: (f) => {
         const fm = readFm(f._content);
@@ -153,7 +161,11 @@ function setup() {
 
   const ctx = {
     app,
-    settings: () => ({ albumFolder: '06-专辑墙/专辑', coverFolder: '06-专辑墙/covers' }),
+    settings: () => ({
+      albumFolder: 'Vinyl Life/Vinyl Note',
+      coverFolder: 'Vinyl Life/covers',
+      audioFolder: 'Vinyl Life/audio',
+    }),
     client: {
       album: async (id) => {
         calls.neteaseAlbum.push(id);
@@ -203,14 +215,29 @@ test('parseAlbumInput：无法识别时返回 undefined', () => {
 
 // ============ 派发与建笔记 ============
 
+test('本地导入：不支持的格式 / 已存在 分开计数（不再混为「跳过重复」）', async () => {
+  const h = setup();
+  const album = { title: 'A', file: { path: 'Vinyl Life/Vinyl Note/A.md' } };
+  h.files.set('Vinyl Life/audio/A/dup.wav', { path: 'Vinyl Life/audio/A/dup.wav' });
+  const files = [
+    new File(['x'], 'ok.wav'),
+    new File(['x'], 'bad.ape'),
+    new File(['x'], 'dup.wav'),
+  ];
+  const res = await h.mod.importLocalAudio(h.ctx, album, files, 'copy');
+  assert.deepEqual(Array.from(res.added), ['Vinyl Life/audio/A/ok.wav'], '只导入受支持且不重复的');
+  assert.deepEqual(Array.from(res.skippedUnsupported), ['bad.ape'], '不支持格式单独成列');
+  assert.deepEqual(Array.from(res.skippedExisting), ['dup.wav'], '已存在单独成列');
+});
+
 test('导入专辑：目标目录不存在时自动创建（新装用户回归）', async () => {
   const h = setup();
   h.folders.clear(); // 模拟全新 vault：专辑 / 封面目录都还不存在
   const res = await h.mod.importAlbum(h.ctx, NETEASE_URL);
   assert.equal(res.ok, true, res.detail);
-  assert.ok(h.folders.has('06-专辑墙/专辑'), '应自动创建专辑目录');
-  assert.ok(h.folders.has('06-专辑墙/covers'), '应自动创建封面目录');
-  assert.ok(h.files.has('06-专辑墙/专辑/Abbey Road (Remastered).md'), '应建立专辑笔记');
+  assert.ok(h.folders.has('Vinyl Life/Vinyl Note'), '应自动创建专辑目录');
+  assert.ok(h.folders.has('Vinyl Life/covers'), '应自动创建封面目录');
+  assert.ok(h.files.has('Vinyl Life/Vinyl Note/Abbey Road (Remastered).md'), '应建立专辑笔记');
 });
 
 test('导入专辑：网易云链接 → 走网易云，字段与既有行为一致（回归）', async () => {
@@ -219,14 +246,14 @@ test('导入专辑：网易云链接 → 走网易云，字段与既有行为一
   assert.equal(res.ok, true, res.detail);
   assert.deepEqual(h.calls.neteaseAlbum, [437968]);
   assert.equal(h.calls.qqAlbum.length, 0, '不得误走 QQ 接口');
-  const note = h.files.get('06-专辑墙/专辑/Abbey Road (Remastered).md');
+  const note = h.files.get('Vinyl Life/Vinyl Note/Abbey Road (Remastered).md');
   assert.ok(note, '应建立专辑笔记');
   assert.match(note._content, /tags: \[album\]/);
   assert.match(note._content, /neteaseId: 437968/);
   assert.match(note._content, /netease: "https:\/\/music\.163\.com\/#\/album\?id=437968"/);
   assert.doesNotMatch(note._content, /qqId:/, '网易云导入不得写入 qqId');
-  assert.match(note._content, /cover: "\[\[06-专辑墙\/covers\/Abbey Road \(Remastered\)\.jpg\]\]"/);
-  assert.ok(h.binaries.has('06-专辑墙/covers/Abbey Road (Remastered).jpg'));
+  assert.match(note._content, /cover: "\[\[Vinyl Life\/covers\/Abbey Road \(Remastered\)\.jpg\]\]"/);
+  assert.ok(h.binaries.has('Vinyl Life/covers/Abbey Road (Remastered).jpg'));
 });
 
 test('导入专辑：QQ 音乐链接 → 走 QQ，写出 qqId / qq 链接 / 封面（无 netease 字段）', async () => {
@@ -235,7 +262,7 @@ test('导入专辑：QQ 音乐链接 → 走 QQ，写出 qqId / qq 链接 / 封�
   assert.equal(res.ok, true, res.detail);
   assert.deepEqual(h.calls.qqAlbum, [QQ_MID]);
   assert.equal(h.calls.neteaseAlbum.length, 0, '不得误走网易云接口');
-  const note = h.files.get('06-专辑墙/专辑/未完成.md');
+  const note = h.files.get('Vinyl Life/Vinyl Note/未完成.md');
   assert.ok(note, '应建立专辑笔记');
   assert.match(note._content, /tags: \[album\]/);
   assert.match(note._content, new RegExp(`qqId: ${QQ_MID}`));
@@ -243,7 +270,7 @@ test('导入专辑：QQ 音乐链接 → 走 QQ，写出 qqId / qq 链接 / 封�
   assert.match(note._content, /artist: "孙燕姿"/);
   assert.match(note._content, /year: 2002/, 'QQ 的 aDate 应转成 4 位年份');
   assert.doesNotMatch(note._content, /neteaseId:/, 'QQ 导入不得写入 neteaseId');
-  assert.ok(h.binaries.has('06-专辑墙/covers/未完成.jpg'), '封面应落盘');
+  assert.ok(h.binaries.has('Vinyl Life/covers/未完成.jpg'), '封面应落盘');
   assert.match(res.detail, /11 曲/);
 });
 
@@ -262,21 +289,21 @@ test('导入专辑：纯 mid / 旧版链接同样可导入', async () => {
 test('导入专辑：已存在同 qqId 的笔记 → 指路而不新建', async () => {
   const h = setup();
   h.files.set(
-    '06-专辑墙/专辑/未完成.md',
-    new TFile('06-专辑墙/专辑/未完成.md', `---\ntags: [album]\nqqId: ${QQ_MID}\n---\n`)
+    'Vinyl Life/Vinyl Note/未完成.md',
+    new TFile('Vinyl Life/Vinyl Note/未完成.md', `---\ntags: [album]\nqqId: ${QQ_MID}\n---\n`)
   );
   const res = await h.mod.importAlbum(h.ctx, QQ_URL);
   assert.equal(res.ok, false);
   assert.match(res.detail, /已存在「未完成」/, '提示里应带既有笔记标题');
-  assert.equal(res.file?.path, '06-专辑墙/专辑/未完成.md');
+  assert.equal(res.file?.path, 'Vinyl Life/Vinyl Note/未完成.md');
   assert.equal(h.calls.qqAlbum.length, 0, '查重命中不应再打接口');
 });
 
 test('导入专辑：已存在同 neteaseId 的笔记 → 指路而不新建（回归）', async () => {
   const h = setup();
   h.files.set(
-    '06-专辑墙/专辑/Abbey Road (Remastered).md',
-    new TFile('06-专辑墙/专辑/Abbey Road (Remastered).md', '---\ntags: [album]\nneteaseId: 437968\n---\n')
+    'Vinyl Life/Vinyl Note/Abbey Road (Remastered).md',
+    new TFile('Vinyl Life/Vinyl Note/Abbey Road (Remastered).md', '---\ntags: [album]\nneteaseId: 437968\n---\n')
   );
   const res = await h.mod.importAlbum(h.ctx, NETEASE_URL);
   assert.equal(res.ok, false);

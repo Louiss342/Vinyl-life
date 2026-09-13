@@ -121,6 +121,16 @@ needs a system Node.js installation, either on `PATH` or in one of the usual ins
 - If Node.js is missing, the plugin says so explicitly in its settings tab, where you can
   re-detect it after installing Node.js and restarting Obsidian.
 
+### Supported audio formats
+
+Playback is handed to Chromium's built-in decoders — the plugin does not decode audio itself.
+These containers work: `mp3`, `m4a` / `m4b` / `mp4` (AAC · ALAC), `wav`, `ogg` / `oga` (Vorbis),
+`opus`, `aac` (ADTS), `webm` / `weba`.
+
+Anything else (`ape`, `wma`, `dsf`, `dff`, `tak`, `aiff`, …) is skipped on import — you get a
+notice naming the skipped files, so convert those to `flac` or `mp3` first. The same list applies to
+vault-internal files and to external-path (link) mode.
+
 ## Privacy and network access
 
 - **No telemetry. No analytics. No usage reporting.** Nothing is sent to the author or to any
@@ -191,6 +201,8 @@ As of v0.6.0 the plugin was renamed from **Vinyl Note** to **Vinyl Life**:
 - If you used the earlier bases-based setup, you can now delete or disable `Music.base`, the
   Bases card view, and the `music-vinyl-shelf.css` CSS snippet — the plugin ships the same
   visuals on its own.
+- The default folders are now `Vinyl Life/{audio, covers, Vinyl Note}` and are created
+  automatically on first run. Existing folder settings are left untouched.
 
 ## Development
 
@@ -257,6 +269,12 @@ pre-releases.
 
 只用本地音频的话**不需要 Node.js**，插件也不会 spawn 任何进程。
 
+### 支持的音频格式
+
+播放交给 Chromium 内置解码器（插件自身不解码）。可用容器：`mp3`、`m4a` / `m4b` / `mp4`（AAC · ALAC）、`wav`、`ogg` / `oga`（Vorbis）、`opus`、`aac`（ADTS）、`webm` / `weba`。
+
+其余格式（`ape`、`wma`、`dsf`、`dff`、`tak`、`aiff` 等）导入时会被跳过并提示文件名，需先转成 `flac` / `mp3`。vault 内文件与外链模式共用同一份列表。
+
 ### 隐私与网络
 
 无遥测、无统计上报。访问的域：`music.163.com`、`interface.music.163.com`（网易云）、`y.qq.com`、`c.y.qq.com`、`u.y.qq.com`、`ptlogin2.qq.com` 等 QQ 音乐登录与 CDN 域名。本地网关只监听 `127.0.0.1`。
@@ -273,7 +291,7 @@ QQ 音乐与网易云的部分接口**并非公开 API**，插件通过**非官�
 
 ### 从 Vinyl Note 迁移
 
-v0.6.0 起由 "Vinyl Note" 更名为 "Vinyl Life"（插件 id 由 `vinyl-note` → `vinyl-life`，设置随插件目录迁移）。浏览器登录会话分区已更换，升级后需**重新登录一次**。旧版 `Music.base` + Bases 卡片视图 + `music-vinyl-shelf.css` 片段可删除 / 停用（插件自带同款视觉）。
+v0.6.0 起由 "Vinyl Note" 更名为 "Vinyl Life"（插件 id 由 `vinyl-note` → `vinyl-life`，设置随插件目录迁移）。浏览器登录会话分区已更换，升级后需**重新登录一次**。旧版 `Music.base` + Bases 卡片视图 + `music-vinyl-shelf.css` 片段可删除 / 停用（插件自带同款视觉）。默认目录改为 `Vinyl Life/{audio, covers, Vinyl Note}`，首次运行自动创建；已有设置不受影响。
 
 ### 许可
 

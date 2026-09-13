@@ -3,13 +3,18 @@
 import { App, Plugin, Notice, normalizePath } from 'obsidian';
 import * as path from 'path';
 
+// 受支持的音频容器（插件本身不解码，最终取决于 Chromium/Electron 内置解码器）：
+//   mp3 · m4a / m4b / mp4（AAC · ALAC）· wav · ogg / oga（vorbis）· opus · aac（ADTS）· webm / weba
+// 不在此列的（ape / wma / dsf / dff / tak / aiff 等）导入时跳过并提示，需自行转码。
 export const AUDIO_EXTENSIONS = [
-  'mp3', 'm4a', 'wav', 'ogg', 'oga', 'flac', 'aac', 'opus', 'webm',
+  'mp3', 'm4a', 'm4b', 'mp4', 'wav', 'ogg', 'oga', 'flac', 'aac', 'opus', 'webm', 'weba',
 ];
 
 const MIME_BY_EXT: Record<string, string> = {
   mp3: 'audio/mpeg',
   m4a: 'audio/mp4',
+  m4b: 'audio/mp4',
+  mp4: 'audio/mp4',
   aac: 'audio/aac',
   wav: 'audio/wav',
   ogg: 'audio/ogg',
@@ -17,6 +22,7 @@ const MIME_BY_EXT: Record<string, string> = {
   opus: 'audio/ogg',
   flac: 'audio/flac',
   webm: 'audio/webm',
+  weba: 'audio/webm',
 };
 
 export function sleep(ms: number): Promise<void> {
@@ -30,6 +36,20 @@ export function extOf(name: string): string {
 
 export function isAudioFile(name: string): boolean {
   return AUDIO_EXTENSIONS.includes(extOf(name));
+}
+
+/** 拆分拖入 / 选中的文件：受支持的音频 / 因格式不支持而跳过的 */
+export function splitAudioFiles(files: File[]): { audio: File[]; skipped: File[] } {
+  const audio: File[] = [];
+  const skipped: File[] = [];
+  for (const f of files) (isAudioFile(f.name) ? audio : skipped).push(f);
+  return { audio, skipped };
+}
+
+/** 跳过提示文案（最多列 3 个文件名，避免提示过长） */
+export function skippedFormatsText(names: string[]): string {
+  const head = names.slice(0, 3).join('、');
+  return `已跳过 ${names.length} 个不支持的文件：${head}${names.length > 3 ? ' 等' : ''}`;
 }
 
 export function baseName(name: string): string {

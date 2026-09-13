@@ -29,7 +29,7 @@ import { buildAlbumQueue, QueueDeps } from './core/queue';
 import { normalizeShelfProps, normalizeShelfPropLabels } from './core/shelf-props';
 import { DISC_DIRECTIONS, SPIN_SPEEDS } from './core/disc-motion';
 import { normalizeDeckStyle, normalizeRecordColor } from './core/appearance';
-import { notice, isAudioFile, pluginAbsPath, ensureFolder } from './util';
+import { notice, pluginAbsPath, ensureFolder, splitAudioFiles, skippedFormatsText } from './util';
 import {
   ImportContext,
   importNeteaseAlbum,
@@ -320,7 +320,9 @@ export default class VinylLifePlugin extends Plugin {
 
   // 拖拽入库入口（专辑墙调用）：album 为 null 时从文件新建本地专辑
   async importAudioFromFiles(files: File[], album: AlbumInfo | null) {
-    const audioFiles = files.filter((f) => isAudioFile(f.name));
+    // 不支持的格式单独提示（此前是静默忽略：拖进来没反应，用户不知道为什么）
+    const { audio: audioFiles, skipped } = splitAudioFiles(files);
+    if (skipped.length) notice(skippedFormatsText(skipped.map((f) => f.name)));
     if (!audioFiles.length) return;
     try {
       let target = album;
@@ -334,13 +336,17 @@ export default class VinylLifePlugin extends Plugin {
       const mode = this.settings.importMode;
       const res = await importLocalAudio(this.importCtx(), target, audioFiles, mode);
       if (!res.added.length) {
-        notice('没有可导入的音频（可能已存在同名文件）');
+        notice(
+          res.skippedExisting.length ? '没有可导入的音频（文件已存在）' : '没有可导入的音频'
+        );
         return;
       }
       notice(
         `已导入 ${res.added.length} 个音频到「${target.title}」（${
           mode === 'copy' ? '复制进 vault' : '外链引用'
-        }）${res.fallback ? '（部分文件无路径信息，已回退复制）' : ''}`
+        }）` +
+          (res.skippedExisting.length ? `，跳过已存在 ${res.skippedExisting.length} 个` : '') +
+          (res.fallback ? '（部分文件无路径信息，已回退复制）' : '')
       );
     } catch (e) {
       notice(`导入失败：${(e as Error).message}`);
