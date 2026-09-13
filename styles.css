@@ -1092,6 +1092,41 @@
   padding: 8px 0;
 }
 
+/* ============ 设置面板：关于（版本 / 作者手记 / 许可） ============ */
+
+.vinyl-about {
+  padding: 4px 0 8px;
+}
+
+.vinyl-about-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--font-ui-medium);
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.vinyl-about-version {
+  font-size: var(--font-ui-smaller);
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+/* 作者手记正文：pre-wrap 保住原文的换行与首行行尾空格（正文是原文常量，不翻译） */
+.vinyl-about-text {
+  white-space: pre-wrap;
+  line-height: 1.7;
+  max-width: 34em;
+  margin: 12px 0 20px;
+  color: var(--text-normal);
+}
+
+.vinyl-about-meta {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
 /* ============ 导入弹窗 / 统计弹窗（M4） ============ */
 
 .vinyl-import-input {

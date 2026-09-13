@@ -591,6 +591,13 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'settings.importCopy': { zh: '复制进 vault', en: 'Copy into vault' },
   'settings.importLink': { zh: '外链绝对路径', en: 'Absolute path link' },
 
+  // —— 设置面板：关于 ——
+  // 只有「壳」文案进词典（标签名 / 版本行 / 许可行）；作者手记正文是原文常量
+  // （src/core/about.ts 的 ABOUT_TEXT），不翻译、不进词典 —— 别抄进来。
+  'settings.tab.about': { zh: '关于', en: 'About' },
+  'settings.aboutVersion': { zh: '版本 {v}', en: 'Version {v}' },
+  'settings.aboutLicense': { zh: 'MIT 许可证', en: 'MIT License' },
+
   // —— 命令名（命令面板 / ribbon 提示） ——
   'cmd.openShelf': { zh: '打开专辑墙', en: 'Open album shelf' },
   'cmd.openPlayer': { zh: '打开播放器', en: 'Open player' },

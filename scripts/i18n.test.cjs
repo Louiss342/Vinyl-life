@@ -759,3 +759,93 @@ test('main：insertNowPlaying — 专辑名 / 路径含 wikilink 语法字符时
     '此刻正在听《[[Vinyl Life/Vinyl Note/黑豹乐队.md]]》的《无地自容》\n'
   );
 });
+
+// ============ 「关于」页：作者手记逐字保真 + 正文不进词典 ============
+// 手记正文是原文常量（src/core/about.ts 的 ABOUT_TEXT）：不翻译、不进词典、不许「润色」。
+// 期望值在这里独立抄一遍（不从源码读回），任何人改动正文都会让下面的断言先响。
+const aboutSource = esbuild.buildSync({
+  entryPoints: [path.join(__dirname, '../src/core/about.ts')],
+  bundle: true,
+  write: false,
+  format: 'cjs',
+  platform: 'node',
+  external: ['obsidian'],
+}).outputFiles[0].text;
+
+const aboutMod = { exports: {} };
+vm.runInNewContext(aboutSource, {
+  module: aboutMod,
+  exports: aboutMod.exports,
+  require: () => ({}),
+  console,
+});
+const about = aboutMod.exports;
+
+// 逐字期望值：首行末尾一个空格，段落之间空行，末尾一个换行（照录原文代码块的最后一个行尾）。
+// 写法上刻意用 \n 转义而不是多行模板字符串：转义后的值不受编辑器「删行尾空格」与 git CRLF 影响。
+const ABOUT_EXPECTED =
+  '一首歌值得被写下来。 \n' +
+  '\n' +
+  '地把唱针轻轻搭上，那一秒爆豆子似的静电声。它出现在哪一年、哪个城市、哪一场雨；它陪过你熬过哪一夜；它让你想起谁。这些不该沉在记忆里，也不该变成一个社交平台上的动态。它应该是你自己的一页纸，私人，安静，可以一直放在那儿。\n' +
+  '\n' +
+  '音乐和笔记也许本身有着天然的亲和力。\n';
+
+test('「关于」手记：ABOUT_TEXT 逐字照录（含首行行尾空格与段落间空行）', () => {
+  assert.equal(typeof about.ABOUT_TEXT, 'string', 'ABOUT_TEXT 是字符串常量');
+  assert.equal(about.ABOUT_TEXT.length, ABOUT_EXPECTED.length, '长度必须一致');
+  assert.equal(about.ABOUT_TEXT, ABOUT_EXPECTED, '手记正文必须与原文逐字相同（标点 / 空格 / 换行都不许动）');
+
+  // 分项断言：万一被「顺手排版」，失败信息直接指出坏在哪一处
+  assert.equal(about.ABOUT_TEXT.includes('\r'), false, '不得含 CR（CRLF 换行会破坏逐字保真）');
+  const lines = about.ABOUT_TEXT.split('\n');
+  assert.equal(lines.length, 6, '5 行正文 + 末尾换行切出的空串');
+  assert.equal(lines[1], '', '第一段与第二段之间是空行');
+  assert.equal(lines[3], '', '第二段与第三段之间是空行');
+  assert.equal(lines[0].endsWith(' '), true, '首行行尾的空格必须保留');
+  assert.equal(lines[0], '一首歌值得被写下来。 ');
+  assert.equal(lines[4], '音乐和笔记也许本身有着天然的亲和力。');
+  // 逐字保真的反面样本：这些「修正」都不许出现
+  assert.equal(about.ABOUT_TEXT.includes('她'), false, '原文写的是「地」，不许改成「她」');
+});
+
+test('「关于」手记：正文不进 i18n 词典（不是键、不翻译）', () => {
+  // 词典测试强制 zh !== en；正文若进词典，要么被翻译（原文就没了），要么把中英抄成一样（词典测试会红）
+  const values = Object.values(i18n.DICT).flatMap((e) => [e.zh, e.en]);
+  assert.equal(values.includes(about.ABOUT_TEXT), false, '整段手记不得作为任何键的译文');
+
+  // 整行抄进词典同样算违规（拿正文里每个「整行」去词典里找子串）
+  const lines = about.ABOUT_TEXT.split('\n').map((s) => s.trim()).filter((s) => s.length >= 8);
+  assert.ok(lines.length >= 2, `探针：正文只切出 ${lines.length} 个可比对的行，切分逻辑可能已失效`);
+  const hits = [];
+  for (const [k, entry] of Object.entries(i18n.DICT)) {
+    for (const lang of ['zh', 'en']) {
+      if (lines.some((line) => entry[lang].includes(line))) hits.push(`${k}.${lang}`);
+    }
+  }
+  assert.deepEqual(hits, [], '词典里出现了手记正文的整行 —— 正文不翻译、不进词典');
+
+  // 「关于」页只该有壳文案那几个键
+  const aboutKeys = Object.keys(i18n.DICT)
+    .filter((k) => k === 'settings.tab.about' || k.startsWith('settings.about'))
+    .sort();
+  assert.deepEqual(
+    aboutKeys,
+    ['settings.aboutLicense', 'settings.aboutVersion', 'settings.tab.about'],
+    '「关于」页只允许 3 条壳文案（标签名 / 版本行 / 许可行），正文不许建键'
+  );
+});
+
+test('「关于」页接线：设置面板确有 about 标签页，且渲染的是 ABOUT_TEXT 与 manifest 版本号', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../src/settings.ts'), 'utf8');
+  assert.match(src, /type TabKey = [^;]*'about'/, 'TabKey 里要有 about');
+  assert.match(src, /\['about',\s*t\('settings\.tab\.about'\)\]/, '标签栏要挂上「关于」');
+  assert.match(src, /this\.tab === 'about'[\s\S]{0,40}renderAbout\(body\)/, 'display() 要分发到 renderAbout');
+  assert.match(src, /ABOUT_TEXT/, '正文要用 ABOUT_TEXT 常量渲染，别在 settings.ts 里另抄一份');
+  assert.match(
+    src,
+    /tf\('settings\.aboutVersion',\s*\{\s*v:\s*this\.plugin\.manifest\.version\s*\}\)/,
+    '版本号取自 manifest.version，走 tf 占位符'
+  );
+  assert.match(src, /REPO_URL/, '底部 GitHub 外链走 REPO_URL 常量');
+  assert.match(about.REPO_URL, /^https:\/\/github\.com\/Louiss342\/Vinyl-life$/, '仓库地址');
+});

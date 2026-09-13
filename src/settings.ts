@@ -1,5 +1,5 @@
-// 设置面板（M6 改版）：三个标签页 —— 通用（路径 / 播放 / 播放器 / 播放统计）、
-// 外观（专辑墙 / 播放器）、源（外来源 / 本地源）。
+// 设置面板（M6 改版）：四个标签页 —— 通用（路径 / 播放 / 播放器 / 播放统计）、
+// 外观（专辑墙 / 播放器）、源（外来源 / 本地源）、关于（版本 / 作者手记 / 许可）。
 // 卡片属性不在设置页出现：专辑墙工具栏「卡片属性」直接维护 shelfProps。
 import { App, PluginSettingTab, Setting } from 'obsidian';
 import type VinylLifePlugin from './main';
@@ -11,6 +11,7 @@ import { notice } from './util';
 import { Lang, LANGUAGES, t, tf } from './core/i18n';
 import { EMPTY_STATS, VinylStats, ensureStats } from './core/stats';
 import { DEFAULT_SHELF_PROPS } from './core/shelf-props';
+import { ABOUT_TEXT, REPO_URL } from './core/about';
 import {
   DeckStyle,
   RecordColor,
@@ -100,13 +101,14 @@ export function normalizeQueueOrder(raw: unknown): Record<string, string[]> {
   return out;
 }
 
-type TabKey = 'general' | 'appearance' | 'source';
+type TabKey = 'general' | 'appearance' | 'source' | 'about';
 
 // 用函数而不是常量：语言在设置里切换后，标题要跟着变（常量在模块加载时就定型了）
 const tabs = (): [TabKey, string][] => [
   ['general', t('settings.tab.general')],
   ['appearance', t('settings.tab.appearance')],
   ['source', t('settings.tab.source')],
+  ['about', t('settings.tab.about')],
 ];
 
 const columnOptions = (): [number, string][] => [
@@ -155,6 +157,7 @@ export class VinylSettingTab extends PluginSettingTab {
     const body = containerEl.createDiv({ cls: 'vinyl-settings-body' });
     if (this.tab === 'general') this.renderGeneral(body);
     else if (this.tab === 'appearance') this.renderAppearance(body);
+    else if (this.tab === 'about') this.renderAbout(body);
     else await this.renderSource(body);
   }
 
@@ -602,5 +605,31 @@ export class VinylSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           })
       );
+  }
+
+  // ============ 关于：版本 / 作者手记 / 许可 ============
+
+  private renderAbout(c: HTMLElement) {
+    const about = c.createDiv({ cls: 'vinyl-about' });
+
+    const head = about.createDiv({ cls: 'vinyl-about-title' });
+    head.createSpan({ text: 'Vinyl Life' }); // 产品名不翻译
+    head.createSpan({
+      text: tf('settings.aboutVersion', { v: this.plugin.manifest.version }),
+      cls: 'vinyl-about-version',
+    });
+
+    // 作者手记：原文常量（core/about.ts），逐字照录、不走 i18n。
+    // pre-wrap 保住换行与首行行尾空格；text 设的是 textContent，原样进 DOM 不做裁剪。
+    about.createDiv({ text: ABOUT_TEXT, cls: 'vinyl-about-text' });
+
+    const meta = about.createDiv({ cls: 'vinyl-about-meta' });
+    meta.createSpan({ text: t('settings.aboutLicense') });
+    meta.createSpan({ text: ' · ' });
+    meta.createEl('a', {
+      text: 'GitHub',
+      href: REPO_URL,
+      attr: { target: '_blank', rel: 'noopener' },
+    });
   }
 }
