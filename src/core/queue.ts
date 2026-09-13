@@ -2,7 +2,7 @@
 // 源判定：笔记 source 显式优先；auto = 本地有音轨先播本地，否则 neteaseId → 网易云，
 // 再次 qqId → QQ 音乐（两条在线源都没有时按收藏展示）。
 import { AlbumInfo } from './album-index';
-import { Track } from './track';
+import { Track, sourceName } from './track';
 import { LocalSource } from './local-source';
 import { songsToTracks } from './server-client';
 import { qqSongsToTracks, QqService } from './qq';
@@ -13,8 +13,9 @@ export type SourcePolicy = 'auto' | 'local' | 'netease' | 'qq';
 /** 已解析出的实际播放源（非 'none'） */
 export type ActiveSource = 'local' | 'netease' | 'qq';
 
+/** 播放源显示名：与曲目角标同源（track.ts 的 sourceName），调用时按当前语言求值 */
 export function sourceLabel(s: ActiveSource): string {
-  return s === 'netease' ? '网易云' : s === 'qq' ? 'QQ音乐' : '本地';
+  return sourceName(s);
 }
 
 export interface BuildQueueResult {

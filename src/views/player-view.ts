@@ -79,13 +79,15 @@ export class VinylPlayerView extends ItemView {
   private els: PlayerEls | null = null;
   private renderedQueue: Track[] | null = null;
   private queueRows: HTMLElement[] = [];
+  // 队列行右侧的来源角标（文案随语言变；行不重建，切语言时按 renderedQueue 就地重写）
+  private queueBadges: HTMLElement[] = [];
   private currentCoverSrc: string | null = null;
   private lastAlbumPath: string | null = null;
   private lastSpinning = false;
   private lastArmAngle = NaN;
   private playIcon: 'play' | 'pause' | '' = '';
   private lastReadout = '';
-  // 最近一次快照：切语言时重放一次，让取自快照的文案（头部标题）按新语言重算
+  // 最近一次收到的快照（切语言时优先向引擎现取一份；仅引擎缺失的极简依赖下用它兜底）
   private lastSnapshot: PlayerSnapshot | null = null;
   // 随语言变的标签登记（见 bindLabel）：壳只建一次，切语言时不能重建 DOM 兜底
   // （重建会打断转盘旋转与入场动画、丢掉进度），只能把赋值动作记下来逐条重放。
@@ -199,19 +201,30 @@ export class VinylPlayerView extends ItemView {
   applyLanguage() {
     for (const apply of this.labelEls) apply();
     this.applyQueueLabels();
-    // 头部标题的文案由快照决定（专辑名 / 取碟中 / 错误提示），由 update 统一维护：
-    // 把按语言缓存的值清掉再重放一次同一份快照，标题与悬浮提示即按新语言重算。
-    // 同一份快照下其余条件更新全部命中缓存 → 不会产生别的 DOM 写入。
-    if (this.lastSnapshot) {
+    // 头部标题（专辑名 / 取碟中 / 错误提示）与音质读数（来源 · 档位）都由快照决定、由 update 统一维护：
+    // 把这两处按语言缓存的值清掉，再按新语言重放一次，文案即重算。
+    // 快照必须现取而不是用 lastSnapshot：来源文案是引擎按当前语言求值的，而切语言不产生引擎广播，
+    // 手里的旧快照会把旧语言的来源钉在读数上（暂停中尤其明显——没有播放进度事件来纠正它）。
+    // 引擎缺失时（极简依赖的测试）退回最近一次收到的快照。
+    const snap = this.plugin.engine ? this.plugin.engine.snapshot() : this.lastSnapshot;
+    if (snap) {
       this.lastHeaderText = '';
-      this.update(this.lastSnapshot);
+      this.lastReadout = '';
+      this.update(snap);
     }
   }
 
-  // 队列文案（行拖拽提示 / 空态）不挂在壳上、随队列重建，故单独就地刷新（只改属性与文本，不重建节点）
+  // 队列文案（行拖拽提示 / 空态 / 来源角标）不挂在壳上、随队列重建，故单独就地刷新（只改属性与文本，不重建节点）
   private applyQueueLabels() {
     for (const row of this.queueRows) row.setAttribute('title', t('player.dragToReorder'));
     if (this.emptyQueueEl) this.emptyQueueEl.textContent = t('player.emptyQueue');
+    // 来源角标走 trackSourceLabel（随语言变）：行不重建，按当前队列就地重写文本
+    const queue = this.renderedQueue;
+    if (!queue) return;
+    this.queueBadges.forEach((badge, i) => {
+      const track = queue[i];
+      if (track) badge.textContent = trackSourceLabel(track);
+    });
   }
 
   private ensureShell(): PlayerEls {
@@ -504,7 +517,10 @@ export class VinylPlayerView extends ItemView {
     els.queueTitle.textContent = 'Vinyl order';
     els.queueBox.empty();
     this.queueRows = [];
+    this.queueBadges = [];
     this.emptyQueueEl = null;
+    // 先记下本次渲染的队列，applyQueueLabels 要按它重写来源角标
+    this.renderedQueue = s.queue;
     if (!s.queue.length) {
       this.emptyQueueEl = els.queueBox.createDiv({ text: t('player.emptyQueue'), cls: 'vinyl-muted' });
     } else {
@@ -514,7 +530,7 @@ export class VinylPlayerView extends ItemView {
         this.bindQueueDrag(row, i);
         row.createSpan({ text: String(i + 1).padStart(2, '0'), cls: 'vinyl-idx' });
         row.createSpan({ text: t.title, cls: 'vinyl-q-title' });
-        row.createSpan({
+        const badge = row.createSpan({
           text: trackSourceLabel(t),
           cls: 'vinyl-badge ' + trackSourceClass(t),
         });
@@ -523,10 +539,10 @@ export class VinylPlayerView extends ItemView {
           cls: 'vinyl-muted',
         });
         this.queueRows.push(row);
+        this.queueBadges.push(badge);
       });
     }
-    this.applyQueueLabels(); // 行拖拽提示统一在这里按当前语言写（切语言时由 applyLanguage 重放）
-    this.renderedQueue = s.queue;
+    this.applyQueueLabels(); // 行拖拽提示 / 来源角标统一在这里按当前语言写（切语言时由 applyLanguage 重放）
   }
 
   // —— 队列行拖拽排序 ——

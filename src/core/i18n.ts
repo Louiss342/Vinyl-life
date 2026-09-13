@@ -66,6 +66,17 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'menu.openQq': { zh: '在 QQ 音乐打开', en: 'Open in QQ Music' },
   'menu.deleteAlbum': { zh: '删除专辑…', en: 'Delete album…' },
 
+  // —— 音源显示名 / 音质档（队列行角标 · 播放器音质读数） ——
+  // 三处取值都来自函数调用（track.ts / queue.ts），切语言后立即生效；别抄进模块级常量表。
+  'src.netease': { zh: '网易云', en: 'NetEase' },
+  'src.qq': { zh: 'QQ音乐', en: 'QQ Music' },
+  'src.local': { zh: '本地', en: 'Local' },
+  // 与 settings.quality* 区分：那组是设置面板的选项文案（较高带「（默认）」），这里是读数用的档位名
+  'quality.standard': { zh: '标准', en: 'Standard' },
+  'quality.higher': { zh: '较高', en: 'Higher' },
+  'quality.exhigh': { zh: '极高', en: 'Extra high' },
+  'quality.lossless': { zh: '无损', en: 'Lossless' },
+
   // —— 通用（跨视图复用的小词 / 分隔符） ——
   'common.cancel': { zh: '取消', en: 'Cancel' },
   'common.delete': { zh: '删除', en: 'Delete' },

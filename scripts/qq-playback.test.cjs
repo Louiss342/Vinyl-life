@@ -7,16 +7,8 @@ const esbuild = require('esbuild');
 
 const nodePath = require('node:path');
 
-function loadModule(entry, globals = {}) {
-  const abs = path.join(__dirname, '..', entry);
-  const source = esbuild.buildSync({
-    entryPoints: [abs],
-    bundle: true,
-    write: false,
-    format: 'cjs',
-    platform: 'node',
-    external: ['obsidian'],
-  }).outputFiles[0].text;
+// esbuild 产物 → vm 执行（require 面收窄到 obsidian / fs / path，测试环境无网络）
+function runBundle(source, globals = {}) {
   const mod = { exports: {} };
   vm.runInNewContext(source, {
     module: mod,
@@ -51,6 +43,40 @@ function loadModule(entry, globals = {}) {
     ...globals,
   });
   return mod.exports;
+}
+
+function loadModule(entry, globals = {}) {
+  const abs = path.join(__dirname, '..', entry);
+  const source = esbuild.buildSync({
+    entryPoints: [abs],
+    bundle: true,
+    write: false,
+    format: 'cjs',
+    platform: 'node',
+    external: ['obsidian'],
+  }).outputFiles[0].text;
+  return runBundle(source, globals);
+}
+
+/** 把多个模块打进同一个 bundle（并从这里取出 setLanguage）。
+ *  entryPoints 是「一个入口一个包」，各包各持一份 i18n 实例——切语言必须切到 bundle 内部那一份
+ *  （与 i18n.test.cjs 末尾的 provider 测试同款做法）。 */
+function loadBundle(entries, globals = {}) {
+  const source = esbuild.buildSync({
+    stdin: {
+      contents:
+        entries.map((e) => `export * from '../${e}';`).join('\n') +
+        `\nexport { setLanguage } from '../src/core/i18n';\n`,
+      resolveDir: __dirname,
+      loader: 'ts',
+    },
+    bundle: true,
+    write: false,
+    format: 'cjs',
+    platform: 'node',
+    external: ['obsidian'],
+  }).outputFiles[0].text;
+  return runBundle(source, globals);
 }
 
 const trackMod = loadModule('src/core/track.ts');
@@ -238,6 +264,68 @@ test('source labels cover all three active sources', () => {
   assert.equal(sourceLabel('local'), '本地');
   assert.equal(sourceLabel('netease'), '网易云');
   assert.equal(sourceLabel('qq'), 'QQ音乐');
+});
+
+test('来源角标 / 音质档文案随语言切换（切 en 出英文，切回 zh 复原）', () => {
+  // track / queue 与 i18n 必须同包：外层实例切不动 bundle 里的那一份
+  const mod = loadBundle(['src/core/track.ts', 'src/core/queue.ts']);
+  const qq = { source: 'qq', id: 'x', duration: 1, title: 'x' };
+  const ne = { source: 'netease', id: 1, duration: 1, title: 'x' };
+  const local = { source: 'local-vault', file: { path: 'a/b.mp3' }, title: 'x' };
+
+  mod.setLanguage('zh');
+  assert.equal(mod.trackSourceLabel(qq), 'QQ音乐');
+  assert.equal(mod.trackSourceLabel(ne), '网易云');
+  assert.equal(mod.trackSourceLabel(local), '本地');
+  assert.equal(mod.sourceLabel('qq'), 'QQ音乐');
+  assert.equal(mod.qualityText('standard'), '标准');
+  assert.equal(mod.qualityText('higher'), '较高');
+  assert.equal(mod.qualityText('exhigh'), '极高');
+  assert.equal(mod.qualityText('lossless'), '无损');
+
+  mod.setLanguage('en');
+  assert.equal(mod.trackSourceLabel(qq), 'QQ Music');
+  assert.equal(mod.trackSourceLabel(ne), 'NetEase');
+  assert.equal(mod.trackSourceLabel(local), 'Local');
+  assert.equal(
+    mod.sourceLabel('qq'),
+    mod.trackSourceLabel(qq),
+    '队列来源文案与角标同源（一处改两处生效）'
+  );
+  assert.equal(mod.qualityText('standard'), 'Standard');
+  assert.equal(mod.qualityText('higher'), 'Higher');
+  assert.equal(mod.qualityText('exhigh'), 'Extra high');
+  assert.equal(mod.qualityText('lossless'), 'Lossless');
+  assert.equal(mod.qualityText('jymaster'), 'jymaster', '未知档位仍原样透传，不进词典');
+  assert.equal(mod.qualityText(undefined), '', '本地音轨无档位');
+
+  mod.setLanguage('zh');
+  assert.equal(mod.trackSourceLabel(qq), 'QQ音乐', '切回中文复原');
+  assert.equal(mod.qualityText('lossless'), '无损');
+});
+
+test('引擎快照的来源文案按当前语言求值（不在建队列那一刻定型）', () => {
+  const mod = loadBundle(['src/core/player-state.ts'], { Audio: AudioStub });
+  const engine = new mod.PlaybackEngine({
+    app: {},
+    local: { clearBlobs() {}, keysOf: () => [] },
+    netease: {},
+    qq: {},
+    settings: () => ({ quality: 'higher' }),
+  });
+
+  mod.setLanguage('zh');
+  engine.setQueue([{ source: 'qq', id: 'x', duration: 1, title: 'x' }], 'p', 'T', 'qq');
+  assert.equal(engine.snapshot().sourceLabel, 'QQ音乐');
+
+  mod.setLanguage('en');
+  assert.equal(engine.snapshot().sourceLabel, 'QQ Music', '切语言后快照跟着变（缓存文案会停在旧语言）');
+
+  mod.setLanguage('zh');
+  assert.equal(engine.snapshot().sourceLabel, 'QQ音乐');
+
+  engine.clear();
+  assert.equal(engine.snapshot().sourceLabel, '', '清空队列后没有来源文案');
 });
 
 test('player resolves per source and never collides numeric vs string ids', async () => {

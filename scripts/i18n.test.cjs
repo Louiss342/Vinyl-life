@@ -308,7 +308,7 @@ function playerModule() {
   const src = esbuild.buildSync({
     stdin: {
       // setLanguage 从 bundle 内部取：外层 i18n 实例与 bundle 里的不是同一个
-      contents: `export * from '../src/views/player-view';\nexport { setLanguage } from '../src/core/i18n';\n`,
+      contents: `export * from '../src/views/player-view';\nexport { setLanguage, t } from '../src/core/i18n';\n`,
       resolveDir: __dirname,
       loader: 'ts',
     },
@@ -368,8 +368,8 @@ function snap(over = {}) {
   };
 }
 
-function makePlayerView(mod) {
-  const view = new mod.VinylPlayerView({}, { settings: {} });
+function makePlayerView(mod, engine) {
+  const view = new mod.VinylPlayerView({}, { settings: {}, engine });
   const root = fakeEl();
   view.contentEl = root;
   return { view, root };
@@ -434,4 +434,43 @@ test('播放器：队列行的拖拽提示随语言就更新（不重建队列�
   mod.setLanguage('zh');
   view.applyLanguage();
   assert.equal(row.getAttribute('title'), '拖拽调整顺序');
+});
+
+test('播放器：切语言后音质读数与来源角标按新语言重算（不重建节点）', () => {
+  const mod = playerModule();
+  mod.setLanguage('zh');
+  const queue = [
+    { source: 'netease', id: 1, duration: 100, title: 'A' },
+    { source: 'local-vault', file: { path: 'a.mp3' }, title: 'B', duration: 65 },
+  ];
+  // 桩引擎：来源文案在 snapshot() 调用时才求值（与线上同语义——引擎存原始来源，快照现算文案）
+  const engine = {
+    snapshot: () =>
+      snap({
+        queue,
+        index: 0,
+        status: 'paused',
+        sourceLabel: mod.t('src.netease'),
+        quality: 'higher',
+      }),
+  };
+  const { view } = makePlayerView(mod, engine);
+  view.update(engine.snapshot());
+  assert.equal(view.els.qualityEl.textContent, '网易云 · 较高');
+  assert.equal(view.queueBadges[0].textContent, '网易云');
+  assert.equal(view.queueBadges[1].textContent, '本地');
+
+  const qualityEl = view.els.qualityEl;
+  const badge = view.queueBadges[0];
+  mod.setLanguage('en');
+  view.applyLanguage();
+  assert.equal(view.els.qualityEl.textContent, 'NetEase · Higher', '读数按新语言重算');
+  assert.equal(badge.textContent, 'NetEase', '队列角标就地改文本');
+  assert.equal(view.els.qualityEl, qualityEl, '读数节点没被换掉');
+  assert.equal(view.queueBadges[0], badge, '角标节点没被重建');
+
+  mod.setLanguage('zh');
+  view.applyLanguage();
+  assert.equal(view.els.qualityEl.textContent, '网易云 · 较高', '切回中文复原');
+  assert.equal(badge.textContent, '网易云');
 });

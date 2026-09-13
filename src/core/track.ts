@@ -2,6 +2,7 @@
 // 队列统一为 Track[]，播放时按 source 各自解析为可播放地址；
 // 前端只面向 Track 编程，增删音源不碰播放器逻辑。
 import { TFile } from 'obsidian';
+import { t } from './i18n';
 
 export type TrackSource = 'local-vault' | 'local-external' | 'netease' | 'qq';
 
@@ -78,10 +79,18 @@ export function applyTrackOrder(tracks: Track[], orderKeys: string[]): Track[] {
   return out.concat(rest);
 }
 
+/** 播放源显示名（三个来源的唯一出处：队列角标与播放器读数共用）。
+ *  必须保持「函数」形态：写进模块级常量会在加载期定型，切语言后不跟着变。 */
+export function sourceName(s: 'local' | 'netease' | 'qq'): string {
+  if (s === 'netease') return t('src.netease');
+  if (s === 'qq') return t('src.qq');
+  return t('src.local');
+}
+
 export function trackSourceLabel(t: Track): string {
-  if (t.source === 'netease') return '网易云';
-  if (t.source === 'qq') return 'QQ音乐';
-  return '本地';
+  if (t.source === 'netease') return sourceName('netease');
+  if (t.source === 'qq') return sourceName('qq');
+  return sourceName('local');
 }
 
 export function trackSourceClass(t: Track): 'is-local' | 'is-net' | 'is-qq' {
@@ -96,13 +105,20 @@ export function isLocalTrack(t: Track): boolean {
 
 // 在线音源「实际拿到」的音质档（接口返回 level，可能低于请求档）→ 显示文案；
 // 本地音轨无此概念（按原文件播放），返回空串。
-const QUALITY_TEXT: Record<string, string> = {
-  standard: '标准',
-  higher: '较高',
-  exhigh: '极高',
-  lossless: '无损',
-};
-
+// 档位文案不建常量表缓存：那是模块加载期定型，切语言后读数不会变，故在调用时查词典。
 export function qualityText(level?: string): string {
-  return level ? QUALITY_TEXT[level] || level : '';
+  if (!level) return '';
+  switch (level) {
+    case 'standard':
+      return t('quality.standard');
+    case 'higher':
+      return t('quality.higher');
+    case 'exhigh':
+      return t('quality.exhigh');
+    case 'lossless':
+      return t('quality.lossless');
+    default:
+      // 未知档位原样显示，不吞信息
+      return level;
+  }
 }

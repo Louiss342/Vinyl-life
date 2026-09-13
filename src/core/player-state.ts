@@ -61,7 +61,8 @@ export class PlaybackEngine {
   private errorMsg = '';
   private albumNotePath?: string;
   private albumTitle = '';
-  private sourceLabel = '';
+  // 存来源枚举而非显示文案：文案语言可随时切换，必须等 snapshot() 时再求值（否则会停在建队列那一刻的语言）
+  private sourceKind: ActiveSource | null = null;
   private quality = '';
   private listeners = new Set<(s: PlayerSnapshot) => void>();
   // 在线源 URL 缓存：按 trackKey 区分来源（netease id 为数字、qq id 为 mid 字符串，
@@ -118,7 +119,7 @@ export class PlaybackEngine {
       volume: this.audio.volume,
       albumNotePath: this.albumNotePath,
       albumTitle: this.albumTitle,
-      sourceLabel: this.sourceLabel,
+      sourceLabel: this.sourceKind ? sourceLabel(this.sourceKind) : '',
       quality: this.quality || undefined,
       error: this.errorMsg || undefined,
     };
@@ -182,7 +183,7 @@ export class PlaybackEngine {
     this.index = -1;
     this.albumNotePath = albumNotePath;
     this.albumTitle = albumTitle;
-    this.sourceLabel = sourceLabel(source);
+    this.sourceKind = source;
     this.quality = '';
     this.urlCache.clear();
     this.levelCache.clear();
@@ -258,7 +259,7 @@ export class PlaybackEngine {
     this.errorMsg = '';
     this.albumNotePath = undefined;
     this.albumTitle = '';
-    this.sourceLabel = '';
+    this.sourceKind = null;
     this.quality = '';
     this.urlCache.clear();
     this.levelCache.clear();
