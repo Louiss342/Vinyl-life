@@ -7,6 +7,7 @@ import { QrLoginModal, QQ_QR_PROVIDER } from './views/qr-login-modal';
 import { WebLoginModal, QQ_WEB } from './views/web-login-modal';
 import { DiscDirection, DISC_DIRECTIONS, SpinSpeed, SPIN_SPEEDS } from './core/disc-motion';
 import { notice } from './util';
+import { Lang, LANGUAGES } from './core/i18n';
 import { EMPTY_STATS, VinylStats, ensureStats } from './core/stats';
 import { DEFAULT_SHELF_PROPS } from './core/shelf-props';
 import {
@@ -23,6 +24,8 @@ export type ShelfColumns = 'auto' | number;
 
 export interface VinylSettings {
   albumFolder: string;
+  /** 界面语言（默认中文；主要覆盖专辑墙文案） */
+  language: Lang;
   /** 本地专辑笔记模板文件（vault 相对路径；空 = 内置模板） */
   albumNoteTemplate: string;
   coverFolder: string;
@@ -55,6 +58,7 @@ export interface VinylSettings {
 
 export const DEFAULT_SETTINGS: VinylSettings = {
   albumFolder: 'Vinyl Life/Vinyl Note',
+  language: 'zh',
   albumNoteTemplate: '',
   coverFolder: 'Vinyl Life/covers',
   audioFolder: 'Vinyl Life/audio',
@@ -142,6 +146,20 @@ export class VinylSettingTab extends PluginSettingTab {
   // ============ 通用：路径 / 播放 / 播放器 / 播放统计 ============
 
   private renderGeneral(c: HTMLElement) {
+    this.section(c, '通用');
+    new Setting(c)
+      .setName('语言 / Language')
+      .setDesc('界面语言（主要覆盖专辑墙：工具栏、排序筛选、空态、卡片菜单）。默认中文。')
+      .addDropdown((d) => {
+        for (const l of LANGUAGES) d.addOption(l.value, l.label);
+        d.setValue(this.plugin.settings.language);
+        d.onChange(async (v) => {
+          this.plugin.settings.language = v === 'en' ? 'en' : 'zh';
+          await this.plugin.saveSettings();
+          this.plugin.refreshLanguage();
+        });
+      });
+
     this.section(c, '路径');
     new Setting(c)
       .setName('专辑文件夹')

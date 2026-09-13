@@ -22,6 +22,7 @@ import {
   toggleShelfProp,
 } from '../core/shelf-props';
 import { notice, isAudioFile, collectDroppedFiles, droppedRootName } from '../util';
+import { t } from '../core/i18n';
 import { SetCoverModal } from './set-cover-modal';
 
 export const SHELF_VIEW_TYPE = 'vinyl-shelf';
@@ -49,22 +50,23 @@ interface ShelfViewState {
   sourceFilter: SourceFilter;
 }
 
-const SORT_OPTIONS: [SortKey, string][] = [
-  ['title-asc', '标题 A → Z'],
-  ['title-desc', '标题 Z → A'],
-  ['year-desc', '年份：新 → 旧'],
-  ['year-asc', '年份：旧 → 新'],
-  ['rating-desc', '评分：高 → 低'],
-  ['plays-desc', '播放次数：多 → 少'],
-  ['recent', '最近播放'],
+// 用函数而不是常量：语言在设置里切换后，菜单标题要跟着变（常量在模块加载时就定型了）
+const sortOptions = (): [SortKey, string][] => [
+  ['title-asc', t('sort.titleAsc')],
+  ['title-desc', t('sort.titleDesc')],
+  ['year-desc', t('sort.yearDesc')],
+  ['year-asc', t('sort.yearAsc')],
+  ['rating-desc', t('sort.ratingDesc')],
+  ['plays-desc', t('sort.playsDesc')],
+  ['recent', t('sort.recent')],
 ];
 
-const FILTER_OPTIONS: [SourceFilter, string][] = [
-  ['all', '全部'],
-  ['local', '本地音源'],
-  ['netease', '网易云'],
-  ['qq', 'QQ 音乐'],
-  ['collect', '仅收藏（无音源）'],
+const filterOptions = (): [SourceFilter, string][] => [
+  ['all', t('filter.all')],
+  ['local', t('filter.local')],
+  ['netease', t('filter.netease')],
+  ['qq', t('filter.qq')],
+  ['collect', t('filter.collect')],
 ];
 
 export class VinylShelfView extends ItemView {
@@ -213,7 +215,7 @@ export class VinylShelfView extends ItemView {
     // 搜索（防抖 200ms，只重建网格保持输入焦点）
     const searchWrap = bar.createDiv({ cls: 'vinyl-shelf-search' });
     const input = searchWrap.createEl('input', {
-      attr: { type: 'search', placeholder: '搜索专辑 / 艺术家 / 流派…' },
+      attr: { type: 'search', placeholder: t('shelf.search') },
     });
     input.value = this.state.query;
     let timer: number | null = null;
@@ -234,12 +236,12 @@ export class VinylShelfView extends ItemView {
       b.addEventListener('click', fn);
       return b;
     };
-    mk('refresh-cw', '刷新', () => this.render());
-    mk('arrow-up-down', '排序', (ev) => this.showSortMenu(ev));
-    mk('filter', '音源筛选', (ev) => this.showFilterMenu(ev));
-    mk('sliders-horizontal', '卡片属性', (ev) => this.showPropsPopover(ev));
-    mk('cloud-download', '导入专辑', () => this.plugin.openAlbumImport());
-    mk('upload', '导入本地音频', () => this.plugin.openLocalImport());
+    mk('refresh-cw', t('shelf.refresh'), () => this.render());
+    mk('arrow-up-down', t('shelf.sort'), (ev) => this.showSortMenu(ev));
+    mk('filter', t('shelf.filter'), (ev) => this.showFilterMenu(ev));
+    mk('sliders-horizontal', t('shelf.props'), (ev) => this.showPropsPopover(ev));
+    mk('cloud-download', t('shelf.importAlbum'), () => this.plugin.openAlbumImport());
+    mk('upload', t('shelf.importAudio'), () => this.plugin.openLocalImport());
   }
 
   private renderGrid() {
@@ -257,17 +259,17 @@ export class VinylShelfView extends ItemView {
 
     if (!this.entries.length) {
       const empty = this.gridHost.createDiv({ cls: 'vinyl-shelf-empty' });
-      empty.createDiv({ text: '还没有专辑笔记', cls: 'vinyl-shelf-empty-title' });
+      empty.createDiv({ text: t('shelf.empty.title'), cls: 'vinyl-shelf-empty-title' });
       empty.createDiv({
-        text: '新建笔记并写入 frontmatter：tags: [album] + cover / artist / year… 即可上墙；也可用工具栏「导入」从网易云或本地音频起步。',
+        text: t('shelf.empty.hint'),
         cls: 'vinyl-muted',
       });
       return;
     }
     if (!shown.length) {
       const empty = this.gridHost.createDiv({ cls: 'vinyl-shelf-empty' });
-      empty.createDiv({ text: '没有符合条件的专辑', cls: 'vinyl-shelf-empty-title' });
-      empty.createDiv({ text: '调整搜索词或筛选条件试试', cls: 'vinyl-muted' });
+      empty.createDiv({ text: t('shelf.filtered.title'), cls: 'vinyl-shelf-empty-title' });
+      empty.createDiv({ text: t('shelf.filtered.hint'), cls: 'vinyl-muted' });
       return;
     }
 
@@ -336,7 +338,7 @@ export class VinylShelfView extends ItemView {
 
   private showSortMenu(ev: MouseEvent) {
     const menu = new Menu();
-    for (const [key, label] of SORT_OPTIONS) {
+    for (const [key, label] of sortOptions()) {
       menu.addItem((it) =>
         it
           .setTitle(label)
@@ -352,7 +354,7 @@ export class VinylShelfView extends ItemView {
 
   private showFilterMenu(ev: MouseEvent) {
     const menu = new Menu();
-    for (const [key, label] of FILTER_OPTIONS) {
+    for (const [key, label] of filterOptions()) {
       menu.addItem((it) =>
         it
           .setTitle(label)
@@ -704,14 +706,14 @@ export class VinylShelfView extends ItemView {
     if (e.local || e.netease || e.qq) {
       menu.addItem((it) =>
         it
-          .setTitle('播放')
+          .setTitle(t('menu.play'))
           .setIcon('play')
           .onClick(() => this.playAlbum(e))
       );
     }
     menu.addItem((it) =>
       it
-        .setTitle('打开笔记')
+        .setTitle(t('menu.openNote'))
         .setIcon('file-text')
         .onClick(async () => {
           const leaf = this.plugin.app.workspace.getLeaf(false);
@@ -720,20 +722,20 @@ export class VinylShelfView extends ItemView {
     );
     menu.addItem((it) =>
       it
-        .setTitle('导入本地音频…')
+        .setTitle(t('menu.importAudio'))
         .setIcon('upload')
         .onClick(() => this.plugin.openLocalImport(album))
     );
     menu.addItem((it) =>
       it
-        .setTitle('设置封面…')
+        .setTitle(t('menu.setCover'))
         .setIcon('image')
         .onClick(() => new SetCoverModal(this.plugin.app, this.plugin, album).open())
     );
     if (album.neteaseId) {
       menu.addItem((it) =>
         it
-          .setTitle('在网易云打开')
+          .setTitle(t('menu.openNetease'))
           .setIcon('external-link')
           .onClick(() => {
             window.open(`https://music.163.com/#/album?id=${album.neteaseId}`);
@@ -743,7 +745,7 @@ export class VinylShelfView extends ItemView {
     if (album.qqId) {
       menu.addItem((it) =>
         it
-          .setTitle('在 QQ 音乐打开')
+          .setTitle(t('menu.openQq'))
           .setIcon('external-link')
           .onClick(() => {
             window.open(`https://y.qq.com/n/ryqq/albumDetail/${album.qqId}`);
@@ -753,7 +755,7 @@ export class VinylShelfView extends ItemView {
     menu.addSeparator();
     menu.addItem((it) =>
       it
-        .setTitle('删除专辑…')
+        .setTitle(t('menu.deleteAlbum'))
         .setIcon('trash')
         .onClick(() => this.plugin.openDeleteAlbum(album))
     );

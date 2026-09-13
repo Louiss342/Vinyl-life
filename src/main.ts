@@ -52,6 +52,7 @@ import { DeleteAlbumModal } from './views/delete-album-modal';
 import { collectAlbumDeleteTargets, deleteAlbumAssets } from './delete';
 import { WebLoginModal, QQ_WEB } from './views/web-login-modal';
 import { StatsModal } from './views/stats-modal';
+import { setLanguage } from './core/i18n';
 import { ensureStats, recordTrackPlay } from './core/stats';
 import { Track, trackKey } from './core/track';
 
@@ -264,6 +265,8 @@ export default class VinylLifePlugin extends Plugin {
     }
     // 模板文件路径注入索引层（避免它自己被当成专辑）
     setAlbumTemplatePath(this.settings.albumNoteTemplate);
+    // 界面语言（i18n 模块级当前语言）
+    setLanguage(this.settings.language);
     // 配色项（M8：原「主题 follow/dark」已被「播放器配色」取代，旧值直接忽略）
     this.settings.playerDeck = normalizeDeckStyle(data?.playerDeck);
     this.settings.recordColor = normalizeRecordColor(data?.recordColor);
@@ -292,7 +295,16 @@ export default class VinylLifePlugin extends Plugin {
   async saveSettings() {
     // 模板文件本身不能被当成专辑展示（模板里通常也写着 tags: [album]）
     setAlbumTemplatePath(this.settings.albumNoteTemplate);
+    setLanguage(this.settings.language);
     await this.saveData(this.settings);
+  }
+
+  // 语言切换后重绘已打开的专辑墙（工具栏 / 排序筛选 / 空态 / 卡片菜单文案）
+  refreshLanguage() {
+    for (const leaf of this.app.workspace.getLeavesOfType(SHELF_VIEW_TYPE)) {
+      const v = leaf.view as unknown as { render?: () => void };
+      if (typeof v.render === 'function') v.render();
+    }
   }
 
   // 生成一份可编辑的模板文件并写进设置（内容 = 内置模板，随便改）
