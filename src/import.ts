@@ -10,7 +10,7 @@ import {
   getAlbumInfo,
   parseQqAlbumMid,
 } from './core/album-index';
-import { isAudioFile, baseName, sanitizeFileName } from './util';
+import { isAudioFile, baseName, sanitizeFileName, ensureFolder } from './util';
 // 以下仅作类型使用（import type 让测试打包不牵连整条服务链）
 import type { VinylSettings } from './settings';
 import type { NeteaseService } from './core/netease';
@@ -31,18 +31,7 @@ export interface ImportResult {
   file?: TFile;
 }
 
-// 确保目标目录存在：vault.create / createBinary 不会自动创建父目录，
-// 新装用户（或改过目录设置的用户）会因此直接抛错 → 导入弹窗卡死。
-async function ensureFolder(app: App, folderPath: string): Promise<void> {
-  const p = normalizePath(String(folderPath || ''));
-  if (!p) return;
-  if (app.vault.getAbstractFileByPath(p)) return;
-  try {
-    await app.vault.createFolder(p); // 会自动创建缺失的上级目录
-  } catch (e) {
-    if (!app.vault.getAbstractFileByPath(p)) throw e; // 并发创建已存在之外的失败照常抛出
-  }
-}
+// ensureFolder 见 util.ts（导入与插件启动共用）
 
 // ============ A. 专辑导入（网易云 / QQ 音乐） ============
 

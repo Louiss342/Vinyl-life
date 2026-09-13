@@ -29,7 +29,7 @@ import { buildAlbumQueue, QueueDeps } from './core/queue';
 import { normalizeShelfProps, normalizeShelfPropLabels } from './core/shelf-props';
 import { DISC_DIRECTIONS, SPIN_SPEEDS } from './core/disc-motion';
 import { normalizeDeckStyle, normalizeRecordColor } from './core/appearance';
-import { notice, isAudioFile, pluginAbsPath } from './util';
+import { notice, isAudioFile, pluginAbsPath, ensureFolder } from './util';
 import {
   ImportContext,
   importNeteaseAlbum,
@@ -44,12 +44,12 @@ import { StatsModal } from './views/stats-modal';
 import { ensureStats, recordTrackPlay } from './core/stats';
 import { Track, trackKey } from './core/track';
 
-const SELF_TEST_LOG = '06-专辑墙/M1-自检日志.md';
-const SHELF_TEST_LOG = '06-专辑墙/M2-自检日志.md';
-const HANDOFF_TEST_LOG = '06-专辑墙/M3-自检日志.md';
-const IMPORT_TEST_LOG = '06-专辑墙/M4-自检日志.md';
-const QQ_TEST_LOG = '06-专辑墙/M5-自检日志.md';
-const SELF_TEST_DIR = '06-专辑墙/tmp-m1-test';
+const SELF_TEST_LOG = '专辑墙/M1-自检日志.md';
+const SHELF_TEST_LOG = '专辑墙/M2-自检日志.md';
+const HANDOFF_TEST_LOG = '专辑墙/M3-自检日志.md';
+const IMPORT_TEST_LOG = '专辑墙/M4-自检日志.md';
+const QQ_TEST_LOG = '专辑墙/M5-自检日志.md';
+const SELF_TEST_DIR = '专辑墙/tmp-m1-test';
 const SELF_TEST_EXT = 'D:/Music/vinyl-note-spike.wav';
 
 export default class VinylLifePlugin extends Plugin {
@@ -69,6 +69,10 @@ export default class VinylLifePlugin extends Plugin {
 
   async onload() {
     await this.loadSettings();
+
+    // 首次运行自动搭好目录结构（默认 Vinyl Life/{audio, covers, Vinyl Note}）：
+    // 新装用户装完即用；已有目录不动，失败不阻塞加载（导入流程里还会再兜一次）
+    await this.ensureDataFolders();
 
     // 服务层：网关（Cookie 通道）+ 网页直连（官方登录页会话）统一路由
     this.server = new ServerManager(this);
@@ -102,7 +106,8 @@ export default class VinylLifePlugin extends Plugin {
     // 视图与命令
     this.registerView(PLAYER_VIEW_TYPE, (leaf) => new VinylPlayerView(leaf, this));
     this.registerView(SHELF_VIEW_TYPE, (leaf) => new VinylShelfView(leaf, this));
-    this.addRibbonIcon('library', 'Vinyl Life 专辑墙', () => this.openShelf());
+    // 图标与播放器视图一致（disc-3），方便一眼认出是 Vinyl Life
+    this.addRibbonIcon('disc-3', 'Vinyl Life 专辑墙', () => this.openShelf());
     this.addCommand({
       id: 'open-shelf',
       name: '打开专辑墙',
@@ -268,6 +273,21 @@ export default class VinylLifePlugin extends Plugin {
 
   async saveSettings() {
     await this.saveData(this.settings);
+  }
+
+  // 三个数据目录不存在则创建（新用户首次启用装完即用；用户改过路径设置也会补齐）
+  private async ensureDataFolders() {
+    for (const p of [
+      this.settings.albumFolder,
+      this.settings.coverFolder,
+      this.settings.audioFolder,
+    ]) {
+      try {
+        await ensureFolder(this.app, p);
+      } catch (e) {
+        console.warn('[vinyl] 创建目录失败：' + p, e);
+      }
+    }
   }
 
   // ============ M4：导入 / 感想 / 统计 ============
@@ -498,7 +518,7 @@ export default class VinylLifePlugin extends Plugin {
     try {
       const note = await this.writeTempAlbumNote({
         title: '__m1-test-vault',
-        body: 'tags: [album]\naudioFolder: "[[06-专辑墙/audio/spike]]"\n',
+        body: 'tags: [album]\naudioFolder: "[[Vinyl Life/audio/spike]]"\n',
       });
       const fm = parseFrontmatterSimple(await this.app.vault.read(note));
       const album = buildAlbumInfo(this.app, note, fm);
@@ -549,7 +569,7 @@ export default class VinylLifePlugin extends Plugin {
 
     // 3. 网易云专辑（Abbey Road 真实笔记，auto 策略 → 本地无 → 网易云）
     try {
-      const note = this.app.vault.getAbstractFileByPath('06-专辑墙/专辑/Abbey Road.md');
+      const note = this.app.vault.getAbstractFileByPath('Vinyl Life/Vinyl Note/Abbey Road.md');
       if (note instanceof TFile) {
         const album = getAlbumInfo(this.app, note);
         if (!album) {
@@ -589,7 +609,7 @@ export default class VinylLifePlugin extends Plugin {
 
     lines.push(`- 总耗时 ${Date.now() - t0}ms`);
     await writeLog();
-    new Notice('M1 自检完成，结果见 06-专辑墙/M1-自检日志.md');
+    new Notice('M1 自检完成，结果见 专辑墙/M1-自检日志.md');
   }
 
   // ============ M2 自检套件 ============
@@ -662,7 +682,7 @@ export default class VinylLifePlugin extends Plugin {
         log(`BADGE-${name.toUpperCase()}`, false, `异常: ${e}`);
       }
     };
-    await testCase('local', 'tags: [album]\naudioFolder: "[[06-专辑墙/audio/spike]]"\n', {
+    await testCase('local', 'tags: [album]\naudioFolder: "[[Vinyl Life/audio/spike]]"\n', {
       local: true,
       netease: false,
     });
@@ -672,7 +692,7 @@ export default class VinylLifePlugin extends Plugin {
     });
     await testCase(
       'both',
-      'tags: [album]\nnetease: "https://music.163.com/#/album?id=437968"\naudioFolder: "[[06-专辑墙/audio/spike]]"\n',
+      'tags: [album]\nnetease: "https://music.163.com/#/album?id=437968"\naudioFolder: "[[Vinyl Life/audio/spike]]"\n',
       { local: true, netease: true }
     );
     await testCase('collect', 'tags: [album]\n', { local: false, netease: false });
@@ -680,7 +700,7 @@ export default class VinylLifePlugin extends Plugin {
     // 3. 清理
     await this.removeTempAlbumNotes();
     await writeLog();
-    new Notice('M2 自检完成，结果见 06-专辑墙/M2-自检日志.md');
+    new Notice('M2 自检完成，结果见 专辑墙/M2-自检日志.md');
   }
 
   // ============ M3 自检套件 ============
@@ -715,7 +735,7 @@ export default class VinylLifePlugin extends Plugin {
     try {
       const note = await this.writeTempAlbumNote({
         title: '__m3-test',
-        body: 'tags: [album]\naudioFolder: "[[06-专辑墙/audio/spike]]"\n',
+        body: 'tags: [album]\naudioFolder: "[[Vinyl Life/audio/spike]]"\n',
       });
       const fm = parseFrontmatterSimple(await this.app.vault.read(note));
       const album = buildAlbumInfo(this.app, note, fm);
@@ -758,7 +778,7 @@ export default class VinylLifePlugin extends Plugin {
     // 3. 清理
     await this.removeTempAlbumNotes();
     await writeLog();
-    new Notice('M3 自检完成，结果见 06-专辑墙/M3-自检日志.md');
+    new Notice('M3 自检完成，结果见 专辑墙/M3-自检日志.md');
   }
 
   // ============ M4 自检套件 ============
@@ -792,7 +812,7 @@ export default class VinylLifePlugin extends Plugin {
       const before = this.settings.stats.totalPlays;
       this.recordPlay(
         { source: 'local-external', path: 'D:/fake-self-test.wav', title: '统计自检' },
-        '06-专辑墙/tmp-m1-test/__m4-fake.md',
+        '专辑墙/tmp-m1-test/__m4-fake.md',
         '__m4-fake'
       );
       const ok = this.settings.stats.totalPlays === before + 1;
@@ -809,7 +829,7 @@ export default class VinylLifePlugin extends Plugin {
       });
       const fm = parseFrontmatterSimple(await this.app.vault.read(note));
       const album = buildAlbumInfo(this.app, note, fm);
-      const spike = this.app.vault.getAbstractFileByPath('06-专辑墙/audio/spike/spike-test.wav');
+      const spike = this.app.vault.getAbstractFileByPath('Vinyl Life/audio/spike/spike-test.wav');
       if (spike instanceof TFile) {
         const buf = await this.app.vault.readBinary(spike);
         const file = new File([buf], 'm4-copy-test.wav', { type: 'audio/wav' });
@@ -821,7 +841,7 @@ export default class VinylLifePlugin extends Plugin {
           ok,
           `新增 ${res.added.length} 个文件，frontmatter audioFolder=${content.includes('audioFolder') ? '已写入' : '缺失'}`
         );
-        cleanupDirs.push('06-专辑墙/audio/__m4-test-copy');
+        cleanupDirs.push('Vinyl Life/audio/__m4-test-copy');
       } else {
         log('IMPORT-COPY', false, '找不到测试音频 spike-test.wav');
       }
@@ -868,7 +888,7 @@ export default class VinylLifePlugin extends Plugin {
     try {
       const note = await this.writeTempAlbumNote({
         title: '__m4-test-note',
-        body: 'tags: [album]\naudioFolder: "[[06-专辑墙/audio/spike]]"\n',
+        body: 'tags: [album]\naudioFolder: "[[Vinyl Life/audio/spike]]"\n',
       });
       const fm = parseFrontmatterSimple(await this.app.vault.read(note));
       const album = buildAlbumInfo(this.app, note, fm);
@@ -890,7 +910,7 @@ export default class VinylLifePlugin extends Plugin {
       } catch (_) {}
     }
     await writeLog();
-    new Notice('M4 自检完成，结果见 06-专辑墙/M4-自检日志.md');
+    new Notice('M4 自检完成，结果见 专辑墙/M4-自检日志.md');
   }
 
   // ============ M5 自检套件（QQ 音乐源） ============
@@ -961,7 +981,7 @@ export default class VinylLifePlugin extends Plugin {
     }
 
     await writeLog();
-    new Notice('M5 自检完成，结果见 06-专辑墙/M5-自检日志.md');
+    new Notice('M5 自检完成，结果见 专辑墙/M5-自检日志.md');
   }
 
   private queueDeps(): QueueDeps {

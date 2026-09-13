@@ -52,9 +52,9 @@ export interface VinylSettings {
 }
 
 export const DEFAULT_SETTINGS: VinylSettings = {
-  albumFolder: '06-专辑墙/专辑',
-  coverFolder: '06-专辑墙/covers',
-  audioFolder: '06-专辑墙/audio',
+  albumFolder: 'Vinyl Life/Vinyl Note',
+  coverFolder: 'Vinyl Life/covers',
+  audioFolder: 'Vinyl Life/audio',
   importMode: 'copy',
   defaultSource: 'auto',
   quality: 'higher',

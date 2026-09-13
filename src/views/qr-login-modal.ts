@@ -31,6 +31,8 @@ export interface QrProvider {
   tempPng: string;
   /** 扫码不顺时的替代入口提示（网易云默认无） */
   fallbackHint?: string;
+  /** 「802 已授权但没拿到会话」这个失败态的指引（默认给手动粘贴兜底） */
+  noSessionHint?: string;
 }
 
 export const NETEASE_QR_PROVIDER: QrProvider = {
@@ -41,8 +43,9 @@ export const NETEASE_QR_PROVIDER: QrProvider = {
     '浏览器打开 music.163.com 登录 → F12 → Application（应用）→ Cookies → music.163.com，复制 MUSIC_U 的 Value，按 MUSIC_U=复制的值 粘贴到下面。此方法也可读取 HttpOnly Cookie。',
   placeholder: 'MUSIC_U=xxx; __csrf=yyy; ...',
   tempPng: 'qr-login-tmp.png',
-  fallbackHint:
-    '若扫码长时间无反应（网易云对新设备的匿名注册有限流），请改用命令「网易云浏览器登录（官方登录页）」——官方页面登录，最稳。',
+  // 新用户首次扫码时网关会现场注册匿名设备身份，该接口可能限流 → 失败态给出浏览器登录指引
+  noSessionHint:
+    '❌ 已授权但未取得有效登录会话（新设备的匿名注册可能被网易云限流）。请刷新二维码重试；仍不行请改用「网易云浏览器登录（官方登录页）」，也可手动粘贴 Cookie。',
 };
 
 export const QQ_QR_PROVIDER: QrProvider = {
@@ -220,6 +223,7 @@ export class QrLoginModal extends Modal {
             void this.onLogin?.(st);
           } else {
             statusEl.textContent =
+              this.provider.noSessionHint ??
               '❌ 已授权但未取得有效登录会话，请刷新二维码重试，或使用「手动粘贴 Cookie」。';
           }
           return;

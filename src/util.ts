@@ -1,6 +1,6 @@
 // Vinyl Life — 通用小工具
 
-import { Plugin, Notice } from 'obsidian';
+import { App, Plugin, Notice, normalizePath } from 'obsidian';
 import * as path from 'path';
 
 export const AUDIO_EXTENSIONS = [
@@ -79,6 +79,19 @@ export function pluginAbsPath(plugin: Plugin, ...parts: string[]): string {
 
 export function notice(msg: string, ms?: number) {
   new Notice(`Vinyl Life · ${msg}`, ms);
+}
+
+// 目录不存在则创建（vault.create / createBinary 不会自动建父目录）：
+// 新装用户首次运行时用来搭出 Vinyl Life/{audio, covers, Vinyl Note}
+export async function ensureFolder(app: App, folderPath: string): Promise<void> {
+  const p = normalizePath(String(folderPath || ''));
+  if (!p) return;
+  if (app.vault.getAbstractFileByPath(p)) return;
+  try {
+    await app.vault.createFolder(p); // 会自动创建缺失的上级目录
+  } catch (e) {
+    if (!app.vault.getAbstractFileByPath(p)) throw e; // 并发创建已存在之外的失败照常抛出
+  }
 }
 
 // 文件名净化（Obsidian vault 与 Windows 双重要求：禁 # ^ [ ] 与 \ / : * ? " < > |）
