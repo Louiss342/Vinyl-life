@@ -50,7 +50,7 @@ async function build() {
       `export const GATEWAY_GZIP = ${JSON.stringify(gz)};\n`
   );
 
-  // 3) 前端插件产物（minify，体积预算见 README）
+  // 3) 前端插件产物（minify；体积预算见 build 末尾的 MAIN_JS_BUDGET，超了直接失败）
   await esbuild.build({
     ...common,
     entryPoints: ['src/main.ts'],
@@ -61,9 +61,21 @@ async function build() {
     external: ['obsidian', 'electron', '@electron/remote', ...NODE_BUILTINS],
   });
 
+  const sizes = {};
   for (const f of ['main.js', 'server.js', GATEWAY_BUNDLE]) {
     const s = fs.statSync(f).size;
+    sizes[f] = s;
     console.log(`[vinyl-build] ${f}: ${(s / 1024).toFixed(1)} KB`);
+  }
+
+  // 体积预算：main.js 是社区市场分发的下载主体（server.js / gateway-bundle 都会内联进去）。
+  // 超了就构建失败而不是只打日志 —— 悄悄涨到几 MB 是没人会注意的那种退化。改预算时同步 README。
+  const MAIN_JS_BUDGET = 260 * 1024;
+  if (sizes['main.js'] > MAIN_JS_BUDGET) {
+    throw new Error(
+      `main.js 体积 ${(sizes['main.js'] / 1024).toFixed(1)} KB 超出预算 ${MAIN_JS_BUDGET / 1024} KB：` +
+        '看看是不是误引入了大依赖（能内联的小实现优先），确有必要再调 esbuild.config.mjs 里的预算'
+    );
   }
 }
 

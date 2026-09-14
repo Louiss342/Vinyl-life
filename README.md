@@ -165,13 +165,16 @@ Vinyl Life/
 npm install
 npm run build
 npm run typecheck
+npm run lint
 npm test
 ```
 
 - `npm install`：安装依赖。
 - `npm run build`：构建，产出 `main.js`（插件本体）、`server.js`（本地网关，独立调试用）和 `src/core/gateway-bundle.ts`（构建生成物，勿手改）。
 - `npm run typecheck`：类型检查。它依赖 build 先生成 `src/core/gateway-bundle.ts`，两步顺序不能反。
+- `npm run lint`：ESLint（含官方审核规则集），提交前保持零报错。
 - `npm test`：跑测试，200 多项，纯 Node 环境，不需要 Obsidian。
+- `main.js` 有体积预算（260 KB，超出直接构建失败）：它是社区市场的下载主体，预算写在 `esbuild.config.mjs`。
 
 源码目录结构：
 
@@ -343,13 +346,16 @@ Requires Node.js 18 or later and npm.
 npm install
 npm run build
 npm run typecheck
+npm run lint
 npm test
 ```
 
 - `npm install`: install dependencies.
 - `npm run build`: build, producing `main.js` (the plugin itself), `server.js` (the local gateway, for standalone debugging), and `src/core/gateway-bundle.ts` (a generated file — do not edit it by hand).
 - `npm run typecheck`: type-check. It depends on `npm run build` having generated `src/core/gateway-bundle.ts` first, so the order cannot be reversed.
+- `npm run lint`: ESLint with the official review rule set; keep it clean before committing.
 - `npm test`: run the tests — 200+ of them, in plain Node, with no Obsidian required.
+- `main.js` has a size budget (260 KB; exceeding it fails the build) because it is what the community store downloads — the budget lives in `esbuild.config.mjs`.
 
 Source layout:
 

@@ -4,12 +4,13 @@
 
 ## 环境与构建
 
-最少的四步（顺序不能反）：
+最少五步（顺序不能反）：
 
 ```bash
 npm install
 npm run build      # 生成 src/core/gateway-bundle.ts，typecheck 依赖它
 npm run typecheck
+npm run lint
 npm test
 ```
 
@@ -62,12 +63,13 @@ Issues and pull requests are welcome. Before you start, read the "Development" s
 
 ## Setup and build
 
-The minimum is four steps, and the order matters:
+The minimum is five steps, and the order matters:
 
 ```bash
 npm install
 npm run build      # generates src/core/gateway-bundle.ts, which typecheck depends on
 npm run typecheck
+npm run lint
 npm test
 ```
 

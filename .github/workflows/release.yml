@@ -29,6 +29,30 @@ jobs:
       - name: Build
         run: npm run build
 
+      # 与 CI 同一套门槛：tag 指向的提交必须是绿的，否则不发（CI 只在分支推送时跑，tag 不会触发它）
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      # 发布前最后一道：tag 必须与 manifest.json 的 version 一致。
+      # 此前这条链路没有任何比对 —— 推个 1.0.6 的 tag 但 manifest 还是 1.0.5 也照发，
+      # 用户那边只会看到「已经装过」，更新永远不出现。
+      - name: Check tag matches manifest version
+        run: |
+          set -e
+          tag="${GITHUB_REF_NAME}"
+          version="$(node -p "require('./manifest.json').version")"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::tag '$tag' 与 manifest.json 的 version '$version' 不一致 —— 先改 manifest.version 再跑 npm run version-bump，然后提交并推同名 tag"
+            exit 1
+          fi
+          echo "tag $tag == manifest.version $version"
+
       - name: Attest release assets
         uses: actions/attest@v4
         with:
