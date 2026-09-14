@@ -151,8 +151,47 @@ export class VinylShelfView extends ItemView {
         onVaultChanged(f, oldPath)
       )
     );
+    // 卡片文字的悬停滚动：委托挂在 contentEl 上（卡片每次刷新都重建，逐张挂监听会白挂随卡片丢弃的一堆）
+    this.registerDomEvent(this.contentEl, 'pointerover', (ev) => this.onMarqueeOver(ev));
+    this.registerDomEvent(this.contentEl, 'pointerout', (ev) => this.onMarqueeOut(ev));
     this.unsub = this.plugin.engine.subscribe((s) => this.updatePlaying(s));
     this.render();
+  }
+
+  // ============ 卡片文字：放不下时悬停滚动（.vinyl-marquee） ============
+
+  /** 悬停时量出溢出距离与滚动时长，写进两个 CSS 变量；滚动动画本身在 styles.css 里。
+   *  每次悬停现算：面板宽度变了、语言换了都不用额外失效逻辑。放得下就什么都不做。 */
+  private onMarqueeOver(ev: PointerEvent) {
+    const row = this.marqueeRow(ev.target);
+    if (!row) return;
+    const text = row.querySelector<HTMLElement>('.vinyl-marquee-text');
+    if (!text) return;
+    const shift = text.scrollWidth - row.clientWidth;
+    if (shift <= 1) return; // 放得下：保持省略号（其实也没省略号可显示）
+    row.classList.add('is-overflowing');
+    row.style.setProperty('--vinyl-marquee-shift', `-${shift}px`);
+    // 45px/秒：最短 2 秒（再短看不清），最长 12 秒（长值别滚到天荒地老）
+    row.style.setProperty(
+      '--vinyl-marquee-duration',
+      `${Math.min(12, Math.max(2, shift / 45)).toFixed(1)}s`
+    );
+  }
+
+  private onMarqueeOut(ev: PointerEvent) {
+    const row = this.marqueeRow(ev.target);
+    if (!row) return;
+    // relatedTarget 还在这一行里 = 只是行内移动，别复位（否则中途停下、动画从头再来）
+    const to = ev.relatedTarget as Node | null;
+    if (to && typeof row.contains === 'function' && row.contains(to)) return;
+    row.classList.remove('is-overflowing');
+  }
+
+  /** 弹窗窗口（popout）里 instanceof HTMLElement 会失败，所以只鸭子类型判 closest */
+  private marqueeRow(target: EventTarget | null): HTMLElement | null {
+    const el = target as HTMLElement | null;
+    if (!el || typeof el.closest !== 'function') return null;
+    return el.closest<HTMLElement>('.vinyl-marquee');
   }
 
   async onClose() {
@@ -640,10 +679,11 @@ export class VinylShelfView extends ItemView {
     const card = createDiv();
     card.className = 'vinyl-shelf-card';
     card.dataset.path = album.path;
-    card.setAttribute('title', album.path);
     this.cardEls.set(album.path, card);
 
-    const cover = card.createDiv({ cls: 'vinyl-shelf-cover' });
+    // 笔记路径的悬停提示只挂在封面上：挂整张卡片的话，鼠标移到专辑名或属性行也会弹出来，
+    // 正好挡住正在滚动的文字。属性行自己的提示（属性名：值）见下面的 buildCard 属性循环。
+    const cover = card.createDiv({ cls: 'vinyl-shelf-cover', attr: { title: album.path } });
     // 唱片层（绝对定位）：位于封面之下（img/占位 z-index 1 在上，disc 藏于封面后方探出）
     cover.createDiv({ cls: 'vinyl-shelf-disc' });
     if (album.cover) {
@@ -656,20 +696,23 @@ export class VinylShelfView extends ItemView {
       cover.createDiv({ cls: 'vinyl-shelf-cover-color vinyl-shelf-cover-empty', text: '♪' });
     }
 
-    card.createDiv({ text: album.title, cls: 'vinyl-shelf-card-title' });
-    // 属性行：顺序取自设置数组（不遍历 displayProps 键序——整数样键名会被 Object.keys 提前）
+    // 标题与属性行都套 .vinyl-marquee：放不下时悬停横向滚动（量距离在 onMarqueeOver，滚动是纯 CSS）
+    const title = card.createDiv({ cls: 'vinyl-shelf-card-title vinyl-marquee' });
+    title.createSpan({ text: album.title, cls: 'vinyl-marquee-text' });
+    // 属性行：顺序取自设置数组（不遍历 displayProps 键序——整数样键名会被 Object.keys 提前）。
+    // 不显示属性名（表头），整行只有值；值太长由 CSS 截断，悬停滚动看全，
+    // 鼠标停住时 title 给出「属性名：值」——不然「1997」这种裸值分不清是什么属性。
     const labels = this.plugin.settings.shelfPropLabels;
-    const prop = (label: string, value: string) => {
-      const row = card.createDiv({ cls: 'vinyl-shelf-prop' });
-      row.createSpan({ text: label, cls: 'vinyl-shelf-prop-label' });
-      // 长值已由 CSS 省略号截断，title 供悬停看全文
-      row.createSpan({ text: value, cls: 'vinyl-shelf-prop-value', attr: { title: value } });
-    };
     for (const key of this.plugin.settings.shelfProps) {
       // ?? '' 必须有：strict:false 下静态类型是 string，运行时可能键不存在
       const value = album.displayProps[key] ?? '';
       if (value === '') continue; // 无该字段 / 值无法展示 → 跳过整行（前缀也不显示）
-      prop(propLabel(key, labels), propPrefix(key) + value);
+      const text = propPrefix(key) + value;
+      const row = card.createDiv({
+        cls: 'vinyl-shelf-prop vinyl-marquee',
+        attr: { title: `${propLabel(key, labels)}：${text}` },
+      });
+      row.createSpan({ text, cls: 'vinyl-shelf-prop-value vinyl-marquee-text' });
     }
 
     // 只在「无任何音源」时给提示——这类卡片点击打开笔记而非播放，需要一眼可辨

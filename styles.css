@@ -399,34 +399,55 @@
   font-weight: 700;
   line-height: 1.25;
   margin-bottom: 10px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .vinyl-shelf-prop {
-  display: grid;
-  grid-template-columns: minmax(64px, 0.48fr) minmax(0, 1fr);
-  gap: 10px;
-  align-items: baseline;
   margin-top: 6px;
   line-height: 1.25;
 }
 
-.vinyl-shelf-prop-label {
-  overflow: hidden;
-  color: var(--text-muted);
-  font-size: 0.78em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
+/* 属性行不显示属性名（表头），整行只有值；属性名在悬停提示里（见 buildCard 的 title） */
 .vinyl-shelf-prop-value {
-  overflow: hidden;
   color: var(--text-normal);
   font-size: 0.88em;
+}
+
+/* ============ 卡片文字：放不下时悬停横向滚动 ============ */
+/* JS（shelf-view 的 onMarqueeOver）只量出「滚多远 / 滚多久」两个变量，滚动本身是纯 CSS：
+   默认截断显示省略号，悬停松开设限再来回滚（alternate），移开自动回到开头。
+   prefers-reduced-motion 的用户不滚，靠悬停提示看全文。 */
+.vinyl-marquee {
+  overflow: hidden;
+}
+
+.vinyl-marquee-text {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  vertical-align: bottom;
+}
+
+/* 悬停时松开截断：交给外层裁。否则滚动时右边会挂着一个不动的省略号 */
+.vinyl-marquee:hover .vinyl-marquee-text {
+  max-width: none;
+}
+
+.vinyl-marquee.is-overflowing:hover .vinyl-marquee-text {
+  animation: vinyl-marquee-scroll var(--vinyl-marquee-duration, 4s) linear infinite alternate;
+}
+
+@keyframes vinyl-marquee-scroll {
+  to {
+    transform: translateX(var(--vinyl-marquee-shift, 0px));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vinyl-marquee.is-overflowing:hover .vinyl-marquee-text {
+    animation: none;
+  }
 }
 
 .vinyl-shelf-badges {
