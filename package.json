@@ -1,6 +1,6 @@
 {
   "name": "vinyl-life",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "private": true,
   "description": "Vinyl album shelf + turntable player for Obsidian. Local audio, NetEase Cloud Music and QQ Music sources.",
   "license": "MIT",
