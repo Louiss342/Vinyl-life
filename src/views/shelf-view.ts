@@ -267,7 +267,7 @@ export class VinylShelfView extends ItemView {
     const dir = this.plugin.settings.discDirection || 'right';
     for (const d of DISC_DIRECTIONS) c.toggleClass(`is-disc-${d}`, d === dir);
     const color = this.plugin.settings.recordColor;
-    for (const [v] of RECORD_COLORS) c.toggleClass(recordClass(v), v === color);
+    for (const v of RECORD_COLORS) c.toggleClass(recordClass(v), v === color);
     const cols = this.plugin.settings.shelfColumns;
     c.style.setProperty(
       '--vinyl-shelf-columns',
@@ -322,7 +322,7 @@ export class VinylShelfView extends ItemView {
     const filtered = !!this.state.query || this.state.sourceFilter !== 'all';
     if (this.toolbarTitle) {
       this.toolbarTitle.textContent = filtered
-        ? `专辑墙（${shown.length}/${this.entries.length}）`
+        ? tf('shelf.titleFiltered', { shown: shown.length, total: this.entries.length })
         : tf('shelf.titleWithCount', { n: this.entries.length });
     }
 
@@ -494,7 +494,7 @@ export class VinylShelfView extends ItemView {
     const row = pop.createDiv({ cls: 'vinyl-props-row is-selected' });
     row.dataset.propKey = key;
     row.setAttribute('draggable', 'true');
-    row.setAttribute('title', `frontmatter 键：${key}`);
+    row.setAttribute('title', tf('props.frontmatterKey', { key }));
     row.addEventListener('dragstart', (ev) => {
       this.dragKey = key;
       this.dropAt = null;
@@ -532,7 +532,8 @@ export class VinylShelfView extends ItemView {
       text: propLabel(key, this.plugin.settings.shelfPropLabels),
       cls: 'vinyl-props-row-label',
     });
-    if (count != null) row.createSpan({ text: `${count} 张`, cls: 'vinyl-props-count' });
+    if (count != null)
+      row.createSpan({ text: tf('props.albumCount', { count }), cls: 'vinyl-props-count' });
     const iconBtn = (icon: string, title: string, fn: () => void) => {
       const b = row.createEl('button', { cls: 'clickable-icon vinyl-props-icon' });
       setIcon(b, icon);
@@ -543,10 +544,16 @@ export class VinylShelfView extends ItemView {
         fn();
       });
     };
-    iconBtn('pencil', `重命名「${propLabel(key, this.plugin.settings.shelfPropLabels)}」`, () =>
+    iconBtn(
+      'pencil',
+      tf('props.rename', { name: propLabel(key, this.plugin.settings.shelfPropLabels) }),
+      () =>
       this.startPropRename(label, key)
     );
-    iconBtn('x', `不再显示「${propLabel(key, this.plugin.settings.shelfPropLabels)}」`, () =>
+    iconBtn(
+      'x',
+      tf('props.hide', { name: propLabel(key, this.plugin.settings.shelfPropLabels) }),
+      () =>
       void this.applyShelfProps(toggleShelfProp(this.plugin.settings.shelfProps, key, false))
     );
   }
@@ -569,7 +576,7 @@ export class VinylShelfView extends ItemView {
       text: propLabel(key, this.plugin.settings.shelfPropLabels),
       cls: 'vinyl-props-row-label',
     });
-    row.createSpan({ text: `${count} 张`, cls: 'vinyl-props-count' });
+    row.createSpan({ text: tf('props.albumCount', { count }), cls: 'vinyl-props-count' });
   }
 
   // ✎ 改显示名：行内 input；Enter/blur 提交、Esc 取消；留空 = 删除覆写（回落预设别名 / 键名）
@@ -710,7 +717,8 @@ export class VinylShelfView extends ItemView {
       const text = propPrefix(key) + value;
       const row = card.createDiv({
         cls: 'vinyl-shelf-prop vinyl-marquee',
-        attr: { title: `${propLabel(key, labels)}：${text}` },
+        // 冒号也随语言（全角 / 半角），别把中文标点漏进英文界面
+        attr: { title: `${propLabel(key, labels)}${t('common.colon')}${text}` },
       });
       row.createSpan({ text, cls: 'vinyl-shelf-prop-value vinyl-marquee-text' });
     }

@@ -2,6 +2,7 @@
 import { requestUrl } from 'obsidian';
 import { Track } from './track';
 import { restrictionText } from '../util';
+import { getLanguage, t, tf } from './i18n';
 import type {
   ApiErrorResponse,
   LoginResponse,
@@ -32,7 +33,7 @@ export class ServerClient {
 
   /** 网关鉴权头：会话 token 由 ServerManager 生成（见 VINYL_TOKEN） */
   private authHeaders(): Record<string, string> {
-    return { 'x-vinyl-token': this.token() };
+    return { 'x-vinyl-token': this.token(), 'x-vinyl-lang': getLanguage() };
   }
 
   private url(pathname: string, params?: Record<string, string>): string {
@@ -52,7 +53,7 @@ export class ServerClient {
     const body: unknown = res.json;
     if (res.status < 200 || res.status >= 300) {
       const error = (body as ApiErrorResponse | null)?.error;
-      throw new Error(error || `网关 HTTP ${res.status}（${pathname}）`);
+      throw new Error(error || tf('auth.gatewayHttp', { status: res.status, path: pathname }));
     }
     return body as T;
   }
@@ -78,14 +79,14 @@ export class ServerClient {
   async qrKey(): Promise<string> {
     const body = await this.getJson<QrKeyResponse>('/api/login/qr/key');
     const key = body?.data?.unikey;
-    if (!key) throw new Error('获取登录 unikey 失败');
+    if (!key) throw new Error(t('auth.getUnikeyFailed'));
     return String(key);
   }
 
   async qrCreate(key: string): Promise<{ qrurl: string; qrimg: string }> {
     const body = await this.getJson<QrKeyResponse>('/api/login/qr/create', { key });
     const d = body?.data;
-    if (!d?.qrimg) throw new Error('生成二维码失败');
+    if (!d?.qrimg) throw new Error(t('auth.qrGenerateFailed'));
     return { qrurl: String(d.qrurl || ''), qrimg: String(d.qrimg) };
   }
 
@@ -140,7 +141,7 @@ export class ServerClient {
         return { restriction: restrictionText(d.code) };
       }
     }
-    return { restriction: '音源不可用' };
+    return { restriction: t('auth.sourceUnavailable') };
   }
 
   async searchAlbum(keywords: string): Promise<SearchAlbumResponse> {
@@ -155,7 +156,7 @@ export class ServerClient {
       throw: false,
     });
     if (res.status < 200 || res.status >= 300) {
-      throw new Error(`封面下载失败 HTTP ${res.status}`);
+      throw new Error(tf('auth.coverDownloadHttp', { status: res.status }));
     }
     return res.arrayBuffer;
   }

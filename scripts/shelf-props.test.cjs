@@ -8,7 +8,8 @@ const esbuild = require('esbuild');
 
 const source = esbuild.buildSync({
   stdin: {
-    contents: `export * from '../src/core/shelf-props';\nexport * from '../src/core/album-index';\n`,
+    // 一并导出 i18n：属性别名已改为词典键，这里要查「每个默认键都有中英别名」
+    contents: `export * from '../src/core/shelf-props';\nexport * from '../src/core/album-index';\nexport * as i18n from '../src/core/i18n';\n`,
     resolveDir: __dirname,
     loader: 'ts',
   },
@@ -245,11 +246,16 @@ test('collectShelfPropKeys：空输入 → []', () => {
 
 // ============ 一致性（防新增默认键忘配别名） ============
 
-test('一致性：DEFAULT_SHELF_PROPS 每个键都有预设中文别名', () => {
+test('一致性：DEFAULT_SHELF_PROPS 每个键都有词典别名（中英齐备）', () => {
   for (const key of mod.DEFAULT_SHELF_PROPS) {
     const meta = mod.PROP_META[key];
-    assert.ok(meta && meta.label && meta.label !== key, `默认键 ${key} 缺少中文别名`);
-    assert.equal(mod.propLabel(key), meta.label);
+    assert.ok(meta && meta.labelKey, `默认键 ${key} 缺少词典键`);
+    const entry = mod.i18n.DICT[meta.labelKey];
+    assert.ok(entry?.zh && entry?.en, `默认键 ${key} 的词典条目不全（${meta.labelKey}）`);
+    assert.notEqual(entry.zh, entry.en, `默认键 ${key} 的中英别名不能相同`);
+    // 别名随语言：中文环境下取中文别名（词典键本身不该出现在界面上）
+    assert.equal(mod.propLabel(key), entry.zh);
+    assert.notEqual(mod.propLabel(key), key);
   }
   assert.equal(mod.propLabel('unknown-key'), 'unknown-key', '未覆盖键应回退键名');
   assert.equal(mod.propLabel('artist', { artist: '乐队' }), '乐队', '自定义别名应优先');

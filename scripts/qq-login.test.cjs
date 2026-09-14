@@ -25,6 +25,14 @@ const browserSource = esbuild.transformSync(
   fs.readFileSync(path.join(__dirname, '../src/core/browser-login.ts'), 'utf8'),
   { loader: 'ts', format: 'cjs', target: 'es2022' }
 ).code;
+// transform 不打包相对导入，所以沙箱里得手动接上真实词典（browser-login 的文案已走 i18n）
+const i18nMod = { exports: {} };
+vm.runInNewContext(bundle('src/core/i18n.ts'), {
+  module: i18nMod,
+  exports: i18nMod.exports,
+  require: () => ({}),
+  console,
+});
 
 class Element {
   constructor(tag, options = {}) {
@@ -193,6 +201,7 @@ function setupBrowser() {
     module: mod,
     exports: mod.exports,
     require: (name) => {
+      if (name === './i18n') return i18nMod.exports;
       if (name === '@electron/remote') return { BrowserWindow };
       if (name === 'electron') return { remote: { BrowserWindow } };
       throw new Error(`Unexpected runtime import: ${name}`);

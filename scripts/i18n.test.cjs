@@ -300,16 +300,40 @@ function stringLiterals(src) {
   return out;
 }
 
-test('i18n：播放器视图源码不得硬编码中文文案（注释不算；防「壳只建一次」漏翻回潮）', () => {
-  const src = fs.readFileSync(path.join(__dirname, '../src/views/player-view.ts'), 'utf8');
-  const lits = stringLiterals(src);
-  assert.ok(lits.length >= 30, `只解析出 ${lits.length} 个字符串字面量，解析逻辑可能已失效`);
-  const bad = lits.filter((s) => /[一-鿿]/.test(s));
-  assert.deepEqual(
-    bad,
-    [],
-    '提示 / 标签文案应改走 t()（随语言的标签用 bindLabel 登记，切语言时由 applyLanguage 重放）'
-  );
+// 例外清单（每一条都要有理由，别往里塞用户可见文案）：
+//   src/core/i18n.ts      —— 词典本体
+//   src/core/about.ts     —— 作者手记（原文常量，刻意不翻译；README 也逐字校验它）
+//   `[vinyl] …`           —— 控制台日志：给开发者看的，不进界面（约定带这个前缀）
+//   `…/专辑笔记模板.md`    —— 模板文件的**路径**，不是文案：固定路径才不会让老用户的模板失联
+const CJK_ALLOWED_FILES = ['src/core/i18n.ts', 'src/core/about.ts'];
+const CJK_ALLOWED_LITERALS = [/^\[vinyl\]/, /模板\/专辑笔记模板\.md$/];
+
+test('i18n：除例外清单外，源码里的字符串字面量不得含中文（用户可见文案必须走 t()/tf()）', () => {
+  const root = path.join(__dirname, '..');
+  const files = [];
+  (function walk(dir) {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name.endsWith('.ts') && !e.name.endsWith('.d.ts')) files.push(p);
+    }
+  })(path.join(root, 'src'));
+
+  const problems = [];
+  let seen = 0;
+  for (const f of files) {
+    const rel = path.relative(root, f).split(path.sep).join('/');
+    if (CJK_ALLOWED_FILES.includes(rel)) continue;
+    for (const lit of stringLiterals(fs.readFileSync(f, 'utf8'))) {
+      if (!/[一-鿿]/.test(lit)) continue;
+      seen++;
+      if (CJK_ALLOWED_LITERALS.some((re) => re.test(lit))) continue;
+      problems.push(`${rel} → ${JSON.stringify(lit.slice(0, 40))}`);
+    }
+  }
+  // 探针：扫描逻辑失效时（例如源码风格变了导致解析不出字面量）要红，而不是静默通过
+  assert.ok(seen >= 8, `只扫到 ${seen} 处中文字面量，像是扫描逻辑失效了`);
+  assert.deepEqual(problems, [], '这些文案要么走 t()/tf()，要么加进 CJK_ALLOWED_* 例外清单（附理由）');
 });
 
 test('i18n：refreshLanguage 会把已打开的播放器也接上（applyLanguage）', () => {

@@ -9,8 +9,10 @@ import * as path from 'path';
 import * as net from 'net';
 import { spawn, execFile, ChildProcess } from 'child_process';
 import { pluginAbsPath, sleep } from '../util';
+import { getLanguage } from './i18n';
 import { gunzipSync } from 'zlib';
 import { GATEWAY_HASH, GATEWAY_GZIP } from './gateway-bundle';
+import { t, tf } from './i18n';
 
 export type ServerState = 'stopped' | 'starting' | 'running' | 'error';
 
@@ -130,8 +132,7 @@ export class ServerManager {
     if (!this.nodeBinary) {
       this.state = 'error';
       this.lastError =
-        '未找到 Node.js：在线音源（网易云 / QQ 音乐）需要系统 Node（PATH 与常见安装路径均未探测到）。' +
-        '纯本地源不受影响；可前往 nodejs.org 安装，或重启 Obsidian 后在设置里「重新探测」。';
+        t('gateway.nodeMissing');
       console.error('[vinyl] ' + this.lastError);
       return false;
     }
@@ -177,7 +178,7 @@ export class ServerManager {
         }, 500);
       } else {
         this.state = 'error';
-        this.lastError = `网关多次崩溃（最近一次退出码 ${code ?? '未知'}），已停止自动重启（可在设置里重试，或查看 gateway.log）`;
+        this.lastError = tf('gateway.crashLoop', { code: code ?? t('gateway.exitCodeUnknown') });
       }
     });
 
@@ -200,7 +201,9 @@ export class ServerManager {
       }
       await sleep(150);
     }
-    const msg = earlyError ? `网关启动失败：${earlyError.slice(0, 200)}` : '网关 15s 未就绪';
+    const msg = earlyError
+      ? tf('gateway.startFailed', { msg: earlyError.slice(0, 200) })
+      : t('gateway.notReady');
     this.stop();
     this.state = 'error';
     this.lastError = msg;
@@ -242,8 +245,7 @@ export class ServerManager {
       return file;
     } catch (e) {
       throw new Error(
-        `无法写入网关临时文件（${file}）：${(e as Error).message}。` +
-          '在线音源（网易云 / QQ 音乐）不可用，本地源不受影响；请检查系统临时目录权限。'
+        tf('gateway.tempWriteFailed', { file, msg: (e as Error).message })
       );
     }
   }
@@ -254,6 +256,8 @@ export class ServerManager {
       ...process.env,
       VINYL_PORT: String(this.port),
       VINYL_TOKEN: this.token,
+      // 网关自带一份小词表：错误文案会冒到界面上，语言得跟着插件走
+      VINYL_LANG: getLanguage(),
       VINYL_COOKIE_FILE: pluginAbsPath(this.plugin, '.cookie'),
       VINYL_ANON_FILE: pluginAbsPath(this.plugin, '.anon-token'),
       VINYL_QQ_COOKIE_FILE: pluginAbsPath(this.plugin, '.qq-cookie'),

@@ -190,7 +190,7 @@ export async function importQqAlbum(ctx: ImportContext, input: string): Promise<
   try {
     body = await ctx.qq.album(mid);
   } catch (e) {
-    return { ok: false, detail: `获取专辑失败：${(e as Error).message}` };
+    return { ok: false, detail: tf('import.albumFetchFailed', { msg: (e as Error).message }) };
   }
   const album = body?.data?.album;
   if (!album?.name) {
@@ -203,7 +203,7 @@ export async function importQqAlbum(ctx: ImportContext, input: string): Promise<
   const name = sanitizeFileName(album.name);
   const notePath = normalizePath(`${ctx.settings().albumFolder}/${name}.md`);
   if (ctx.app.vault.getAbstractFileByPath(notePath)) {
-    return { ok: false, detail: `笔记已存在：${notePath}` };
+    return { ok: false, detail: tf('import.noteExistsPath', { path: notePath }) };
   }
   const artist = album.artist || '';
   // QQ 的 aDate 形如 2020-01-01
@@ -349,7 +349,7 @@ export const DEFAULT_ALBUM_TEMPLATE = [
   '{{audioFolder}}',
   '---',
   '',
-  '## 感想',
+  t('import.reflectionHeading'),
   '',
 ].join('\n');
 

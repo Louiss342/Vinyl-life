@@ -8,6 +8,7 @@ import { QqService } from './qq';
 import type { LoginState, QrCheckResult } from './auth';
 import { readCredentialFile, writeCredentialFile } from './credential-file';
 import { pluginAbsPath } from '../util';
+import { t } from './i18n';
 
 const QQ_KEY_RE = /(?:^|;\s*)(?:qm_keyst|qqmusic_key)=[^;\s]+/;
 
@@ -61,10 +62,10 @@ export class QqAuth {
     signal?.throwIfAborted();
     const cookie = raw.trim();
     if (!QQ_KEY_RE.test(cookie) || /[\r\n]/.test(cookie)) {
-      throw new Error('Cookie 缺少有效的 qm_keyst');
+      throw new Error(t('auth.cookieMissingQmKeyst'));
     }
     const ok = await this.server.ensure();
-    if (!ok) throw new Error(this.server.lastError || '网关未就绪');
+    if (!ok) throw new Error(this.server.lastError || t('auth.gatewayNotReady'));
     signal?.throwIfAborted();
     await this.client.validateCookie(cookie, signal);
     // 验证期间关闭登录窗口时，不让迟到的请求覆盖原账号。
@@ -88,7 +89,7 @@ export class QqAuth {
   // —— 扫码（UI 复用 QrLoginModal，provider 配置见 views）——
   async beginQr(): Promise<{ key: string; qrimg: string }> {
     const ok = await this.server.ensure();
-    if (!ok) throw new Error(this.server.lastError || '网关未就绪，无法登录');
+    if (!ok) throw new Error(this.server.lastError || t('auth.gatewayNotReadyCannotLogin'));
     return this.client.qrKey();
   }
 

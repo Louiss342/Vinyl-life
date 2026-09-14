@@ -83,6 +83,7 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'common.listSep': { zh: '、', en: ', ' },
   'common.comma': { zh: '，', en: ', ' },
   'common.semicolon': { zh: '；', en: '; ' },
+  'common.colon': { zh: '：', en: ': ' },
 
   // —— 播放器视图 ——
   'player.title': { zh: '黑胶播放器', en: 'Vinyl player' },
@@ -693,6 +694,159 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'util.restrictionTrial': { zh: '仅试听（trial_only）', en: 'Trial only (trial_only)' },
   'util.restrictionUnknown': { zh: '未知限制码 {code}', en: 'Unknown restriction code {code}' },
   'util.restrictionUnavailable': { zh: '音源不可用', en: 'Source unavailable' },
+
+  // —— 登录 / 凭据 / 网关错误（core/auth, qq-auth, credential-file, netease, server-client, qq, web-client）——
+  'auth.cookieMissingMusicU': { zh: 'Cookie 缺少有效的 MUSIC_U', en: 'The cookie has no valid MUSIC_U' },
+  'auth.cookieMissingQmKeyst': { zh: 'Cookie 缺少有效的 qm_keyst', en: 'The cookie has no valid qm_keyst' },
+  'auth.gatewayNotReady': { zh: '网关未就绪', en: 'The gateway is not ready' },
+  'auth.gatewayNotReadyCannotLogin': {
+    zh: '网关未就绪，无法登录',
+    en: 'Cannot sign in — the gateway is not ready',
+  },
+  'auth.gatewayNotReadyNetease': { zh: '网易云网关未就绪', en: 'The NetEase gateway is not ready' },
+  'auth.credentialWriteFailed': {
+    zh: '登录凭据写入失败，请检查插件目录权限',
+    en: 'Could not write the credential file — check permissions on the plugin folder',
+  },
+  'auth.gatewayHttp': { zh: '网关 HTTP {status}（{path}）', en: 'Gateway HTTP {status} ({path})' },
+  'auth.getUnikeyFailed': { zh: '获取登录 unikey 失败', en: 'Could not obtain the sign-in unikey' },
+  'auth.qrGenerateFailed': { zh: '生成二维码失败', en: 'Could not generate the QR code' },
+  'auth.qqQrFailed': { zh: '获取 QQ 登录二维码失败', en: 'Could not fetch the QQ sign-in QR code' },
+  'auth.sourceUnavailable': { zh: '音源不可用', en: 'Source unavailable' },
+  'auth.coverDownloadHttp': {
+    zh: '封面下载失败 HTTP {status}',
+    en: 'Cover download failed: HTTP {status}',
+  },
+
+  // —— 浏览器登录窗口（core/browser-login）——
+  'login.windowTitleNetease': { zh: '网易云音乐登录 · Vinyl Life', en: 'NetEase sign-in · Vinyl Life' },
+  'login.windowTitleQq': { zh: 'QQ 音乐登录 · Vinyl Life', en: 'QQ Music sign-in · Vinyl Life' },
+  'login.displayNameNetease': { zh: '网易云', en: 'NetEase' },
+  'login.displayNameQq': { zh: 'QQ 音乐', en: 'QQ Music' },
+  'login.pluginUnloaded': {
+    zh: '插件已卸载，请重新启用后登录',
+    en: 'The plugin was unloaded — enable it again to sign in',
+  },
+  'login.noWindowEnv': {
+    zh: '当前环境无法创建登录窗口，请使用桌面版 Obsidian',
+    en: 'Cannot open a sign-in window here — use desktop Obsidian',
+  },
+  'login.windowClosed': {
+    zh: '登录窗口已停止运行，请重新打开登录窗口。',
+    en: 'The sign-in window stopped — open it again.',
+  },
+  'login.hintClickLogin': {
+    zh: '请在官方窗口点击右上角「登录」。登录完成后会自动验证并返回。',
+    en: 'Click “Sign in” in the official window; it is verified and closed automatically when done.',
+  },
+  'login.waitingForAccount': {
+    zh: '尚未检测到账号登录，请在官方窗口完成登录。',
+    en: 'No account detected yet — finish signing in in the official window.',
+  },
+  'login.detectedVerifying': {
+    zh: '已检测到账号，正在验证登录…',
+    en: 'Account detected — verifying…',
+  },
+  'login.success': {
+    zh: '{name}登录成功，已保存登录状态。',
+    en: '{name} signed in — the session has been saved.',
+  },
+  'login.verifyFailed': {
+    zh: '登录验证失败：{msg}。可继续登录或点击「检测登录」重试。',
+    en: 'Sign-in verification failed: {msg}. You can keep going, or hit “Check sign-in” to retry.',
+  },
+  'login.pageLoadFailed': {
+    zh: '官方登录页加载失败，请检查网络后关闭并重新打开登录窗口。',
+    en: 'The official sign-in page failed to load — check your network, then close and reopen the window.',
+  },
+
+  // —— 播放与队列（core/player-state, core/queue）——
+  'player.noPlayableTrack': { zh: '无可播放音轨', en: 'No playable track' },
+  'player.cannotPlay': { zh: '无法播放《{title}》：{msg}', en: 'Cannot play “{title}”: {msg}' },
+  'player.queueEmpty': {
+    zh: '队列为空，先在播放器选择专辑',
+    en: 'The queue is empty — pick an album in the player first',
+  },
+  'player.playFailed': {
+    zh: '《{title}》播放失败（格式不支持、文件损坏或网络问题）',
+    en: '“{title}” failed to play (unsupported format, corrupt file, or a network problem)',
+  },
+  'player.vipNoUrl': {
+    zh: '会员/付费曲目，QQ 音乐未提供播放地址',
+    en: 'Member-only track — QQ Music returned no playback URL',
+  },
+  'queue.noLocalTracks': {
+    zh: '专辑「{title}」没有本地音轨（audioFolder/audio 为空）',
+    en: '“{title}” has no local tracks (audioFolder/audio is empty)',
+  },
+  'queue.notBound': {
+    zh: '专辑「{title}」既无本地音轨，也未绑定网易云 / QQ 音乐，仅作收藏展示',
+    en: '“{title}” has no local tracks and no NetEase/QQ binding — shown as a collection item only',
+  },
+  'queue.noNeteaseId': {
+    zh: '该专辑未绑定网易云（无 neteaseId / netease 链接）',
+    en: 'This album is not linked to NetEase (no neteaseId / netease URL)',
+  },
+  'queue.neteaseUnavailable': { zh: '网易云源不可用', en: 'The NetEase source is unavailable' },
+  'queue.neteaseNoTracks': {
+    zh: '专辑接口无曲目（code={code}）',
+    en: 'The album API returned no tracks (code={code})',
+  },
+  'queue.neteaseFailed': { zh: '获取网易云专辑失败：{msg}', en: 'Could not fetch the NetEase album: {msg}' },
+  'queue.noQqId': {
+    zh: '该专辑未绑定 QQ 音乐（无 qqId / qq 链接）',
+    en: 'This album is not linked to QQ Music (no qqId / qq URL)',
+  },
+  'queue.qqUnavailable': { zh: 'QQ 音乐源不可用', en: 'The QQ Music source is unavailable' },
+  'queue.qqNoTracks': {
+    zh: 'QQ 音乐专辑接口无曲目（{msg}）',
+    en: 'The QQ Music album API returned no tracks ({msg})',
+  },
+  'queue.qqFailed': { zh: '获取 QQ 音乐专辑失败：{msg}', en: 'Could not fetch the QQ Music album: {msg}' },
+
+  // —— 网关与 Node 环境（core/server-manager）——
+  'gateway.nodeMissing': {
+    zh: '未找到 Node.js：在线音源（网易云 / QQ 音乐）需要系统 Node（PATH 与常见安装路径均未探测到）。纯本地源不受影响；可前往 nodejs.org 安装，或重启 Obsidian 后在设置里「重新探测」。',
+    en: 'Node.js not found: online sources (NetEase / QQ Music) need a system Node (not found on PATH or in the usual install locations). Local audio is unaffected — install it from nodejs.org, or restart Obsidian and hit “Detect again” in the settings.',
+  },
+  'gateway.crashLoop': {
+    zh: '网关多次崩溃（最近一次退出码 {code}），已停止自动重启（可在设置里重试，或查看 gateway.log）',
+    en: 'The gateway crashed repeatedly (last exit code {code}); auto-restart stopped (retry from the settings, or check gateway.log)',
+  },
+  'gateway.startFailed': { zh: '网关启动失败：{msg}', en: 'The gateway failed to start: {msg}' },
+  'gateway.notReady': { zh: '网关 15s 未就绪', en: 'The gateway did not become ready within 15s' },
+  'gateway.exitCodeUnknown': { zh: '未知', en: 'unknown' },
+  'gateway.tempWriteFailed': {
+    zh: '无法写入网关临时文件（{file}）：{msg}。在线音源（网易云 / QQ 音乐）不可用，本地源不受影响；请检查系统临时目录权限。',
+    en: 'Could not write the gateway temp file ({file}): {msg}. Online sources (NetEase / QQ Music) are unavailable; local audio is unaffected — check permissions on the system temp folder.',
+  },
+
+  // —— 卡片属性名（core/shelf-props；用户可在「卡片属性」里改写）——
+  'props.artist': { zh: '艺术家', en: 'Artist' },
+  'props.year': { zh: '年份', en: 'Year' },
+  'props.genre': { zh: '流派', en: 'Genre' },
+  'props.rating': { zh: '评分', en: 'Rating' },
+  'props.label': { zh: '厂牌', en: 'Label' },
+  'props.country': { zh: '国家', en: 'Country' },
+  'props.version': { zh: '版本', en: 'Version' },
+  'props.catalog': { zh: '编号', en: 'Catalog no.' },
+  'props.joiner': { zh: '、', en: ', ' },
+
+  // —— 专辑墙卡片 / 属性弹层（views/shelf-view）——
+  'shelf.titleFiltered': {
+    zh: '专辑墙（{shown}/{total}）',
+    en: 'Album shelf ({shown}/{total})',
+  },
+  'props.frontmatterKey': { zh: 'frontmatter 键：{key}', en: 'frontmatter key: {key}' },
+  'props.albumCount': { zh: '{count} 张', en: '{count} albums' },
+  'props.rename': { zh: '重命名「{name}」', en: 'Rename “{name}”' },
+  'props.hide': { zh: '不再显示「{name}」', en: 'Hide “{name}”' },
+
+  // —— 导入与写进笔记的内容（import.ts, main.ts）——
+  'import.albumFetchFailed': { zh: '获取专辑失败：{msg}', en: 'Could not fetch the album: {msg}' },
+  'import.noteExistsPath': { zh: '笔记已存在：{path}', en: 'The note already exists: {path}' },
+  'import.reflectionHeading': { zh: '## 感想', en: '## Reflections' },
+  'note.listeningLine': { zh: '- [{ts}] 正在听 {title}：', en: '- [{ts}] Now playing {title}:' },
 };
 
 let current: Lang = 'zh';

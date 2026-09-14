@@ -178,7 +178,7 @@ function httpsify(u) {
 // ==================== 路由注册 ====================
 
 function registerQqRoutes(deps) {
-  const { route, log, fetch, makeStore, timeout, crypto, cookieFile, guidFile } = deps;
+  const { route, log, fetch, makeStore, msg, timeout, crypto, cookieFile, guidFile } = deps;
   const cookieStore = makeStore(cookieFile);
   const guidStore = makeStore(guidFile);
 
@@ -309,7 +309,7 @@ function registerQqRoutes(deps) {
     });
     const jar = { ...session.jar };
     mergeSetCookies(jar, getSetCookies(res));
-    if (!jar.qrsig) throw new Error('获取 QQ 登录二维码失败（未返回 qrsig），请重试');
+    if (!jar.qrsig) throw new Error(msg('gw.qqQrNoQrsig'));
     rememberQrSession(jar.qrsig, { jar, version: session.version });
     const buf = Buffer.from(await res.arrayBuffer());
     return { qrsig: jar.qrsig, qrimg: 'data:image/png;base64,' + buf.toString('base64') };
@@ -345,7 +345,7 @@ function registerQqRoutes(deps) {
         'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_SOCKET'].includes(rawCode)
         ? rawCode : e && e.name === 'TimeoutError' ? 'TIMEOUT' : 'NETWORK_ERROR';
       log('[vinyl-server] qq qr/check transport failed:', code);
-      throw new Error(`QQ 扫码轮询请求失败（${code}），正在重试`);
+      throw new Error(msg('gw.qqPollFailed', { code }));
     }
     mergeSetCookies(session.jar, getSetCookies(res));
     const cb = parsePtuiCB(responseText);
@@ -353,7 +353,9 @@ function registerQqRoutes(deps) {
       const rawCode = /^\s*ptuiCB\(['"](\d+)['"]/.exec(responseText);
       log('[vinyl-server] qq qr/check parse failed; http:', res.status,
         'length:', responseText.length, 'callback code:', rawCode ? rawCode[1] : 'unknown');
-      throw new Error(`QQ 扫码服务返回异常（HTTP ${res.status}，回调状态 ${rawCode ? rawCode[1] : '未知'}），请重试`);
+      throw new Error(
+        msg('gw.qqPollAbnormal', { status: res.status, code: rawCode ? rawCode[1] : '?' })
+      );
     }
     // 原始状态诊断（腾讯返回的中文 msg 是排查扫码链路的关键，且不含任何凭据）
     log(
@@ -428,10 +430,10 @@ function registerQqRoutes(deps) {
         .join(' ') || '(无)'
     );
     if (!jar.p_skey || !jar.p_uin) {
-      throw new Error('QQ 登录链路异常（未取得 p_skey/p_uin），请重试');
+      throw new Error(msg('gw.qqLoginNoPskey'));
     }
     const uin = String(jar.p_uin).replace(/^o/, '');
-    if (!/^\d+$/.test(uin)) throw new Error('QQ 登录链路异常（uin 无效），请重试');
+    if (!/^\d+$/.test(uin)) throw new Error(msg('gw.qqLoginBadUin'));
     const gtk = getGtk(jar.p_skey);
     const guid = ensureGuid();
 
@@ -511,7 +513,7 @@ function registerQqRoutes(deps) {
         log('[vinyl-server] qq-login login_jump 失败:', (e && e.message) || String(e));
       }
     }
-    if (!code) throw new Error('QQ 登录授权失败，请重新扫码');
+    if (!code) throw new Error(msg('gw.qqAuthFailed'));
 
     // 3) musicu QQLogin 换最终 Cookie（双通道：Set-Cookie + JSON body）
     const { res: qqRes, body: qqBody } = await musicuPost(
@@ -540,7 +542,7 @@ function registerQqRoutes(deps) {
     // 仅记键名，绝不记值
     log('[vinyl-server] qq-login 取到 Cookie 键名:', Object.keys(final).join(',') || '(无)');
     if (!final.qm_keyst && !final.qqmusic_key) {
-      throw new Error('QQ 音乐登录未返回 qm_keyst，请重试');
+      throw new Error(msg('gw.qqNoKeyst'));
     }
     return { cookie, uin: Number(uin) };
   }
@@ -581,11 +583,11 @@ function registerQqRoutes(deps) {
   }
 
   async function validateCookieValue(raw) {
-    if (typeof raw !== 'string' || /[\r\n]/.test(raw)) throw new Error('Cookie 格式无效');
+    if (typeof raw !== 'string' || /[\r\n]/.test(raw)) throw new Error(msg('gw.qqCookieFormat'));
     const jar = cookieToObj(raw);
-    if (!jar.qm_keyst && !jar.qqmusic_key) throw new Error('Cookie 缺少有效的 qm_keyst');
+    if (!jar.qm_keyst && !jar.qqmusic_key) throw new Error(msg('gw.qqCookieMissingKeyst'));
     const info = await userInfo(jar);
-    if (!info.valid) throw new Error('Cookie 登录验证失败，请重新登录 QQ 音乐');
+    if (!info.valid) throw new Error(msg('gw.qqCookieInvalid'));
     return info;
   }
 
@@ -679,7 +681,7 @@ function registerQqRoutes(deps) {
 
   route('GET', '/api/qq/login/qr/check', async ({ query }) => {
     const key = String((query && query.key) || '').trim();
-    if (!/^[A-Za-z0-9_-]{20,200}$/.test(key)) throw new Error('缺少有效的登录 key，请刷新二维码');
+    if (!/^[A-Za-z0-9_-]{20,200}$/.test(key)) throw new Error(msg('gw.qqMissingLoginKey'));
     const cb = await pollQr(key);
     if (cb.code === 66) {
       log('[vinyl-server] qq qr/check code: 801');
@@ -695,7 +697,7 @@ function registerQqRoutes(deps) {
       return { code: 800 };
     }
     if (cb.code === 0) {
-      if (!cb.url) throw new Error('QQ 登录成功但未返回校验地址，请重试');
+      if (!cb.url) throw new Error(msg('gw.qqNoCheckUrl'));
       try {
         const session = readQrSession(key);
         const { cookie } = await completeLogin(cb.url, session && session.jar);
@@ -711,7 +713,7 @@ function registerQqRoutes(deps) {
         qrSessions.delete(key);
       }
     }
-    throw new Error('QQ 扫码服务暂时不可用，请重试');
+    throw new Error(msg('gw.qqQrServiceUnavailable'));
   });
 
   route('GET', '/api/qq/login/status', async () => {
@@ -724,7 +726,7 @@ function registerQqRoutes(deps) {
 
   route('GET', '/api/qq/album', async ({ query }) => {
     const mid = String((query && query.id) || '').trim();
-    if (!MID_RE.test(mid)) throw new Error('专辑 ID 无效');
+    if (!MID_RE.test(mid)) throw new Error(msg('gw.qqBadAlbumId'));
     const res = await fetch(`${ALBUM_URL}?albummid=${encodeURIComponent(mid)}&format=json`, {
       headers: { 'User-Agent': UA_QQ, Referer: 'https://y.qq.com/' },
       signal: timeout(15000),
@@ -776,7 +778,7 @@ function registerQqRoutes(deps) {
     const mid = String((query && query.id) || '').trim();
     const mediaMid = String((query && query.mediaMid) || '').trim();
     const level = LEVELS[(query && query.level) || ''] ? String(query.level) : 'standard';
-    if (!MID_RE.test(mid)) throw new Error('歌曲 ID 无效');
+    if (!MID_RE.test(mid)) throw new Error(msg('gw.qqBadSongId'));
     const jar = readJar();
     const guid = ensureGuid();
     const r = await vkeyUrl(mid, MID_RE.test(mediaMid) ? mediaMid : '', level, jar, guid);
@@ -788,7 +790,7 @@ function registerQqRoutes(deps) {
 
   route('GET', '/api/qq/lyric', async ({ query }) => {
     const mid = String((query && query.songmid) || '').trim();
-    if (!MID_RE.test(mid)) throw new Error('歌曲 ID 无效');
+    if (!MID_RE.test(mid)) throw new Error(msg('gw.qqBadSongId'));
     const res = await fetch(
       `${LYRIC_URL}?songmid=${encodeURIComponent(mid)}&format=json&nobase64=1`,
       {
@@ -801,7 +803,7 @@ function registerQqRoutes(deps) {
       body = JSON.parse(await res.text());
     } catch (_) {}
     const ok = Number(body.retcode) === 0 || Number(body.code) === 0;
-    if (!ok) throw new Error('QQ 音乐歌词获取失败');
+    if (!ok) throw new Error(msg('gw.qqLyricFailed'));
     return { code: 0, lyric: String(body.lyric || ''), trans: String(body.trans || '') };
   });
 

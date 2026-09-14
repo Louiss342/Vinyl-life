@@ -127,8 +127,8 @@ export class VinylPlayerView extends ItemView {
     const speed = SPIN_SPEEDS[this.plugin.settings.turntableSpeed] || SPIN_SPEEDS.normal;
     c.style.setProperty('--vinyl-spin-duration', speed);
     // 两套配色都是纯类切换（互斥 toggle，避免脏值残留）
-    for (const [v] of DECK_STYLES) c.toggleClass(deckClass(v), v === this.plugin.settings.playerDeck);
-    for (const [v] of RECORD_COLORS) c.toggleClass(recordClass(v), v === this.plugin.settings.recordColor);
+    for (const v of DECK_STYLES) c.toggleClass(deckClass(v), v === this.plugin.settings.playerDeck);
+    for (const v of RECORD_COLORS) c.toggleClass(recordClass(v), v === this.plugin.settings.recordColor);
   }
 
   async onOpen() {

@@ -9,6 +9,7 @@ import { QqService } from './qq';
 import { buildAlbumQueue, BuildQueueResult, ActiveSource, sourceLabel } from './queue';
 import type { VinylSettings } from '../settings';
 import { notice } from '../util';
+import { t, tf } from './i18n';
 
 export type PlayerStatus = 'idle' | 'loading' | 'playing' | 'paused' | 'error';
 
@@ -155,7 +156,7 @@ export class PlaybackEngine {
       this.errorMsg = res.reason || '';
       this.status = 'idle';
       this.emit();
-      notice(res.reason || '无可播放音轨');
+      notice(res.reason || t('player.noPlayableTrack'));
       return res;
     }
     const source: ActiveSource = res.resolvedSource === 'none' ? 'local' : res.resolvedSource;
@@ -177,7 +178,7 @@ export class PlaybackEngine {
     this.deps.local.clearBlobs(this.deps.local.keysOf(tracks));
     // 先记下「原始顺序」（= 构建出来的自然顺序），再套用自定义顺序：
     // 它是「恢复原有顺序」的基准，拖拽不得改动，故只认这里的构建结果
-    this.originalOrder = tracks.map((t) => trackKey(t));
+    this.originalOrder = tracks.map((tr) => trackKey(tr));
     // 该专辑存过自定义顺序 → 套用（新增曲目按原相对顺序补在后面）；
     // 没存过（或钩子未接线）走构建出来的原始顺序
     const saved = this.deps.savedOrder?.(albumNotePath);
@@ -206,13 +207,13 @@ export class PlaybackEngine {
     this.queue = reorderTracks(this.queue, from, to);
     if (current) {
       let i = this.queue.indexOf(current);
-      if (i < 0 && currentKey) i = this.queue.findIndex((t) => trackKey(t) === currentKey);
+      if (i < 0 && currentKey) i = this.queue.findIndex((tr) => trackKey(tr) === currentKey);
       if (i >= 0) this.index = i;
     }
     // 音频不动（同一首歌继续播），只广播新队列 → 视图重建行并重贴 is-current
     this.emit();
     if (this.albumNotePath) {
-      this.deps.onQueueOrderChange?.(this.albumNotePath, this.queue.map((t) => trackKey(t)));
+      this.deps.onQueueOrderChange?.(this.albumNotePath, this.queue.map((tr) => trackKey(tr)));
     }
   }
 
@@ -230,7 +231,7 @@ export class PlaybackEngine {
     this.queue = next;
     if (current) {
       let i = this.queue.indexOf(current);
-      if (i < 0 && currentKey) i = this.queue.findIndex((t) => trackKey(t) === currentKey);
+      if (i < 0 && currentKey) i = this.queue.findIndex((tr) => trackKey(tr) === currentKey);
       if (i >= 0) this.index = i;
     }
     // 音频不动（同一首歌继续播），只广播新队列 → 视图重建行并重贴 is-current
@@ -301,7 +302,7 @@ export class PlaybackEngine {
       this.status = 'error';
       this.errorMsg = String((e as Error).message || e);
       this.emit();
-      notice(`无法播放《${track.title}》：${this.errorMsg}`);
+      notice(tf('player.cannotPlay', { title: track.title, msg: this.errorMsg }));
     }
   }
 
@@ -311,7 +312,7 @@ export class PlaybackEngine {
       return;
     }
     if (this.queue.length === 0) {
-      notice('队列为空，先在播放器选择专辑');
+      notice(t('player.queueEmpty'));
       return;
     }
     if (this.index < 0) {
@@ -362,7 +363,7 @@ export class PlaybackEngine {
         const hit = this.urlCache.get(key);
         if (hit) return hit;
         const r = await this.deps.netease.songUrl(track.id, this.deps.settings().quality);
-        if (!r.url) throw new Error(r.restriction || '音源不可用');
+        if (!r.url) throw new Error(r.restriction || t('auth.sourceUnavailable'));
         this.urlCache.set(key, r.url);
         if (r.level) this.levelCache.set(key, r.level);
         return r.url;
@@ -374,7 +375,8 @@ export class PlaybackEngine {
         const r = await this.deps.qq.songUrl(track.id, this.deps.settings().quality, track.mediaMid);
         if (!r.url) {
           throw new Error(
-            r.restriction || (track.pay ? '会员/付费曲目，QQ 音乐未提供播放地址' : '音源不可用')
+            r.restriction ||
+            (track.pay ? t('player.vipNoUrl') : t('auth.sourceUnavailable'))
           );
         }
         this.urlCache.set(key, r.url);
@@ -434,7 +436,7 @@ export class PlaybackEngine {
     }
     if (!stillCurrent()) return;
     this.status = 'error';
-    this.errorMsg = `《${track.title}》播放失败（格式不支持、文件损坏或网络问题）`;
+    this.errorMsg = tf('player.playFailed', { title: track.title });
     this.emit();
     notice(this.errorMsg);
   }

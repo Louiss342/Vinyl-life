@@ -17,6 +17,100 @@ const song_url_v1 = require('NeteaseCloudMusicApi/module/song_url_v1');
 const lyric = require('NeteaseCloudMusicApi/module/lyric');
 const search = require('NeteaseCloudMusicApi/module/search');
 
+// ==================== 文案 ====================
+// 网关是独立进程，拿不到渲染进程的词典，所以自带一份小表：错误文案会一路冒到导入弹窗 /
+// 登录窗口里给用户看，不能只有中文。语言由插件经 VINYL_LANG 注入（默认中文）。
+const LANG = process.env.VINYL_LANG === 'en' ? 'en' : 'zh';
+// 每次请求可带 x-vinyl-lang 覆盖（插件切语言后立刻生效，不用重启网关）。
+// 并发下最坏情况是某条文案的语言串台 —— 纯展示问题，不值得为此把语言穿进每个 handler。
+let requestLang = LANG;
+const MSG = {
+  'gw.credentialWriteFailed': {
+    zh: '登录凭据写入失败，请检查插件目录权限',
+    en: 'Could not write the credential file — check permissions on the plugin folder',
+  },
+  'gw.cookieMissingMusicU': { zh: 'Cookie 缺少有效的 MUSIC_U', en: 'The cookie has no valid MUSIC_U' },
+  'gw.cookieInvalidNetease': {
+    zh: 'Cookie 登录验证失败，请重新登录网易云',
+    en: 'Cookie sign-in check failed — sign in to NetEase again',
+  },
+  'gw.coverBadUrl': { zh: '封面地址无效', en: 'Invalid cover URL' },
+  'gw.coverBlocked': {
+    zh: '封面地址不可访问（指向本机或内网）',
+    en: 'Cover URL not reachable (points to this machine or a private network)',
+  },
+  'gw.coverNotImage': { zh: '封面地址不是图片', en: 'Cover URL is not an image' },
+  'gw.coverTooLarge': { zh: '封面图过大', en: 'Cover image is too large' },
+  'gw.qrServiceUnavailable': {
+    zh: '网易云扫码服务暂时不可用，请重试',
+    en: 'The NetEase QR service is temporarily unavailable — try again',
+  },
+  'gw.neteaseRequestFailed': {
+    zh: '网易云请求失败，请检查网络后重试',
+    en: 'NetEase request failed — check your network and try again',
+  },
+  // —— QQ 音乐（server/qq.js 用注入进来的 msg）——
+  'gw.qqQrNoQrsig': {
+    zh: '获取 QQ 登录二维码失败（未返回 qrsig），请重试',
+    en: 'Could not fetch the QQ sign-in QR code (no qrsig returned) — try again',
+  },
+  'gw.qqPollFailed': {
+    zh: 'QQ 扫码轮询请求失败（{code}），正在重试',
+    en: 'QQ QR polling failed ({code}) — retrying',
+  },
+  'gw.qqPollAbnormal': {
+    zh: 'QQ 扫码服务返回异常（HTTP {status}，回调状态 {code}），请重试',
+    en: 'The QQ QR service returned an unexpected response (HTTP {status}, callback state {code}) — try again',
+  },
+  'gw.qqLoginNoPskey': {
+    zh: 'QQ 登录链路异常（未取得 p_skey/p_uin），请重试',
+    en: 'The QQ sign-in chain broke (no p_skey/p_uin) — try again',
+  },
+  'gw.qqLoginBadUin': {
+    zh: 'QQ 登录链路异常（uin 无效），请重试',
+    en: 'The QQ sign-in chain broke (invalid uin) — try again',
+  },
+  'gw.qqAuthFailed': {
+    zh: 'QQ 登录授权失败，请重新扫码',
+    en: 'QQ sign-in was not authorized — scan the code again',
+  },
+  'gw.qqNoKeyst': {
+    zh: 'QQ 音乐登录未返回 qm_keyst，请重试',
+    en: 'QQ Music sign-in returned no qm_keyst — try again',
+  },
+  'gw.qqCookieFormat': { zh: 'Cookie 格式无效', en: 'Invalid cookie format' },
+  'gw.qqCookieMissingKeyst': { zh: 'Cookie 缺少有效的 qm_keyst', en: 'The cookie has no valid qm_keyst' },
+  'gw.qqCookieInvalid': {
+    zh: 'Cookie 登录验证失败，请重新登录 QQ 音乐',
+    en: 'Cookie sign-in check failed — sign in to QQ Music again',
+  },
+  'gw.qqMissingLoginKey': {
+    zh: '缺少有效的登录 key，请刷新二维码',
+    en: 'Missing a valid sign-in key — refresh the QR code',
+  },
+  'gw.qqNoCheckUrl': {
+    zh: 'QQ 登录成功但未返回校验地址，请重试',
+    en: 'QQ sign-in succeeded but returned no verification URL — try again',
+  },
+  'gw.qqQrServiceUnavailable': {
+    zh: 'QQ 扫码服务暂时不可用，请重试',
+    en: 'The QQ QR service is temporarily unavailable — try again',
+  },
+  'gw.qqBadAlbumId': { zh: '专辑 ID 无效', en: 'Invalid album ID' },
+  'gw.qqBadSongId': { zh: '歌曲 ID 无效', en: 'Invalid song ID' },
+  'gw.qqLyricFailed': { zh: 'QQ 音乐歌词获取失败', en: 'Could not fetch the QQ Music lyrics' },
+};
+
+/** 取当前语言的文案；{name} 占位符按 params 替换（缺键 / 缺参数都原样保留，便于发现漏配） */
+function msg(key, params) {
+  const entry = MSG[key];
+  let text = (entry && (entry[requestLang] || entry.zh)) || key;
+  if (params) {
+    for (const [k, v] of Object.entries(params)) text = text.split('{' + k + '}').join(String(v));
+  }
+  return text;
+}
+
 // ==================== 鉴权 ====================
 // 插件 spawn 网关时用 VINYL_TOKEN 下发本次会话的随机 token，每个请求必须带上
 // （header x-vinyl-token；极少数要进 DOM 的 URL 用 ?t=）。没有它的话，浏览器里任意页面
@@ -58,7 +152,7 @@ function makeCookieStore(file) {
       serverLog('[vinyl-server] cookie 已写入', file, v.length, 'bytes');
     } catch (e) {
       try { fs.unlinkSync(tmp); } catch (_) {}
-      throw new Error('登录凭据写入失败，请检查插件目录权限');
+      throw new Error(msg('gw.credentialWriteFailed'));
     }
   }
   return { file, read, write };
@@ -70,12 +164,12 @@ const writeCookie = (value) => neteaseStore.write(value);
 
 async function validateCookie(cookie) {
   if (typeof cookie !== 'string' || /[\r\n]/.test(cookie) || !cookieToObject(cookie).MUSIC_U) {
-    throw new Error('Cookie 缺少有效的 MUSIC_U');
+    throw new Error(msg('gw.cookieMissingMusicU'));
   }
   const result = await login_status({ cookie }, request);
   const inner = result.body?.data || result.body;
   if (Number(inner?.code) !== 200 || !(inner.account?.id || inner.profile?.userId)) {
-    throw new Error('Cookie 登录验证失败，请重新登录网易云');
+    throw new Error(msg('gw.cookieInvalidNetease'));
   }
   return result.body;
 }
@@ -469,16 +563,16 @@ function assertFetchable(rawUrl) {
   try {
     target = new URL(rawUrl);
   } catch (_) {
-    return Promise.reject(new Error('封面地址无效'));
+    return Promise.reject(new Error(msg('gw.coverBadUrl')));
   }
   if (target.protocol !== 'http:' && target.protocol !== 'https:') {
-    return Promise.reject(new Error('封面地址无效'));
+    return Promise.reject(new Error(msg('gw.coverBadUrl')));
   }
   return new Promise((resolve, reject) => {
     dns.lookup(target.hostname, { all: true }, (err, addrs) => {
       const list = Array.isArray(addrs) ? addrs : [];
       if (err || list.length === 0 || list.some((a) => isPrivateAddress(a.address))) {
-        reject(new Error('封面地址不可访问（指向本机或内网）'));
+        reject(new Error(msg('gw.coverBlocked')));
         return;
       }
       resolve(target);
@@ -497,7 +591,7 @@ async function fetchBinary(url, redirects = 0) {
     return fetchBinary(new URL(res.headers.get('location'), target).toString(), redirects + 1);
   }
   const contentType = String(res.headers.get('content-type') || '');
-  if (!contentType.startsWith('image/')) throw new Error('封面地址不是图片');
+  if (!contentType.startsWith('image/')) throw new Error(msg('gw.coverNotImage'));
   const chunks = [];
   let size = 0;
   const reader = res.body.getReader();
@@ -507,7 +601,7 @@ async function fetchBinary(url, redirects = 0) {
     size += value.length;
     if (size > BINARY_MAX_BYTES) {
       await reader.cancel();
-      throw new Error('封面图过大');
+      throw new Error(msg('gw.coverTooLarge'));
     }
     chunks.push(Buffer.from(value));
   }
@@ -541,7 +635,7 @@ route('GET', '/api/login/qr/check', async ({ query }) => {
   const result = await request('/api/login/qrcode/client/login',
     { key: query.key, type: 3 }, { crypto: 'weapi' });
   const code = Number(result.body?.code);
-  if (![800, 801, 802, 803].includes(code)) throw new Error('网易云扫码服务暂时不可用，请重试');
+  if (![800, 801, 802, 803].includes(code)) throw new Error(msg('gw.qrServiceUnavailable'));
   if (code === 803) {
     const cookie = result.cookie.join('; ');
     const verified = await validateCookie(cookie);
@@ -595,7 +689,7 @@ route('GET', '/api/search', async ({ query, cookie }) => {
 
 route('GET', '/api/cover', async ({ query }) => {
   const url = String(query.url || '');
-  if (!/^https?:\/\//.test(url)) throw new Error('封面地址无效');
+  if (!/^https?:\/\//.test(url)) throw new Error(msg('gw.coverBadUrl'));
   return fetchBinary(url);
 });
 
@@ -620,6 +714,7 @@ registerQqRoutes({
   log: serverLog,
   fetch: (...args) => fetch(...args),
   makeStore: makeCookieStore,
+  msg,
   timeout: (ms) => AbortSignal.timeout(ms),
   crypto,
   cookieFile: QQ_COOKIE_FILE,
@@ -636,6 +731,8 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(400);
     return res.end('{"error":"bad url"}');
   }
+  const langHeader = String(req.headers['x-vinyl-lang'] || '');
+  if (langHeader === 'en' || langHeader === 'zh') requestLang = langHeader;
   if (AUTH_TOKEN) {
     const got = String(req.headers['x-vinyl-token'] || '') || String(url.searchParams.get('t') || '');
     if (got !== AUTH_TOKEN) {
@@ -665,7 +762,7 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify(result));
   } catch (e) {
-    const message = e instanceof Error ? e.message : '网易云请求失败，请检查网络后重试';
+    const message = e instanceof Error ? e.message : msg('gw.neteaseRequestFailed');
     console.error('[vinyl-server] route error:', message);
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: message }));

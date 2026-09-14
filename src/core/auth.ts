@@ -7,6 +7,7 @@ import { ServerManager } from './server-manager';
 import { ServerClient } from './server-client';
 import { writeCredentialFile } from './credential-file';
 import { pluginAbsPath } from '../util';
+import { t } from './i18n';
 
 export interface LoginState {
   loggedIn: boolean;
@@ -84,10 +85,10 @@ export class Auth {
     signal?.throwIfAborted();
     const cookie = raw.trim();
     if (!/(?:^|;\s*)MUSIC_U=[^;\s]+/.test(cookie) || /[\r\n]/.test(cookie)) {
-      throw new Error('Cookie 缺少有效的 MUSIC_U');
+      throw new Error(t('auth.cookieMissingMusicU'));
     }
     const ok = await this.server.ensure();
-    if (!ok) throw new Error(this.server.lastError || '网关未就绪');
+    if (!ok) throw new Error(this.server.lastError || t('auth.gatewayNotReady'));
     signal?.throwIfAborted();
     await this.client.validateCookie(cookie, signal);
     // 验证期间关闭登录窗口时，不让迟到的请求覆盖原账号。
@@ -111,7 +112,7 @@ export class Auth {
   // —— 扫码（UI 在 QrLoginModal）——
   async beginQr(): Promise<{ key: string; qrimg: string }> {
     const ok = await this.server.ensure();
-    if (!ok) throw new Error(this.server.lastError || '网关未就绪，无法登录');
+    if (!ok) throw new Error(this.server.lastError || t('auth.gatewayNotReadyCannotLogin'));
     const key = await this.client.qrKey();
     const { qrimg } = await this.client.qrCreate(key);
     return { key, qrimg };

@@ -4,6 +4,7 @@
 // 本模块不依赖 album-index（连类型也不依赖）：属性发现的入参只要求结构上有 displayProps。
 
 import { scalarText } from '../util';
+import { t } from './i18n';
 
 /** 默认卡片属性（顺序即显示顺序）；同时是旧 boolean 结构迁移时的键序真值。
  *  freeze 是护栏：设置里的数组与默认值可能共享引用（DEFAULT_SETTINGS 浅拷贝），
@@ -36,17 +37,18 @@ export const SHELF_PROP_BLACKLIST: readonly string[] = Object.freeze([
 ]);
 
 /** 预设别名与值前缀；用户自定义别名（settings.shelfPropLabels）优先。
+ *  别名存的是**词典键**而不是文案：卡片属性名是用户可见文案，必须随语言走（词典里的 props.* 一组）。
  *  表刻意精简——猜错比不猜更糟；未覆盖的键回退键名（中文键名如「厂牌:」天然可读）。 */
-export const PROP_META: Record<string, { label: string; prefix?: string }> = {
-  artist: { label: '艺术家' },
-  year: { label: '年份' },
-  genre: { label: '流派' },
+export const PROP_META: Record<string, { labelKey: string; prefix?: string }> = {
+  artist: { labelKey: 'props.artist' },
+  year: { labelKey: 'props.year' },
+  genre: { labelKey: 'props.genre' },
   // 星号是值前缀而非别名：自定义改名时不应丢失
-  rating: { label: '评分', prefix: '⭐ ' },
-  label: { label: '厂牌' },
-  country: { label: '国家' },
-  version: { label: '版本' },
-  catalog: { label: '编号' },
+  rating: { labelKey: 'props.rating', prefix: '⭐ ' },
+  label: { labelKey: 'props.label' },
+  country: { labelKey: 'props.country' },
+  version: { labelKey: 'props.version' },
+  catalog: { labelKey: 'props.catalog' },
 };
 
 export function isDisplayablePropKey(key: string): boolean {
@@ -57,7 +59,8 @@ export function isDisplayablePropKey(key: string): boolean {
 export function propLabel(key: string, overrides?: Record<string, string>): string {
   const o = overrides?.[key];
   if (typeof o === 'string' && o.trim()) return o.trim();
-  return PROP_META[key]?.label ?? key;
+  const meta = PROP_META[key];
+  return meta ? t(meta.labelKey) : key;
 }
 
 /** 值前缀（评分星号等；不改名也不丢失） */
@@ -66,10 +69,10 @@ export function propPrefix(key: string): string {
 }
 
 /** frontmatter 值 → 单行可读文本；空值 / 无法展示的值返回 ''（由渲染侧跳过）。 */
-export function formatPropValue(v: unknown): string {
+export function formatPropValue(v: unknown, joiner: string = t('props.joiner')): string {
   if (v == null) return '';
   if (Array.isArray(v)) {
-    return v.map(formatScalar).filter((s) => s !== '').join('、');
+    return v.map(formatScalar).filter((s) => s !== '').join(joiner);
   }
   return formatScalar(v);
 }
@@ -171,7 +174,7 @@ export function normalizeShelfPropLabels(raw: unknown): Record<string, string> {
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
     if (typeof value !== 'string') continue;
     const v = value.trim();
-    if (!v || v === PROP_META[key]?.label) continue;
+    if (!v || v === propLabel(key)) continue; // 与预设别名相同 = 没改过（别名随语言，所以要用 propLabel 现算）
     out[key] = v;
   }
   return out;

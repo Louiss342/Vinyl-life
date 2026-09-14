@@ -8,7 +8,8 @@ const esbuild = require('esbuild');
 
 const source = esbuild.buildSync({
   stdin: {
-    contents: `export * from '../src/core/appearance';\n`,
+    // 一并导出 i18n：下面要查「配色显示名的词典键齐备」（文案归词典，这里只查键）
+    contents: `export * from '../src/core/appearance';\nexport * as i18n from '../src/core/i18n';\n`,
     resolveDir: __dirname,
     loader: 'ts',
   },
@@ -27,21 +28,33 @@ vm.runInNewContext(source, {
   console,
 });
 const mod = module_.exports;
+const i18n = mod.i18n;
 
 test('播放器配色：两个方案、默认胡桃木，类名 is-deck-*', () => {
-  assert.deepEqual(Array.from(mod.DECK_STYLES, (x) => x[0]), ['walnut', 'black']);
+  assert.deepEqual([...mod.DECK_STYLES], ['walnut', 'black']);
   assert.equal(mod.DEFAULT_DECK_STYLE, 'walnut');
   assert.equal(mod.deckClass('black'), 'is-deck-black');
   assert.equal(mod.deckClass('walnut'), 'is-deck-walnut');
-  // 每个方案都有中文名（防新增方案忘配文案）
-  for (const [v, label] of mod.DECK_STYLES) assert.ok(label && label !== v, `${v} 缺文案`);
+  // 每个方案的显示名都在词典里（防新增方案忘配文案）——文案本身归 i18n，这里只查键
+  for (const v of mod.DECK_STYLES) {
+    const key = { walnut: 'settings.deckWalnut', black: 'settings.deckBlack' }[v];
+    assert.ok(i18n.DICT[key]?.zh && i18n.DICT[key]?.en, `${v} 缺词典文案（${key}）`);
+  }
 });
 
 test('唱片配色：四个方案、默认黑胶，类名 is-record-*', () => {
-  assert.deepEqual(Array.from(mod.RECORD_COLORS, (x) => x[0]), ['black', 'yellow', 'blue', 'white']);
+  assert.deepEqual([...mod.RECORD_COLORS], ['black', 'yellow', 'blue', 'white']);
   assert.equal(mod.DEFAULT_RECORD_COLOR, 'black');
   assert.equal(mod.recordClass('white'), 'is-record-white');
-  for (const [v, label] of mod.RECORD_COLORS) assert.ok(label && label !== v, `${v} 缺文案`);
+  for (const v of mod.RECORD_COLORS) {
+    const key = {
+      black: 'settings.recordBlack',
+      yellow: 'settings.recordYellow',
+      blue: 'settings.recordBlue',
+      white: 'settings.recordWhite',
+    }[v];
+    assert.ok(i18n.DICT[key]?.zh && i18n.DICT[key]?.en, `${v} 缺词典文案（${key}）`);
+  }
 });
 
 test('归一化：脏值 / 旧值回落默认，合法值原样通过', () => {
@@ -58,11 +71,11 @@ test('归一化：脏值 / 旧值回落默认，合法值原样通过', () => {
 
 test('类名与方案表同源：不会出现「设置里能选、样式里没有」的配色', () => {
   const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'styles.css'), 'utf8');
-  for (const [v] of mod.DECK_STYLES) {
+  for (const v of mod.DECK_STYLES) {
     if (v === mod.DEFAULT_DECK_STYLE) continue; // 默认方案是 .vinyl-deck 本体，没有额外规则
     assert.ok(css.includes(`is-deck-${v}`), `styles.css 缺少 .is-deck-${v}`);
   }
-  for (const [v] of mod.RECORD_COLORS) {
+  for (const v of mod.RECORD_COLORS) {
     if (v === mod.DEFAULT_RECORD_COLOR) continue; // 默认配色写在基类上，没有额外规则
     assert.ok(css.includes(`is-record-${v}`), `styles.css 缺少 .is-record-${v}`);
   }

@@ -4,6 +4,7 @@
 import { requestUrl } from 'obsidian';
 import { Track } from './track';
 import type { SongUrlResult } from './server-client';
+import { getLanguage, t, tf } from './i18n';
 import type {
   ApiErrorResponse,
   LoginResponse,
@@ -21,7 +22,7 @@ export class QqService {
 
   /** 网关鉴权头：会话 token 由 ServerManager 生成（见 VINYL_TOKEN） */
   private authHeaders(): Record<string, string> {
-    return { 'x-vinyl-token': this.token() };
+    return { 'x-vinyl-token': this.token(), 'x-vinyl-lang': getLanguage() };
   }
 
   private url(pathname: string, params?: Record<string, string>): string {
@@ -41,7 +42,7 @@ export class QqService {
     const body: unknown = res.json;
     if (res.status < 200 || res.status >= 300) {
       const error = (body as ApiErrorResponse | null)?.error;
-      throw new Error(error || `网关 HTTP ${res.status}（${pathname}）`);
+      throw new Error(error || tf('auth.gatewayHttp', { status: res.status, path: pathname }));
     }
     return body as T;
   }
@@ -54,7 +55,7 @@ export class QqService {
   async qrKey(): Promise<{ key: string; qrimg: string }> {
     const body = await this.getJson<QrKeyResponse>('/api/qq/login/qr/key');
     const d = body?.data;
-    if (!d?.unikey || !d?.qrimg) throw new Error('获取 QQ 登录二维码失败');
+    if (!d?.unikey || !d?.qrimg) throw new Error(t('auth.qqQrFailed'));
     return { key: String(d.unikey), qrimg: String(d.qrimg) };
   }
 
@@ -100,7 +101,7 @@ export class QqService {
     if (d?.url) {
       return { url: String(d.url), br: d.br, type: d.type, level: d.level };
     }
-    return { restriction: d?.msg || '音源不可用' };
+    return { restriction: d?.msg || t('auth.sourceUnavailable') };
   }
 
   async lyric(songmid: string): Promise<{ code?: number; lyric?: string; trans?: string }> {

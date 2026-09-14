@@ -7,6 +7,7 @@ import { LocalSource } from './local-source';
 import { songsToTracks } from './server-client';
 import { qqSongsToTracks, QqService } from './qq';
 import { NeteaseService } from './netease';
+import { t, tf } from './i18n';
 
 export type QueueSource = 'local' | 'netease' | 'qq' | 'none';
 export type SourcePolicy = 'auto' | 'local' | 'netease' | 'qq';
@@ -51,7 +52,7 @@ export async function buildAlbumQueue(
       tracks: [],
       resolvedSource: 'none',
       policy,
-      reason: `专辑「${album.title}」没有本地音轨（audioFolder/audio 为空）`,
+      reason: tf('queue.noLocalTracks', { title: album.title }),
     };
   }
 
@@ -71,7 +72,7 @@ export async function buildAlbumQueue(
     tracks: [],
     resolvedSource: 'none',
     policy,
-    reason: `专辑「${album.title}」既无本地音轨，也未绑定网易云 / QQ 音乐，仅作收藏展示`,
+    reason: tf('queue.notBound', { title: album.title }),
   };
 }
 
@@ -82,11 +83,11 @@ async function buildNetease(album: AlbumInfo, deps: QueueDeps): Promise<BuildQue
       tracks: [],
       resolvedSource: 'none',
       policy,
-      reason: '该专辑未绑定网易云（无 neteaseId / netease 链接）',
+      reason: t('queue.noNeteaseId'),
     };
   }
   if (!deps.netease) {
-    return { tracks: [], resolvedSource: 'none', policy, reason: '网易云源不可用' };
+    return { tracks: [], resolvedSource: 'none', policy, reason: t('queue.neteaseUnavailable') };
   }
   try {
     const body = await deps.netease.album(album.neteaseId);
@@ -96,7 +97,7 @@ async function buildNetease(album: AlbumInfo, deps: QueueDeps): Promise<BuildQue
         tracks: [],
         resolvedSource: 'none',
         policy,
-        reason: `专辑接口无曲目（code=${body?.code}）`,
+        reason: tf('queue.neteaseNoTracks', { code: body?.code }),
       };
     }
     const tracks = songsToTracks(songs, album.path);
@@ -106,7 +107,7 @@ async function buildNetease(album: AlbumInfo, deps: QueueDeps): Promise<BuildQue
       tracks: [],
       resolvedSource: 'none',
       policy,
-      reason: `获取网易云专辑失败：${(e as Error).message}`,
+      reason: tf('queue.neteaseFailed', { msg: (e as Error).message }),
     };
   }
 }
@@ -118,11 +119,11 @@ async function buildQq(album: AlbumInfo, deps: QueueDeps): Promise<BuildQueueRes
       tracks: [],
       resolvedSource: 'none',
       policy,
-      reason: '该专辑未绑定 QQ 音乐（无 qqId / qq 链接）',
+      reason: t('queue.noQqId'),
     };
   }
   if (!deps.qq) {
-    return { tracks: [], resolvedSource: 'none', policy, reason: 'QQ 音乐源不可用' };
+    return { tracks: [], resolvedSource: 'none', policy, reason: t('queue.qqUnavailable') };
   }
   try {
     const body = await deps.qq.album(album.qqId);
@@ -132,7 +133,7 @@ async function buildQq(album: AlbumInfo, deps: QueueDeps): Promise<BuildQueueRes
         tracks: [],
         resolvedSource: 'none',
         policy,
-        reason: `QQ 音乐专辑接口无曲目（${body?.msg || 'code=' + body?.code}）`,
+        reason: tf('queue.qqNoTracks', { msg: body?.msg || 'code=' + body?.code }),
       };
     }
     const tracks = qqSongsToTracks(songs, album.path);
@@ -142,7 +143,7 @@ async function buildQq(album: AlbumInfo, deps: QueueDeps): Promise<BuildQueueRes
       tracks: [],
       resolvedSource: 'none',
       policy,
-      reason: `获取 QQ 音乐专辑失败：${(e as Error).message}`,
+      reason: tf('queue.qqFailed', { msg: (e as Error).message }),
     };
   }
 }

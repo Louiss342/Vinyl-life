@@ -490,7 +490,7 @@ export class VinylSettingTab extends PluginSettingTab {
         items: [
           row(t('settings.recordColor'), t('settings.recordColorDesc'), (s) =>
             s.addDropdown((d) => {
-              for (const [key] of RECORD_COLORS) d.addOption(key, t(RECORD_LABEL_KEYS[key]));
+              for (const key of RECORD_COLORS) d.addOption(key, t(RECORD_LABEL_KEYS[key]));
               d.setValue(p.settings.recordColor).onChange(async (v) => {
                 p.settings.recordColor = normalizeRecordColor(v);
                 await p.saveSettings();
@@ -506,7 +506,7 @@ export class VinylSettingTab extends PluginSettingTab {
         items: [
           row(t('settings.deck'), t('settings.deckDesc'), (s) =>
             s.addDropdown((d) => {
-              for (const [key] of DECK_STYLES) d.addOption(key, t(DECK_LABEL_KEYS[key]));
+              for (const key of DECK_STYLES) d.addOption(key, t(DECK_LABEL_KEYS[key]));
               d.setValue(p.settings.playerDeck).onChange(async (v) => {
                 p.settings.playerDeck = normalizeDeckStyle(v);
                 await p.saveSettings();

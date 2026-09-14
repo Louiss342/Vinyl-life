@@ -8,6 +8,7 @@ import { requestUrl } from 'obsidian';
 import * as fs from 'fs';
 import * as crypto from 'crypto';
 import { restrictionText, scalarText } from '../util';
+import { t } from './i18n';
 import type {
   LoginResponse,
   NeteaseAlbumResponse,
@@ -232,6 +233,6 @@ export class WebClient {
         return { restriction: restrictionText(d.code) };
       }
     }
-    return { restriction: '音源不可用' };
+    return { restriction: t('auth.sourceUnavailable') };
   }
 }

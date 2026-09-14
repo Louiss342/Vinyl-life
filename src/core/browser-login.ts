@@ -1,6 +1,7 @@
 // 独立官方登录窗口：由 Electron 会话读取完整 Cookie（含 HttpOnly），
 // 验证后经 Auth 导入网关。窗口使用临时内存会话，不共享 Obsidian 的登录态。
 import type { Auth } from './auth';
+import { t, tf } from './i18n';
 
 export interface BrowserLoginOptions {
   /** 官方登录页（Cookie 按此 URL 过滤） */
@@ -8,11 +9,12 @@ export interface BrowserLoginOptions {
   /** 判定登录成功的 Cookie 名（HttpOnly 主票据） */
   requiredCookie: string;
   /** 窗口标题 */
-  title: string;
+  /** 窗口标题与显示名：用函数而不是字符串 —— 常量在模块加载时就定型了，切语言不会跟着变 */
+  title: () => string;
   /** 临时会话分区前缀（每次尝试追加随机串，避免共享 Obsidian 登录态） */
   partitionPrefix: string;
   /** 状态文案中的服务名 */
-  displayName: string;
+  displayName: () => string;
   /** 同一凭据的其它命名（不同版本 Cookie 名，需非空才算命中） */
   altCookies?: string[];
   /**
@@ -29,17 +31,17 @@ export interface BrowserLoginOptions {
 export const NETEASE_BROWSER_LOGIN: BrowserLoginOptions = {
   loginUrl: 'https://music.163.com/',
   requiredCookie: 'MUSIC_U',
-  title: '网易云音乐登录 · Vinyl Life',
+  title: () => t('login.windowTitleNetease'),
   partitionPrefix: 'vinyl-life-login',
-  displayName: '网易云',
+  displayName: () => t('login.displayNameNetease'),
 };
 
 export const QQ_BROWSER_LOGIN: BrowserLoginOptions = {
   loginUrl: 'https://y.qq.com/',
   requiredCookie: 'qm_keyst',
-  title: 'QQ 音乐登录 · Vinyl Life',
+  title: () => t('login.windowTitleQq'),
   partitionPrefix: 'vinyl-life-qq-login',
-  displayName: 'QQ 音乐',
+  displayName: () => t('login.displayNameQq'),
   // 旧版命名 / 跨主机兜底 / 弹窗登录（QQ 登录页靠 window.opener 回传结果）
   altCookies: ['qqmusic_key'],
   searchSessionByCookieName: true,
@@ -123,7 +125,7 @@ export class BrowserLogin {
   }
 
   open(onStatus?: (message: string) => void): Promise<boolean> {
-    if (this.disposed) return Promise.reject(new Error('插件已卸载，请重新启用后登录'));
+    if (this.disposed) return Promise.reject(new Error(t('login.pluginUnloaded')));
     if (this.attempt) {
       this.attempt.onStatus = onStatus;
       this.attempt.win.show();
@@ -140,14 +142,14 @@ export class BrowserLogin {
       remote = electron.remote ?? {};
     }
     if (!remote?.BrowserWindow) {
-      return Promise.reject(new Error('当前环境无法创建登录窗口，请使用桌面版 Obsidian'));
+      return Promise.reject(new Error(t('login.noWindowEnv')));
     }
 
     const partition = `${this.opts.partitionPrefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const win = new remote.BrowserWindow({
       width: 1100,
       height: 780,
-      title: this.opts.title,
+      title: this.opts.title(),
       autoHideMenuBar: true,
       webPreferences: {
         partition,
@@ -222,12 +224,12 @@ export class BrowserLogin {
     });
     win.webContents.on('render-process-gone', () => {
       if (this.attempt !== attempt) return;
-      attempt.onStatus?.('登录窗口已停止运行，请重新打开登录窗口。');
+      attempt.onStatus?.(t('login.windowClosed'));
       this.finish(attempt, false);
     });
     win.once('closed', () => this.finish(attempt, false));
     attempt.timer = window.setInterval(() => { void this.poll(attempt, false); }, 2000);
-    onStatus?.('请在官方窗口点击右上角「登录」。登录完成后会自动验证并返回。');
+    onStatus?.(t('login.hintClickLogin'));
     void win.loadURL(this.opts.loginUrl).catch(() => this.loadError(attempt));
     void this.poll(attempt, false);
     return promise;
@@ -258,7 +260,7 @@ export class BrowserLogin {
         const fallback = await this.findByCookieName(attempt, cookies);
         if (this.attempt !== attempt) return;
         if (!fallback) {
-          if (force) attempt.onStatus?.('尚未检测到账号登录，请在官方窗口完成登录。');
+          if (force) attempt.onStatus?.(t('login.waitingForAccount'));
           return;
         }
         cookies = fallback;
@@ -266,7 +268,7 @@ export class BrowserLogin {
       const raw = cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join('; ');
       // 同一 Cookie 校验失败后短暂退避，避免 2 秒一轮轰炸网关；网络恢复后自动重试。
       if (!force && raw === attempt.rejectedCookie && Date.now() - attempt.rejectedAt < 8000) return;
-      attempt.onStatus?.('已检测到账号，正在验证登录…');
+      attempt.onStatus?.(t('login.detectedVerifying'));
       try {
         await this.auth.saveCookie(raw, attempt.abort.signal);
       } catch (error) {
@@ -275,11 +277,11 @@ export class BrowserLogin {
         throw error;
       }
       if (this.attempt !== attempt) return;
-      attempt.onStatus?.(`${this.opts.displayName}登录成功，已保存登录状态。`);
+      attempt.onStatus?.(tf('login.success', { name: this.opts.displayName() }));
       this.finish(attempt, true);
     } catch (error) {
       if (this.attempt === attempt && !attempt.abort.signal.aborted) {
-        attempt.onStatus?.(`登录验证失败：${(error as Error).message}。可继续登录或点击「检测登录」重试。`);
+        attempt.onStatus?.(tf('login.verifyFailed', { msg: (error as Error).message }));
       }
     } finally {
       attempt.busy = false;
@@ -351,7 +353,7 @@ export class BrowserLogin {
 
   private loadError(attempt: LoginAttempt): void {
     if (this.attempt === attempt) {
-      attempt.onStatus?.('官方登录页加载失败，请检查网络后关闭并重新打开登录窗口。');
+      attempt.onStatus?.(t('login.pageLoadFailed'));
     }
   }
 

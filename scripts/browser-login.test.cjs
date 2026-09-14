@@ -5,7 +5,21 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { EventEmitter } = require('node:events');
-const { transformSync } = require('esbuild');
+const { transformSync, buildSync } = require('esbuild');
+
+// transform 不打包相对导入，所以沙箱里得手动接上真实词典（browser-login 的文案已走 i18n）
+const i18nMod = { exports: {} };
+vm.runInNewContext(
+  buildSync({
+    entryPoints: [path.join(__dirname, '../src/core/i18n.ts')],
+    bundle: true,
+    write: false,
+    format: 'cjs',
+    platform: 'node',
+    external: ['obsidian'],
+  }).outputFiles[0].text,
+  { module: i18nMod, exports: i18nMod.exports, require: () => ({}), console }
+);
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 function deferred() {
@@ -57,6 +71,7 @@ function harness(save = async () => {}) {
     module: mod,
     exports: mod.exports,
     require: (name) => {
+      if (name === './i18n') return i18nMod.exports;
       if (name === '@electron/remote') return { BrowserWindow };
       if (name === 'electron') return { remote: { BrowserWindow } };
       throw new Error(`Unexpected runtime import: ${name}`);

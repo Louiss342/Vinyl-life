@@ -3,6 +3,7 @@
 import { ServerClient, SongUrlResult } from './server-client';
 import { WebClient } from './web-client';
 import type { NeteaseAlbumResponse, SearchAlbumResponse } from './api-types';
+import { t } from './i18n';
 
 export class NeteaseService {
   constructor(
@@ -14,7 +15,7 @@ export class NeteaseService {
 
   private async ensureGatewayReady(): Promise<void> {
     const ok = await this.ensureGateway();
-    if (!ok) throw new Error(this.gatewayError() || '网易云网关未就绪');
+    if (!ok) throw new Error(this.gatewayError() || t('auth.gatewayNotReadyNetease'));
   }
 
   async album(id: number): Promise<NeteaseAlbumResponse> {

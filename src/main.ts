@@ -457,7 +457,7 @@ export default class VinylLifePlugin extends Plugin {
     const ts = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(
       d.getHours()
     )}:${pad(d.getMinutes())}`;
-    const line = `- [${ts}] 正在听 ${snap.current?.title ?? ''}：`;
+    const line = tf('note.listeningLine', { ts, title: snap.current?.title ?? '' });
     const content = await this.app.vault.read(file);
     const newContent = content.trimEnd() + (content.trim() ? '\n\n' : '') + line + '\n';
     await this.app.vault.modify(file, newContent);
