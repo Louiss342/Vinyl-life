@@ -8,7 +8,7 @@
     "build": "node esbuild.config.mjs",
     "lint": "eslint --quiet src package.json",
     "typecheck": "tsc --noEmit",
-    "test": "node --test \"scripts/*.test.cjs\"",
+    "test": "node --test",
     "version-bump": "node version-bump.mjs"
   },
   "devDependencies": {
