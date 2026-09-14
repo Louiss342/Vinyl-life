@@ -30,7 +30,7 @@ import {
   resolveDropIndex,
   toggleShelfProp,
 } from '../core/shelf-props';
-import { notice, isAudioFile, isImageFile, collectDroppedFiles, droppedRootName } from '../util';
+import { collectDroppedFiles, droppedRootName, isAudioFile, isImageFile, notice, prefersReducedMotion } from '../util';
 import { t, tf } from '../core/i18n';
 import { SetCoverModal } from './set-cover-modal';
 
@@ -154,6 +154,8 @@ export class VinylShelfView extends ItemView {
     // 卡片文字的悬停滚动：委托挂在 contentEl 上（卡片每次刷新都重建，逐张挂监听会白挂随卡片丢弃的一堆）
     this.registerDomEvent(this.contentEl, 'pointerover', (ev) => this.onMarqueeOver(ev));
     this.registerDomEvent(this.contentEl, 'pointerout', (ev) => this.onMarqueeOut(ev));
+    // 键盘等价操作：卡片上 Enter / 空格 = 点击
+    this.registerDomEvent(this.contentEl, 'keydown', (ev) => this.onShelfKeydown(ev));
     this.unsub = this.plugin.engine.subscribe((s) => this.updatePlaying(s));
     this.render();
   }
@@ -185,6 +187,18 @@ export class VinylShelfView extends ItemView {
     const to = ev.relatedTarget as Node | null;
     if (to && typeof row.contains === 'function' && row.contains(to)) return;
     row.classList.remove('is-overflowing');
+  }
+
+  /** 键盘等价：卡片上 Enter / 空格 = 点击（role=button 的常规语义）。
+   *  卡片内部没有输入控件，所以不用区分按在卡片里的哪个位置。 */
+  private onShelfKeydown(ev: KeyboardEvent) {
+    if (ev.key !== 'Enter' && ev.key !== ' ' && ev.key !== 'Spacebar') return;
+    const el = ev.target as HTMLElement | null;
+    if (!el || typeof el.closest !== 'function') return;
+    const card = el.closest<HTMLElement>('.vinyl-shelf-card');
+    if (!card) return;
+    ev.preventDefault(); // 空格默认会滚动面板
+    card.click();
   }
 
   /** 弹窗窗口（popout）里 instanceof HTMLElement 会失败，所以只鸭子类型判 closest */
@@ -686,6 +700,10 @@ export class VinylShelfView extends ItemView {
     const card = createDiv();
     card.className = 'vinyl-shelf-card';
     card.dataset.path = album.path;
+    // 键盘可达：Tab 能落到卡片上，Enter / 空格等同点击（role=button 让读屏软件报「按钮」）
+    card.tabIndex = 0;
+    card.setAttribute('role', 'button');
+    card.setAttribute('aria-label', album.title);
     this.cardEls.set(album.path, card);
 
     // 笔记路径的悬停提示只挂在封面上：挂整张卡片的话，鼠标移到专辑名或属性行也会弹出来，
@@ -876,7 +894,7 @@ export class VinylShelfView extends ItemView {
     const prev = cardEl.__vinylReturn;
     if (prev) prev.cancel();
     const disc = cardEl.querySelector<HTMLElement>('.vinyl-shelf-disc');
-    if (!disc) return;
+    if (!disc || prefersReducedMotion()) return; // 减少动态效果：不回位位移（类名状态照旧）
     // 关键帧取 CSS 变量（--vinyl-disc-{off,lift,rest}），随「黑胶动画方向」设置变化
     const anim = disc.animate(
       [

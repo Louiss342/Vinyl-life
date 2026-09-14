@@ -259,8 +259,24 @@ test('i18n：语言切换后新建的登录 provider 文案跟着变（不能被
 
 // ============ 播放器视图：源码防护 + 切语言后就地更新 ============
 
-// 提取源码里的字符串字面量内容（跳过注释），用于「不得硬编码中文」的断言。
-// 只处理 ' " ` 三种引号与 // /* */ 注释；不处理正则字面量（本文件里没有含引号的正则）。
+// 提取源码里的字符串字面量内容（跳过注释与正则），用于「不得硬编码中文」的断言。
+// 正则字面量必须跳过：sanitizeFileName 里就有含引号的正则（/[\\/:*?"<>|#^[\]]/g），
+// 不跳过的话扫描器会从那个引号一路吃到下一个引号，把中间的中文注释当成「字符串」误报。
+// 正则判定是启发式：/ 出现在这些记号之后才算正则（赋值 / 括号 / 逗号 / 冒号 / return 等），
+// 否则算除法。漏判的代价是误报（能人工核对），误判正则的代价是漏检 —— 所以宁可宽松。
+function isRegexStart(src, i) {
+  let j = i - 1;
+  while (j >= 0 && /\s/.test(src[j])) j--;
+  if (j < 0) return true; // 文件开头
+  const prev = src[j];
+  if ('=(,:[!&|?{};+*-'.includes(prev)) return true;
+  // return / typeof / case 等关键字后也是正则
+  const kw = /(^|[^\w$])(return|typeof|case|in|of|new|delete|void|instanceof)$/.exec(
+    src.slice(Math.max(0, j - 12), j + 1)
+  );
+  return !!kw;
+}
+
 function stringLiterals(src) {
   const out = [];
   const n = src.length;
@@ -276,6 +292,26 @@ function stringLiterals(src) {
       i += 2;
       while (i < n && !(src[i] === '*' && src[i + 1] === '/')) i++;
       i += 2;
+      continue;
+    }
+    if (ch === '/' && isRegexStart(src, i)) {
+      // 跳过整个正则字面量（含转义字符与字符类里的 /）
+      i++;
+      let inClass = false;
+      while (i < n) {
+        if (src[i] === '\\') {
+          i += 2;
+          continue;
+        }
+        if (src[i] === '[') inClass = true;
+        else if (src[i] === ']') inClass = false;
+        else if (src[i] === '/' && !inClass) break;
+        else if (src[i] === '\n') break; // 非法正则（或启发式判错）：别一路吞下去
+        i++;
+      }
+      i++;
+      // 跳过 flags
+      while (i < n && /[a-z]/.test(src[i])) i++;
       continue;
     }
     if (ch === "'" || ch === '"' || ch === '`') {
@@ -694,7 +730,7 @@ const DEBUG_COMMANDS = [
   'qq-logout', 'netease-logout',
 ];
 
-test('main：命令面板 — 默认恰好注册那 5 条日常命令（一条不多一条不少）', async () => {
+test('main：命令面板 — 默认恰好注册那 8 条日常命令（一条不多一条不少）', async () => {
   const plugin = makePlugin(); // loadData → {}：走 DEFAULT_SETTINGS.debugCommands = false
   await plugin.onload();
   assert.deepEqual(

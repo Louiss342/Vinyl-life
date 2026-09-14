@@ -1362,3 +1362,30 @@
 .vinyl-delete-status {
   font-size: 0.9em;
 }
+
+/* ============ 键盘可达性 ============ */
+/* 卡片 / 队列行 / 按钮：Tab 到就给出可见焦点圈。用 :focus-visible 而不是 :focus —— 鼠标
+   点击不闪焦点圈，键盘操作才显示。 */
+.vinyl-shelf-card:focus-visible,
+.vinyl-queue-item:focus-visible,
+.vinyl-btn:focus-visible,
+.vinyl-props-icon:focus-visible,
+.vinyl-deck button:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+
+/* ============ 减少动态效果（前庭敏感用户） ============ */
+/* JS 侧的交接 / 入场 / 回位动画在 util.prefersReducedMotion 里跳过；
+   这里管纯 CSS 的：转盘不转、悬停位移不播。跑马灯在自己的规则里处理。 */
+@media (prefers-reduced-motion: reduce) {
+  .vinyl-turntable-vinyl.is-spinning {
+    animation: none;
+  }
+
+  .vinyl-shelf-card,
+  .vinyl-queue-item,
+  .vinyl-btn {
+    transition: none;
+  }
+}

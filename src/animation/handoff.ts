@@ -11,6 +11,7 @@
 import type VinylLifePlugin from '../main';
 import type { AlbumInfo } from '../core/album-index';
 import { discTransform } from '../core/disc-motion';
+import { prefersReducedMotion } from '../util';
 
 export type HandoffState = 'idle' | 'handoff' | 'playing';
 
@@ -35,7 +36,8 @@ export class HandoffController {
 
     // A 拾取 + B 离墙（墙上动画，与解析/开窗并行）
     const discEl = cardEl?.querySelector<HTMLElement>('.vinyl-shelf-disc') ?? null;
-    if (cardEl && discEl) {
+    // 减少动态效果：跳过拾取动画（交接流程照走，只是不做那串位移）
+    if (cardEl && discEl && !prefersReducedMotion()) {
       cardEl.addClass('is-handing-off');
       // 关键帧取 CSS 变量（--vinyl-disc-{rest,lift,off}）：
       //   终点与 CSS 隐藏态（.is-playing .vinyl-shelf-disc）同源，播放中由 fill:forwards 保持；

@@ -8,7 +8,7 @@ import type { PlayerSnapshot } from '../core/player-state';
 import { AlbumInfo, findAlbumNotes, getAlbumInfo, hasAlbumTag } from '../core/album-index';
 import type { Track } from '../core/track';
 import { trackSourceLabel, trackSourceClass, qualityText } from '../core/track';
-import { fmtTime, notice } from '../util';
+import { fmtTime, notice, prefersReducedMotion } from '../util';
 import { SPIN_SPEEDS } from '../core/disc-motion';
 import { DECK_STYLES, RECORD_COLORS, deckClass, recordClass } from '../core/appearance';
 import { t } from '../core/i18n';
@@ -344,6 +344,29 @@ export class VinylPlayerView extends ItemView {
     // 兜底：dragend 万一没触发，下一次按下即解除拖拽态（否则点击切歌会被永久抑制）。
     // 这里只复位拖拽态、不设 click 抑制窗口，否则随后的正常点击会被误伤
     queueBox.addEventListener('pointerdown', () => this.resetQueueDrag());
+    // 键盘：Enter / 空格切歌；Alt+↑/↓ 与拖拽等价地调整顺序（重排后焦点跟着挪到新位置）
+    queueBox.addEventListener('keydown', (ev) => {
+      const node = ev.target as HTMLElement | null;
+      const row =
+        node && typeof node.closest === 'function'
+          ? node.closest<HTMLElement>('.vinyl-queue-item')
+          : null;
+      if (!row) return;
+      const idx = Number(row.dataset.idx);
+      if (!Number.isInteger(idx)) return;
+      if (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Spacebar') {
+        ev.preventDefault();
+        void this.plugin.engine.playIndex(idx);
+        return;
+      }
+      if (ev.altKey && (ev.key === 'ArrowUp' || ev.key === 'ArrowDown')) {
+        ev.preventDefault();
+        const to = ev.key === 'ArrowUp' ? idx - 1 : idx + 1;
+        if (to < 0 || to >= this.queueRows.length) return;
+        this.plugin.engine.moveTrack(idx, to);
+        window.setTimeout(() => this.queueRows[to]?.focus(), 0);
+      }
+    });
 
     this.els = {
       headerTitle,
@@ -531,6 +554,10 @@ export class VinylPlayerView extends ItemView {
       s.queue.forEach((t, i) => {
         const row = els.queueBox.createDiv({ cls: 'vinyl-queue-item' });
         row.dataset.idx = String(i);
+        // 键盘可达：Tab 落到行上，Enter / 空格切歌，Alt+↑/↓ 调整顺序（拖拽的键盘等价）
+        row.tabIndex = 0;
+        row.setAttribute('role', 'button');
+        row.setAttribute('aria-label', t.title);
         this.bindQueueDrag(row, i);
         row.createSpan({ text: String(i + 1).padStart(2, '0'), cls: 'vinyl-idx' });
         row.createSpan({ text: t.title, cls: 'vinyl-q-title' });
@@ -622,6 +649,7 @@ export class VinylPlayerView extends ItemView {
   // 落盘入场（交接 C 阶段）：唱片滑入转盘
   private playEntrance(els: PlayerEls) {
     els.discOuter.getAnimations().forEach((a) => a.cancel());
+    if (prefersReducedMotion()) return; // 减少动态效果：不播入场位移
     els.discOuter.animate(
       [
         { transform: 'scale(0.3) rotate(-30deg)', opacity: '0' },

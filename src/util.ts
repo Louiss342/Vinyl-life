@@ -364,3 +364,17 @@ export function sanitizeFileName(name: string): string {
     .trim();
   return cleaned || 'untitled';
 }
+
+/** 系统「减少动态效果」是否开启（前庭敏感的用户靠它关掉转盘与交接动画）。
+ *  拿不到 matchMedia（脚本沙箱 / 老环境）按 false 处理：宁可有动画，也别在渲染路径上抛。 */
+export function prefersReducedMotion(): boolean {
+  try {
+    return (
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    );
+  } catch (_) {
+    return false;
+  }
+}
