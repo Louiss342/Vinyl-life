@@ -443,7 +443,6 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'settings.tab.general': { zh: '通用', en: 'General' },
   'settings.tab.appearance': { zh: '外观', en: 'Appearance' },
   'settings.tab.source': { zh: '源', en: 'Sources' },
-  'settings.section.general': { zh: '通用', en: 'General' },
   'settings.language': { zh: '语言 / Language', en: 'Language / 语言' },
   'settings.languageDesc': {
     zh: '界面语言（主要覆盖专辑墙：工具栏、排序筛选、空态、卡片菜单）。默认中文。',
@@ -539,9 +538,10 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'settings.spinFast': { zh: '快', en: 'Fast' },
 
   // —— 设置面板：源 ——
-  'settings.section.external': { zh: '外来源', en: 'Online sources' },
   'settings.sub.netease': { zh: '网易云', en: 'NetEase' },
   'settings.sub.qq': { zh: 'QQ 音乐', en: 'QQ Music' },
+  'settings.loginStatus': { zh: '登录状态', en: 'Sign-in status' },
+  'settings.loginStatusDesc': { zh: '账号与网关连通性', en: 'Account and gateway connectivity' },
   'settings.checkingLogin': { zh: '检测登录态…', en: 'Checking the sign-in state…' },
   'settings.checkFailed': { zh: '登录态检测失败：{msg}', en: 'Sign-in check failed: {msg}' },
   'settings.loggedIn': { zh: '已登录', en: 'Signed in' },

@@ -18,6 +18,7 @@ const OBSIDIAN_STUB = {
   ItemView: class {},
   Plugin: class {},
   PluginSettingTab: class {},
+  SettingPage: class {},
   Setting: class {},
   Menu: class {},
   Modal: class {},

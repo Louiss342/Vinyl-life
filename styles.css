@@ -1039,48 +1039,10 @@
 }
 
 /* ============ 设置面板（通用 / 外观 / 源 / 关于） ============ */
+/* 分页与设置行都交给 Obsidian 原生渲染（getSettingDefinitions 的 type: 'page'），
+   这里只剩两处自绘内容：登录状态行（源页）与「关于」页整页。 */
 
-.vinyl-settings-tabs {
-  display: flex;
-  gap: 4px;
-  border-bottom: 1px solid var(--background-modifier-border);
-  margin: 2px 0 12px;
-}
-
-.vinyl-settings-tab {
-  background: none;
-  box-shadow: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
-  padding: 6px 12px;
-  height: auto;
-  color: var(--text-muted);
-  font-size: var(--font-ui-small);
-  cursor: pointer;
-}
-
-.vinyl-settings-tab:hover {
-  background: none;
-  color: var(--text-normal);
-  border-bottom-color: var(--background-modifier-border);
-}
-
-.vinyl-settings-tab.is-active {
-  color: var(--text-normal);
-  font-weight: 600;
-  border-bottom-color: var(--interactive-accent);
-}
-
-/* 子板块标题（网易云 / QQ 音乐 / 运行环境） */
-.vinyl-settings-sub {
-  margin: 16px 0 0;
-  font-size: var(--font-ui-smaller);
-  font-weight: 600;
-  color: var(--text-muted);
-  letter-spacing: 0.02em;
-}
-
+/* 登录状态行的控件区：状态文案 + 网关/Cookie 附注，窄了自动折行 */
 .vinyl-auth-status {
   display: flex;
   gap: 8px;

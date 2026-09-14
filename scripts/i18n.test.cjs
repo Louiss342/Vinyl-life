@@ -596,6 +596,7 @@ function mainModule() {
           Notice: class {},
           Plugin,
           PluginSettingTab: class {},
+          SettingPage: class {},
           Setting: class {},
           TFile: class {},
           TFolder: class {},
@@ -877,11 +878,11 @@ test('「关于」手记：正文不进 i18n 词典（不是键、不翻译）',
   );
 });
 
-test('「关于」页接线：设置面板确有 about 标签页，且渲染的是 ABOUT_TEXT 与 manifest 版本号', () => {
+test('「关于」页接线：设置面板确有 about 分页，且渲染的是 ABOUT_TEXT 与 manifest 版本号', () => {
   const src = fs.readFileSync(path.join(__dirname, '../src/settings.ts'), 'utf8');
-  assert.match(src, /type TabKey = [^;]*'about'/, 'TabKey 里要有 about');
-  assert.match(src, /\['about',\s*t\('settings\.tab\.about'\)\]/, '标签栏要挂上「关于」');
-  assert.match(src, /this\.tab === 'about'[\s\S]{0,40}renderAbout\(body\)/, 'display() 要分发到 renderAbout');
+  assert.match(src, /new AboutPage\(/, '「关于」页由 AboutPage 渲染（整页自绘，没有设置行）');
+  assert.match(src, /settings\.tab\.about/, '「关于」页名走 settings.tab.about');
+  assert.match(src, /class AboutPage extends SettingPage/, '关于页继承 SettingPage');
   assert.match(src, /ABOUT_TEXT/, '正文要用 ABOUT_TEXT 常量渲染，别在 settings.ts 里另抄一份');
   assert.match(
     src,
@@ -891,19 +892,43 @@ test('「关于」页接线：设置面板确有 about 标签页，且渲染的�
   assert.match(src, /REPO_URL/, '底部 GitHub 外链走 REPO_URL 常量');
   assert.match(about.REPO_URL, /^https:\/\/github\.com\/Louiss342\/Vinyl-life$/, '仓库地址');
 
-  // 接线顺序（只切 renderAbout 这一段：整份源码里的 import 行会让「谁在前」变得没意义）：
+  // 接线顺序（只切 AboutPage 这一段：整份源码里的 import 行会让「谁在前」变得没意义）：
   // 中文正文先建，英译后建 —— 真正的节点先后由下面假 DOM 的用例驱动验证
-  const renderAboutSrc = src.slice(src.indexOf('private renderAbout'));
-  assert.ok(renderAboutSrc.length > 0, '探针：settings.ts 里找得到 renderAbout');
+  const aboutPageSrc = src.slice(src.indexOf('class AboutPage'));
+  assert.ok(aboutPageSrc.length > 0, '探针：settings.ts 里找得到 AboutPage');
   assert.match(
-    renderAboutSrc,
+    aboutPageSrc,
     /ABOUT_TEXT(?!_)[\s\S]{0,400}?ABOUT_TEXT_EN/,
-    'renderAbout 里英译要接在中文正文之后（不是只 import 进来）'
+    'AboutPage 里英译要接在中文正文之后（不是只 import 进来）'
   );
 });
 
-// ============ 「关于」页：中英并列的渲染顺序（假 DOM 驱动真实 renderAbout） ============
-// settings.ts 的其余标签页要整个 Obsidian App 才能跑，这里只驱动 renderAbout ——
+test('设置面板：四页原生分页（type: page），页名走 i18n', () => {
+  const mod = settingsModule();
+  const plugin = {
+    manifest: { version: '9.9.9' },
+    settings: mod.DEFAULT_SETTINGS,
+    server: { nodeBinary: null },
+  };
+  const tab = new mod.VinylSettingTab({}, plugin);
+  const pages = tab.getSettingDefinitions();
+  // 展开一层再比：vm 沙箱里的数组原型与测试侧不同，deepStrictEqual 会判不等
+  assert.deepEqual(
+    [...pages.map((p) => p.name)],
+    ['通用', '外观', '源', '关于'],
+    '四页分页，页名随语言（默认中文）'
+  );
+  assert.deepEqual(
+    [...pages.map((p) => p.type)],
+    ['page', 'page', 'page', 'page'],
+    '四页都是原生分页（type: page）'
+  );
+  assert.equal(typeof pages[3].page, 'function', '「关于」走 page 工厂');
+  assert.ok(Array.isArray(pages[0].items) && pages[0].items.length > 0, '前几页是 items 分页');
+});
+
+// ============ 「关于」页：中英并列的渲染顺序（假 DOM 驱动真实分页内容） ============
+// settings.ts 的其余分页要整个 Obsidian App 才能跑，这里只驱动 AboutPage.display() ——
 // 它只用得到 container 的 createDiv / createSpan / createEl，正是下面 fakeEl 覆盖的那部分。
 let settingsBundle = null;
 function settingsModule() {
@@ -935,6 +960,7 @@ function settingsModule() {
               this.plugin = plugin;
             }
           },
+          SettingPage: class {},
           Setting: class {},
           TFile: class {},
           TFolder: class {},
@@ -958,11 +984,21 @@ function settingsModule() {
 
 test('「关于」页：中文正文在上、英译在下（渲染顺序 + 两份内容逐字进 DOM）', () => {
   const mod = settingsModule();
-  const tab = new mod.VinylSettingTab({}, { manifest: { version: '9.9.9' } });
-  const root = fakeEl();
-  tab.renderAbout(root);
+  // 只驱动「关于」页：定义里其余三页要整个 Obsidian App 才渲染得出来，这里只取 page 工厂那一页
+  const tab = new mod.VinylSettingTab({}, {
+    manifest: { version: '9.9.9' },
+    settings: mod.DEFAULT_SETTINGS,
+    server: { nodeBinary: null },
+  });
+  const aboutDef = tab
+    .getSettingDefinitions()
+    .find((d) => d.type === 'page' && typeof d.page === 'function');
+  assert.ok(aboutDef, '四页里有一页走 page 工厂（「关于」）');
+  const page = aboutDef.page();
+  page.containerEl = fakeEl();
+  page.display();
 
-  const nodes = collect(root);
+  const nodes = collect(page.containerEl);
   const zh = nodes.findIndex((e) => e.classes.has('vinyl-about-text'));
   const en = nodes.findIndex((e) => e.classes.has('vinyl-about-text-en'));
   const meta = nodes.findIndex((e) => e.classes.has('vinyl-about-meta'));
@@ -979,7 +1015,10 @@ test('「关于」页：中文正文在上、英译在下（渲染顺序 + 两�
 });
 
 test('README：开头的中文手记下方跟着同一份英译（不加标题）', () => {
-  const readme = fs.readFileSync(path.join(__dirname, '../README.md'), 'utf8');
+  // 归一化 CRLF：仓库开着 autocrlf，README 检出后带 \r，下面按行比的断言会误红
+  const readme = fs
+    .readFileSync(path.join(__dirname, '../README.md'), 'utf8')
+    .replace(/\r\n/g, '\n');
   const zhParas = aboutParagraphs(ABOUT_EXPECTED);
   const enParas = aboutParagraphs(ABOUT_EXPECTED_EN);
   assert.equal(zhParas.length, 3, '探针：中文手记切出 3 段');
