@@ -1,0 +1,9 @@
+# 关掉空白 issue：两个模板能把关键信息（版本 / 复现步骤 / 日志）一次问全
+blank_issues_enabled: false
+contact_links:
+  - name: 安装、设置与导入说明 / Installation, settings and importing
+    url: https://github.com/Louiss342/Vinyl-life/blob/main/README.md
+    about: 先看 README —— 多数使用问题在那里有答案 / Most usage questions are answered there
+  - name: 安全问题与凭据泄露 / Security and credential leaks
+    url: https://github.com/Louiss342/Vinyl-life/blob/main/CODE_OF_CONDUCT.md
+    about: 请按行为准则里的联系方式私下告知，不要开公开 issue / Report privately using the contact listed there
