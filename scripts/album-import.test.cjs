@@ -342,6 +342,30 @@ test('导入专辑：网易云链接 → 走网易云，字段与既有行为一
   assert.ok(h.binaries.has('Vinyl Life/covers/Abbey Road (Remastered).jpg'));
 });
 
+test('导入专辑：艺人名含引号 / 反斜杠时 frontmatter 仍合法（YAML 转义）', async () => {
+  const h = setup();
+  const artist = 'AC"DC\Backslash';
+  h.ctx.client.album = async () => ({
+    code: 200,
+    album: {
+      name: 'Edge Case',
+      artist: { name: artist },
+      publishTime: 1442188800000,
+      picUrl: 'https://p1.music.net/cover.jpg',
+    },
+    songs: [],
+  });
+  const res = await h.mod.importAlbum(h.ctx, NETEASE_URL);
+  assert.equal(res.ok, true, res.detail);
+  const note = h.files.get('Vinyl Life/Vinyl Note/Edge Case.md');
+  assert.ok(note, '应建立专辑笔记');
+  assert.ok(
+    note._content.includes('artist: ' + JSON.stringify(artist)),
+    '艺人名必须按 YAML 双引号规则转义，否则整段 frontmatter 解析失败、专辑从墙上消失'
+  );
+  assert.doesNotMatch(note._content, /artist: "AC"DC/, '不得原样写入未转义的引号');
+});
+
 test('导入专辑：QQ 音乐链接 → 走 QQ，写出 qqId / qq 链接 / 封面（无 netease 字段）', async () => {
   const h = setup();
   const res = await h.mod.importAlbum(h.ctx, QQ_URL);

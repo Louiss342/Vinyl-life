@@ -27,10 +27,26 @@ function execFileText(bin: string, args: string[]): Promise<string> {
   });
 }
 
+/** 会话 token：给网关鉴权用。不是加密用途，只需要「猜不到 + 每次启动都换」——
+ *  getRandomValues 来自 Web Crypto（渲染进程自带），拿不到时退回时间戳 + 随机串。 */
+function randomToken(): string {
+  try {
+    const buf = new Uint8Array(16);
+    crypto.getRandomValues(buf);
+    return Array.from(buf, (b) => b.toString(16).padStart(2, '0')).join('');
+  } catch (_) {
+    return Math.random().toString(36).slice(2) + Date.now().toString(36);
+  }
+}
+
 export class ServerManager {
   state: ServerState = 'stopped';
   lastError = '';
   nodeBinary: string | null = null;
+  /** 网关鉴权 token：随 env 下发给网关（VINYL_TOKEN），所有客户端请求带 x-vinyl-token。
+   *  为什么要它：网关只监听 127.0.0.1，但浏览器里的任意页面都能扫本机端口 —— 没有 token 时，
+   *  扫到就能拿你的网易云/QQ 账号发请求、读搜索结果、改凭据（见 README 的「权限说明」）。 */
+  readonly token: string = randomToken();
 
   private child: ChildProcess | null = null;
   private port = 0;
@@ -87,7 +103,11 @@ export class ServerManager {
   async ensure(): Promise<boolean> {
     if (this.state === 'running') {
       try {
-        const r = await requestUrl({ url: `${this.base}/api/ping`, throw: false });
+        const r = await requestUrl({
+          url: `${this.base}/api/ping`,
+          headers: { 'x-vinyl-token': this.token },
+          throw: false,
+        });
         if (r.status >= 200 && r.status < 300) return true;
       } catch {
         // 探测失败（进程没了 / 端口已关）→ 下面归零重来
@@ -165,7 +185,11 @@ export class ServerManager {
     for (let i = 0; i < 100; i++) {
       if (earlyError) break;
       try {
-        const r = await requestUrl({ url: `${this.base}/api/ping`, throw: false });
+        const r = await requestUrl({
+          url: `${this.base}/api/ping`,
+          headers: { 'x-vinyl-token': this.token },
+          throw: false,
+        });
         if (r.status >= 200 && r.status < 300) {
           this.state = 'running';
           this.restarts = 0;
@@ -229,6 +253,7 @@ export class ServerManager {
     return {
       ...process.env,
       VINYL_PORT: String(this.port),
+      VINYL_TOKEN: this.token,
       VINYL_COOKIE_FILE: pluginAbsPath(this.plugin, '.cookie'),
       VINYL_ANON_FILE: pluginAbsPath(this.plugin, '.anon-token'),
       VINYL_QQ_COOKIE_FILE: pluginAbsPath(this.plugin, '.qq-cookie'),

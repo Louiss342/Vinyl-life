@@ -48,6 +48,13 @@ export type AlbumLink =
   | { source: 'netease'; id: number }
   | { source: 'qq'; mid: string };
 
+/** frontmatter 里的字符串值：走 JSON 转义（它是 YAML 双引号的子集）。
+ *  不这么做的话，艺人名里一个 `"` 就能让整段 frontmatter 解析失败 —— 那张专辑会直接从
+ *  专辑墙上消失，而且用户看不到任何报错。 */
+function yamlString(v: string): string {
+  return JSON.stringify(v);
+}
+
 export function parseNeteaseInput(input: string): number | undefined {
   const s = String(input).trim();
   if (/^\d+$/.test(s)) return Number(s);
@@ -143,7 +150,7 @@ export async function importNeteaseAlbum(
 
   const lines = ['---', 'tags: [album]', `neteaseId: ${id}`];
   if (coverRef) lines.push(`cover: ${coverRef}`);
-  if (artist) lines.push(`artist: "${artist}"`);
+  if (artist) lines.push(`artist: ${yamlString(artist)}`);
   if (year) lines.push(`year: ${year}`);
   lines.push(`netease: "https://music.163.com/#/album?id=${id}"`);
   lines.push('---', '');
@@ -207,7 +214,7 @@ export async function importQqAlbum(ctx: ImportContext, input: string): Promise<
 
   const lines = ['---', 'tags: [album]', `qqId: ${mid}`];
   if (coverRef) lines.push(`cover: ${coverRef}`);
-  if (artist) lines.push(`artist: "${artist}"`);
+  if (artist) lines.push(`artist: ${yamlString(artist)}`);
   if (year) lines.push(`year: ${Number(year)}`);
   lines.push(`qq: "https://y.qq.com/n/ryqq/albumDetail/${mid}"`);
   lines.push('---', '');

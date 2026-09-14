@@ -25,7 +25,15 @@ export interface SongUrlResult {
 const QUALITY_LADDER = ['standard', 'higher', 'exhigh', 'lossless'];
 
 export class ServerClient {
-  constructor(private base: () => string) {}
+  constructor(
+    private base: () => string,
+    private token: () => string
+  ) {}
+
+  /** 网关鉴权头：会话 token 由 ServerManager 生成（见 VINYL_TOKEN） */
+  private authHeaders(): Record<string, string> {
+    return { 'x-vinyl-token': this.token() };
+  }
 
   private url(pathname: string, params?: Record<string, string>): string {
     const qs = params ? '?' + new URLSearchParams(params).toString() : '';
@@ -35,6 +43,7 @@ export class ServerClient {
   private async request<T>(pathname: string, options?: { method?: string; body?: string }): Promise<T> {
     const res = await requestUrl({
       url: this.url(pathname),
+      headers: this.authHeaders(),
       method: options?.method,
       contentType: options?.body ? 'application/json' : undefined,
       body: options?.body,
@@ -54,7 +63,11 @@ export class ServerClient {
 
   async ping(): Promise<boolean> {
     try {
-      const r = await requestUrl({ url: this.url('/api/ping'), throw: false });
+      const r = await requestUrl({
+        url: this.url('/api/ping'),
+        headers: this.authHeaders(),
+        throw: false,
+      });
       return r.status >= 200 && r.status < 300;
     } catch {
       return false;
@@ -136,7 +149,11 @@ export class ServerClient {
 
   // 封面代理下载（避开浏览器 CORS）
   async fetchCover(url: string): Promise<ArrayBuffer> {
-    const res = await requestUrl({ url: this.url('/api/cover', { url }), throw: false });
+    const res = await requestUrl({
+      url: this.url('/api/cover', { url }),
+      headers: this.authHeaders(),
+      throw: false,
+    });
     if (res.status < 200 || res.status >= 300) {
       throw new Error(`封面下载失败 HTTP ${res.status}`);
     }

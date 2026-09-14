@@ -3,7 +3,7 @@
 // 仅复用 NeteaseCloudMusicApi 的 7 个轻量端点模块负责响应整形。
 // 无 axios / crypto-js / node-forge / pac-proxy-agent / tunnel 等重依赖。
 const http = require('http');
-const https = require('https');
+const dns = require('dns');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -16,6 +16,14 @@ const album = require('NeteaseCloudMusicApi/module/album');
 const song_url_v1 = require('NeteaseCloudMusicApi/module/song_url_v1');
 const lyric = require('NeteaseCloudMusicApi/module/lyric');
 const search = require('NeteaseCloudMusicApi/module/search');
+
+// ==================== 鉴权 ====================
+// 插件 spawn 网关时用 VINYL_TOKEN 下发本次会话的随机 token，每个请求必须带上
+// （header x-vinyl-token；极少数要进 DOM 的 URL 用 ?t=）。没有它的话，浏览器里任意页面
+// 扫到本机端口就能拿用户的网易云/QQ 账号发请求 —— 所以这里不是「防君子」的摆设。
+// 手工 `node server.js` 调试时没有 token，放行并打一条警告（那种情况下网关照常只监听本机）。
+const AUTH_TOKEN = String(process.env.VINYL_TOKEN || '');
+let warnedNoToken = false;
 
 // ==================== Cookie 持久化 ====================
 
@@ -432,30 +440,78 @@ function readBody(req) {
   });
 }
 
-function fetchBinary(url, redirects = 0) {
+// 封面代理的护栏（这个路由是拿内部 token 也不该被当成任意代理用的）：
+//   只允许 http(s) → 解析出的地址不能是本机 / 内网 / 链路本地（防 SSRF 打内网服务）
+//   → 只收图片 → 限时 10s、限 12MB。跳转按同一套规则重新校验，不信任 Location 的协议。
+const BINARY_TIMEOUT_MS = 10000;
+const BINARY_MAX_BYTES = 12 * 1024 * 1024;
+
+function isPrivateAddress(ip) {
+  if (!ip) return true; // 拿不到地址就按危险处理
+  const v4 = ip.startsWith('::ffff:') ? ip.slice(7) : ip; // IPv4-mapped IPv6
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(v4);
+  if (m) {
+    const a = Number(m[1]);
+    const b = Number(m[2]);
+    if (a === 0 || a === 127 || a === 10) return true; // 本机 / 私有
+    if (a === 172 && b >= 16 && b <= 31) return true; // 私有
+    if (a === 192 && b === 168) return true; // 私有
+    if (a === 169 && b === 254) return true; // 链路本地（含云元数据地址）
+    return a >= 224; // 组播 / 保留
+  }
+  const low = v4.toLowerCase();
+  return low === '::1' || low.startsWith('fc') || low.startsWith('fd') || low.startsWith('fe80');
+}
+
+/** 校验目标可抓取，返回解析后的 URL；不可抓取时 reject */
+function assertFetchable(rawUrl) {
+  let target;
+  try {
+    target = new URL(rawUrl);
+  } catch (_) {
+    return Promise.reject(new Error('封面地址无效'));
+  }
+  if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+    return Promise.reject(new Error('封面地址无效'));
+  }
   return new Promise((resolve, reject) => {
-    if (redirects > 3) return reject(new Error('too many redirects'));
-    https
-      .get(url, (upstream) => {
-        if (
-          upstream.statusCode >= 300 &&
-          upstream.statusCode < 400 &&
-          upstream.headers.location
-        ) {
-          upstream.resume();
-          return fetchBinary(upstream.headers.location, redirects + 1).then(resolve, reject);
-        }
-        const chunks = [];
-        upstream.on('data', (c) => chunks.push(c));
-        upstream.on('end', () =>
-          resolve({
-            binary: Buffer.concat(chunks),
-            contentType: upstream.headers['content-type'] || 'application/octet-stream',
-          })
-        );
-      })
-      .on('error', reject);
+    dns.lookup(target.hostname, { all: true }, (err, addrs) => {
+      const list = Array.isArray(addrs) ? addrs : [];
+      if (err || list.length === 0 || list.some((a) => isPrivateAddress(a.address))) {
+        reject(new Error('封面地址不可访问（指向本机或内网）'));
+        return;
+      }
+      resolve(target);
+    });
   });
+}
+
+async function fetchBinary(url, redirects = 0) {
+  if (redirects > 3) throw new Error('too many redirects');
+  const target = await assertFetchable(url);
+  const res = await fetch(target, {
+    redirect: 'manual',
+    signal: AbortSignal.timeout(BINARY_TIMEOUT_MS),
+  });
+  if (res.status >= 300 && res.status < 400 && res.headers.get('location')) {
+    return fetchBinary(new URL(res.headers.get('location'), target).toString(), redirects + 1);
+  }
+  const contentType = String(res.headers.get('content-type') || '');
+  if (!contentType.startsWith('image/')) throw new Error('封面地址不是图片');
+  const chunks = [];
+  let size = 0;
+  const reader = res.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.length;
+    if (size > BINARY_MAX_BYTES) {
+      await reader.cancel();
+      throw new Error('封面图过大');
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return { binary: Buffer.concat(chunks), contentType };
 }
 
 const routes = [];
@@ -539,7 +595,7 @@ route('GET', '/api/search', async ({ query, cookie }) => {
 
 route('GET', '/api/cover', async ({ query }) => {
   const url = String(query.url || '');
-  if (!/^https?:\/\//.test(url)) throw new Error('bad cover url');
+  if (!/^https?:\/\//.test(url)) throw new Error('封面地址无效');
   return fetchBinary(url);
 });
 
@@ -571,19 +627,24 @@ registerQqRoutes({
 });
 
 const server = http.createServer(async (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') {
-    res.writeHead(204);
-    return res.end();
-  }
+  // 不发任何 CORS 头：插件用 requestUrl（不受同源策略约束），浏览器里的第三方页面
+  // 既不该也不需要通过 CORS 访问这里。
   let url;
   try {
     url = new URL(req.url, 'http://127.0.0.1');
   } catch (_) {
     res.writeHead(400);
     return res.end('{"error":"bad url"}');
+  }
+  if (AUTH_TOKEN) {
+    const got = String(req.headers['x-vinyl-token'] || '') || String(url.searchParams.get('t') || '');
+    if (got !== AUTH_TOKEN) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      return res.end('{"error":"unauthorized"}');
+    }
+  } else if (!warnedNoToken) {
+    warnedNoToken = true;
+    serverLog('[vinyl-server] 未设置 VINYL_TOKEN：本次不做鉴权（仅建议本地调试时如此运行）');
   }
   const match = routes.find((r) => r.method === req.method && r.pattern.test(url.pathname));
   if (!match) {

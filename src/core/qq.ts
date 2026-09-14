@@ -14,7 +14,15 @@ import type {
 } from './api-types';
 
 export class QqService {
-  constructor(private base: () => string) {}
+  constructor(
+    private base: () => string,
+    private token: () => string
+  ) {}
+
+  /** 网关鉴权头：会话 token 由 ServerManager 生成（见 VINYL_TOKEN） */
+  private authHeaders(): Record<string, string> {
+    return { 'x-vinyl-token': this.token() };
+  }
 
   private url(pathname: string, params?: Record<string, string>): string {
     const qs = params ? '?' + new URLSearchParams(params).toString() : '';
@@ -24,6 +32,7 @@ export class QqService {
   private async request<T>(pathname: string, options?: { method?: string; body?: string }): Promise<T> {
     const res = await requestUrl({
       url: this.url(pathname),
+      headers: this.authHeaders(),
       method: options?.method,
       contentType: options?.body ? 'application/json' : undefined,
       body: options?.body,

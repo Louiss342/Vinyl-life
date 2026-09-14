@@ -92,7 +92,10 @@ export default class VinylLifePlugin extends Plugin {
 
     // 服务层：网关（Cookie 通道）+ 网页直连（官方登录页会话）统一路由
     this.server = new ServerManager(this);
-    this.client = new ServerClient(() => this.server.base);
+    this.client = new ServerClient(
+      () => this.server.base,
+      () => this.server.token
+    );
     this.web = new WebClient(
       pluginAbsPath(this, '.anon-token'),
       pluginAbsPath(this, '.device-id')
@@ -101,7 +104,10 @@ export default class VinylLifePlugin extends Plugin {
     this.auth = new Auth(this, this.server, this.client);
     this.browserLogin = new BrowserLogin(this.auth);
     this.register(() => this.browserLogin.dispose());
-    this.qq = new QqService(() => this.server.base);
+    this.qq = new QqService(
+      () => this.server.base,
+      () => this.server.token
+    );
     this.qqAuth = new QqAuth(this, this.server, this.qq);
     this.qqBrowserLogin = new BrowserLogin(this.qqAuth, QQ_BROWSER_LOGIN);
     this.register(() => this.qqBrowserLogin.dispose());

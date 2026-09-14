@@ -154,6 +154,7 @@ Vinyl Life/
 
 - **本地文件读写（Node `fs`）**：按你填写的绝对路径读取库外的音频目录（外链模式）；在插件目录保存登录凭据、设备标识与播放统计；把内联的网关源码落到系统临时目录后再启动。库内笔记、封面和复制进库的音频一律走 Obsidian 的 vault 接口，不直接读写文件系统。
 - **启动子进程（`child_process`）**：在线音源需要本机网关进程去对接网易云 / QQ 音乐的接口，插件用你系统里的 Node.js 把它启动起来，监听 `127.0.0.1` 上的随机空闲端口。纯本地音源不需要 Node.js，也不会启动任何进程。插件重载时会清理上一轮遗留的网关进程；这一步会读一次进程命令行，确认目标确实是本插件启动的网关，以免误杀别的程序。
+- **网关鉴权**：网关虽然只监听 `127.0.0.1`，但本机上任何程序、浏览器里的任何页面都能扫到这个端口。所以每次启动网关都会生成一个随机 token 交给它，插件发出的每个请求都必须带上；没有 token 的请求一律拒绝，网关也不发任何 CORS 头。封面的网络代理另有护栏：只允许 http(s)、目标地址不能是本机或内网、只接收图片，并限时 10 秒、限 12 MB。
 - **列举库内文件**：专辑墙要找出所有带 `tags: [album]` 的笔记，因此会枚举库内 Markdown 笔记与图片的路径（封面选择器）。除此之外不读取笔记内容。
 
 ## 开发与构建
@@ -331,6 +332,7 @@ Community plugin reviews list the system capabilities a plugin uses; here is wha
 
 - **Local file access (Node `fs`)**: reading audio folders outside the vault that you reference by absolute path (linked mode); keeping login credentials, the device identifier, and playback statistics in the plugin folder; and writing the inlined gateway source to the system temp folder before launching it. Notes, covers, and audio copied into the vault all go through Obsidian's vault API instead.
 - **Launching a child process (`child_process`)**: online sources need a local gateway process to talk to the NetEase Cloud Music and QQ Music APIs. The plugin starts it with the Node.js on your system, listening on a random free port on `127.0.0.1`. Local audio needs no Node.js and starts no process. When the plugin reloads it cleans up the gateway process left over from the previous run; that step reads the process command line once to confirm the target really is a gateway this plugin started, so it never kills an unrelated program.
+- **Gateway authentication**: the gateway listens on `127.0.0.1` only, but any process on the machine — including a web page in a browser — can scan for that port. So every launch generates a random token for the gateway, and each request the plugin sends carries it; requests without the token are rejected, and the gateway sends no CORS headers at all. The cover proxy has its own guard rails: http(s) only, the target must not resolve to the local machine or a private network, only images are accepted, and it is capped at 10 seconds and 12 MB.
 - **Scanning vault files**: the album shelf needs to find every note tagged `tags: [album]`, so it enumerates the paths of Markdown notes in the vault, and the cover picker lists images in the vault. Nothing else is read from your notes.
 
 ## Development
