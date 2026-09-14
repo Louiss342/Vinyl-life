@@ -533,9 +533,7 @@
   min-width: 0;
   font-weight: 700;
   font-size: 0.95em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* 截断与悬停滚动交给 .vinyl-marquee 一组：这里只管布局与字号 */
 }
 
 .vinyl-player-header-title.is-error {

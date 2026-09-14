@@ -33,6 +33,7 @@ import {
 import { collectDroppedFiles, droppedRootName, isAudioFile, isImageFile, notice, prefersReducedMotion } from '../util';
 import { t, tf } from '../core/i18n';
 import { SetCoverModal } from './set-cover-modal';
+import { onMarqueeOver, onMarqueeOut } from './marquee';
 
 export const SHELF_VIEW_TYPE = 'vinyl-shelf';
 
@@ -152,60 +153,12 @@ export class VinylShelfView extends ItemView {
       )
     );
     // 卡片文字的悬停滚动：委托挂在 contentEl 上（卡片每次刷新都重建，逐张挂监听会白挂随卡片丢弃的一堆）
-    this.registerDomEvent(this.contentEl, 'pointerover', (ev) => this.onMarqueeOver(ev));
-    this.registerDomEvent(this.contentEl, 'pointerout', (ev) => this.onMarqueeOut(ev));
+    this.registerDomEvent(this.contentEl, 'pointerover', (ev) => onMarqueeOver(ev));
+    this.registerDomEvent(this.contentEl, 'pointerout', (ev) => onMarqueeOut(ev));
     // 键盘等价操作：卡片上 Enter / 空格 = 点击
     this.registerDomEvent(this.contentEl, 'keydown', (ev) => this.onShelfKeydown(ev));
     this.unsub = this.plugin.engine.subscribe((s) => this.updatePlaying(s));
     this.render();
-  }
-
-  // ============ 卡片文字：放不下时悬停滚动（.vinyl-marquee） ============
-
-  /** 悬停时量出溢出距离与滚动时长，写进两个 CSS 变量；滚动动画本身在 styles.css 里。
-   *  每次悬停现算：面板宽度变了、语言换了都不用额外失效逻辑。放得下就什么都不做。 */
-  private onMarqueeOver(ev: PointerEvent) {
-    const row = this.marqueeRow(ev.target);
-    if (!row) return;
-    const text = row.querySelector<HTMLElement>('.vinyl-marquee-text');
-    if (!text) return;
-    const shift = text.scrollWidth - row.clientWidth;
-    if (shift <= 1) return; // 放得下：保持省略号（其实也没省略号可显示）
-    row.classList.add('is-overflowing');
-    row.style.setProperty('--vinyl-marquee-shift', `-${shift}px`);
-    // 45px/秒：最短 2 秒（再短看不清），最长 12 秒（长值别滚到天荒地老）
-    row.style.setProperty(
-      '--vinyl-marquee-duration',
-      `${Math.min(12, Math.max(2, shift / 45)).toFixed(1)}s`
-    );
-  }
-
-  private onMarqueeOut(ev: PointerEvent) {
-    const row = this.marqueeRow(ev.target);
-    if (!row) return;
-    // relatedTarget 还在这一行里 = 只是行内移动，别复位（否则中途停下、动画从头再来）
-    const to = ev.relatedTarget as Node | null;
-    if (to && typeof row.contains === 'function' && row.contains(to)) return;
-    row.classList.remove('is-overflowing');
-  }
-
-  /** 键盘等价：卡片上 Enter / 空格 = 点击（role=button 的常规语义）。
-   *  卡片内部没有输入控件，所以不用区分按在卡片里的哪个位置。 */
-  private onShelfKeydown(ev: KeyboardEvent) {
-    if (ev.key !== 'Enter' && ev.key !== ' ' && ev.key !== 'Spacebar') return;
-    const el = ev.target as HTMLElement | null;
-    if (!el || typeof el.closest !== 'function') return;
-    const card = el.closest<HTMLElement>('.vinyl-shelf-card');
-    if (!card) return;
-    ev.preventDefault(); // 空格默认会滚动面板
-    card.click();
-  }
-
-  /** 弹窗窗口（popout）里 instanceof HTMLElement 会失败，所以只鸭子类型判 closest */
-  private marqueeRow(target: EventTarget | null): HTMLElement | null {
-    const el = target as HTMLElement | null;
-    if (!el || typeof el.closest !== 'function') return null;
-    return el.closest<HTMLElement>('.vinyl-marquee');
   }
 
   async onClose() {
@@ -218,6 +171,18 @@ export class VinylShelfView extends ItemView {
       this.refreshTimer = null;
     }
     this.closePropsPopover();
+  }
+
+  /** 键盘等价：卡片上 Enter / 空格 = 点击（role=button 的常规语义）。
+   *  卡片内部没有输入控件，所以不用区分按在卡片里的哪个位置。 */
+  private onShelfKeydown(ev: KeyboardEvent) {
+    if (ev.key !== 'Enter' && ev.key !== ' ' && ev.key !== 'Spacebar') return;
+    const el = ev.target as HTMLElement | null;
+    if (!el || typeof el.closest !== 'function') return;
+    const card = el.closest<HTMLElement>('.vinyl-shelf-card');
+    if (!card) return;
+    ev.preventDefault(); // 空格默认会滚动面板
+    card.click();
   }
 
   private scheduleRefresh() {

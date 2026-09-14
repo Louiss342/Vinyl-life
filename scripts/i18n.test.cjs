@@ -546,7 +546,8 @@ test('播放器：切语言后 applyLanguage 就地更新按钮提示与头部�
   assert.ok(hasLabel('Restore original order'), '恢复原有顺序 → Restore original order');
   assert.equal(noteBtn.getAttribute('aria-label'), 'Append current thoughts to the album note');
   assert.equal(noteBtn.getAttribute('title'), null, '切语言也不该多出 title');
-  assert.equal(view.els.headerTitle.textContent, 'Vinyl player', '头部标题跟着换');
+  // 标题文字在里层 span 里（外层是 marquee 容器）——假 DOM 的 textContent 不聚合子节点，所以读里层
+  assert.equal(view.els.headerTitleText.textContent, 'Vinyl player', '头部标题跟着换');
   assert.equal(view.els.headerTitle.getAttribute('title'), 'Vinyl player', '头部 tooltip 也跟着换');
   assert.ok(hasText('Empty queue'), '空队列 → Empty queue');
   assert.equal(view.els.vinyl, vinylBefore, '就地改文案：转盘节点没被换掉（旋转动画不被打断）');
@@ -555,7 +556,7 @@ test('播放器：切语言后 applyLanguage 就地更新按钮提示与头部�
   mod.setLanguage('zh');
   view.applyLanguage();
   assert.equal(noteBtn.getAttribute('aria-label'), '在专辑笔记追加此刻感想', '切回中文仍是原文案');
-  assert.equal(view.els.headerTitle.textContent, '黑胶播放器');
+  assert.equal(view.els.headerTitleText.textContent, '黑胶播放器');
 });
 
 test('播放器：队列行的拖拽提示随语言就更新（不重建队列行）', () => {

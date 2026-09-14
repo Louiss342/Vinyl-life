@@ -12,11 +12,14 @@ import { fmtTime, notice, prefersReducedMotion } from '../util';
 import { SPIN_SPEEDS } from '../core/disc-motion';
 import { DECK_STYLES, RECORD_COLORS, deckClass, recordClass } from '../core/appearance';
 import { t } from '../core/i18n';
+import { onMarqueeOver, onMarqueeOut } from './marquee';
 
 export const PLAYER_VIEW_TYPE = 'vinyl-player';
 
 interface PlayerEls {
   headerTitle: HTMLElement;
+  /** 标题里真正装文字的那一层（marquee 动的是它，不是外层容器） */
+  headerTitleText: HTMLElement;
   swapBtn: HTMLButtonElement;
   discOuter: HTMLElement;
   vinyl: HTMLElement;
@@ -143,6 +146,9 @@ export class VinylPlayerView extends ItemView {
         if (isAlbumNow || inAlbumFolder) this.refreshAlbumsDebounced();
       })
     );
+    // 顶部专辑名的悬停滚动：委托挂在 contentEl（标题文字随播放状态变，逐次挂监听会漏）
+    this.registerDomEvent(this.contentEl, 'pointerover', (ev) => onMarqueeOver(ev));
+    this.registerDomEvent(this.contentEl, 'pointerout', (ev) => onMarqueeOut(ev));
     // 性能：仅在「真的看不见」时暂停转盘旋转（窗口不可见 / 视图未渲染），判据见 syncVisibility
     this.registerEvent(this.app.workspace.on('active-leaf-change', this.onVisibility));
     document.addEventListener('visibilitychange', this.onVisibility);
@@ -234,7 +240,12 @@ export class VinylPlayerView extends ItemView {
 
     // 头部：标题 + 换碟圆钮
     const header = c.createDiv({ cls: 'vinyl-player-header' });
-    const headerTitle = header.createDiv({ cls: 'vinyl-player-header-title', text: t('player.title') });
+    // 顶部专辑名：放不下时悬停滚动（与专辑墙卡片同一套 .vinyl-marquee 机制）
+    const headerTitle = header.createDiv({ cls: 'vinyl-player-header-title vinyl-marquee' });
+    const headerTitleText = headerTitle.createSpan({
+      cls: 'vinyl-marquee-text',
+      text: t('player.title'),
+    });
     const swapBtn = header.createEl('button', { cls: 'vinyl-btn vinyl-btn-small' });
     setIcon(swapBtn, 'disc-3');
     this.bindLabel(() => swapBtn.setAttribute('aria-label', t('player.pickAlbum')));
@@ -370,6 +381,7 @@ export class VinylPlayerView extends ItemView {
 
     this.els = {
       headerTitle,
+      headerTitleText,
       swapBtn,
       discOuter,
       vinyl,
@@ -456,7 +468,7 @@ export class VinylPlayerView extends ItemView {
             : t('player.title');
     if (headerText !== this.lastHeaderText) {
       this.lastHeaderText = headerText;
-      els.headerTitle.textContent = headerText;
+      els.headerTitleText.textContent = headerText;
       els.headerTitle.setAttribute('title', s.albumTitle || t('player.title'));
       els.headerTitle.toggleClass('is-error', s.status === 'error' && !!s.error);
     }

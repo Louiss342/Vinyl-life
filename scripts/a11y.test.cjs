@@ -45,6 +45,27 @@ test('可访问性：队列行可聚焦、Enter 切歌、Alt+↑/↓ 调序（�
   );
 });
 
+test('长文本可读性：专辑墙卡片与播放器顶部标题共用同一套悬停滚动', () => {
+  assert.match(read('src/views/marquee.ts'), /export function onMarqueeOver/, '滚动逻辑抽成共享模块');
+  for (const f of ['src/views/shelf-view.ts', 'src/views/player-view.ts']) {
+    const src = read(f);
+    assert.match(src, /from '\.\/marquee'/, `${f} 要用共享的 marquee（别再各写一份）`);
+    assert.match(src, /'pointerover'[\s\S]{0,60}onMarqueeOver/, `${f} 要注册悬停进入`);
+    assert.match(src, /'pointerout'[\s\S]{0,60}onMarqueeOut/, `${f} 要注册悬停离开`);
+  }
+  assert.match(read('src/views/shelf-view.ts'), /vinyl-shelf-card-title vinyl-marquee/, '卡片标题要挂 marquee 类');
+  assert.match(
+    read('src/views/player-view.ts'),
+    /vinyl-player-header-title vinyl-marquee/,
+    '播放器顶部专辑名要挂 marquee 类'
+  );
+  assert.match(
+    read('src/views/player-view.ts'),
+    /headerTitleText\.textContent = headerText/,
+    '更新的必须是里层文字节点（改外层会把 marquee 结构冲掉）'
+  );
+});
+
 test('可访问性：styles.css 有 :focus-visible 焦点圈与减少动效兜底', () => {
   const css = read('styles.css');
   assert.match(css, /\.vinyl-shelf-card:focus-visible/, '卡片要有焦点样式');
