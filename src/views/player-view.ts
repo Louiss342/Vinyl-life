@@ -283,9 +283,15 @@ export class VinylPlayerView extends ItemView {
     this.bindLabel(() => prevBtn.setAttribute('aria-label', t('player.prev')));
     this.bindLabel(() => playBtn.setAttribute('aria-label', t('player.playPause')));
     this.bindLabel(() => nextBtn.setAttribute('aria-label', t('player.next')));
-    prevBtn.addEventListener('click', () => this.plugin.engine.prev());
-    playBtn.addEventListener('click', () => this.plugin.engine.toggle());
-    nextBtn.addEventListener('click', () => this.plugin.engine.next());
+    prevBtn.addEventListener('click', () => {
+      void this.plugin.engine.prev();
+    });
+    playBtn.addEventListener('click', () => {
+      void this.plugin.engine.toggle();
+    });
+    nextBtn.addEventListener('click', () => {
+      void this.plugin.engine.next();
+    });
 
     // 音量行：旋钮图标 + 银色填充轨
     const volRow = deck.createDiv({ cls: 'vinyl-vol-row' });
@@ -313,7 +319,9 @@ export class VinylPlayerView extends ItemView {
     setIcon(noteBtn, 'pencil');
     // 只设 aria-label：Obsidian 自己会按它渲染样式化提示，再设 title 会同时弹出浏览器原生提示（两个气泡）
     this.bindLabel(() => noteBtn.setAttribute('aria-label', t('player.appendNote')));
-    noteBtn.addEventListener('click', () => this.plugin.appendListeningNote());
+    noteBtn.addEventListener('click', () => {
+      void this.plugin.appendListeningNote();
+    });
     // 恢复按钮始终显示（本地专辑也显示：点按只提示不支持，见 restoreOrder）
     const restoreBtn = orderRow.createEl('button', { cls: 'vinyl-btn vinyl-btn-small' });
     setIcon(restoreBtn, 'undo-2');
@@ -326,9 +334,11 @@ export class VinylPlayerView extends ItemView {
     // 否则手一松就会被拖拽尾巴上的 click 切到别的曲子
     queueBox.addEventListener('click', (ev) => {
       if (this.isQueueClickBlocked()) return;
-      const row = (ev.target as HTMLElement).closest('.vinyl-queue-item') as HTMLElement | null;
+      // targetNode + instanceOf 是 Obsidian 的跨窗口安全判定（弹窗 / 独立窗口里 instanceof 会误判）
+      const node = ev.targetNode;
+      const row = node && node.instanceOf(HTMLElement) ? node.closest<HTMLElement>('.vinyl-queue-item') : null;
       if (row && row.dataset.idx != null) {
-        this.plugin.engine.playIndex(Number(row.dataset.idx));
+        void this.plugin.engine.playIndex(Number(row.dataset.idx));
       }
     });
     // 兜底：dragend 万一没触发，下一次按下即解除拖拽态（否则点击切歌会被永久抑制）。
@@ -366,7 +376,7 @@ export class VinylPlayerView extends ItemView {
           .setTitle(`${a.title}${a.artist ? ' — ' + a.artist : ''}`)
           .setChecked(snap.albumNotePath === a.path)
           .onClick(() => {
-            this.plugin.engine.loadAlbum(a);
+            void this.plugin.engine.loadAlbum(a);
           })
       );
     }

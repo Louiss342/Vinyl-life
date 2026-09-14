@@ -70,10 +70,10 @@ export class SetCoverModal extends Modal {
     });
 
     vaultBtn.addEventListener('click', () => {
-      new VaultImageSuggest(this.app, (f) => void this.apply(`[[${f.path}]]`, f.name)).open();
+      new VaultImageSuggest(this.app, (f) => void this.applyCover(`[[${f.path}]]`, f.name)).open();
     });
     fileBtn.addEventListener('click', () => fileInput.click());
-    fileInput.addEventListener('change', async () => {
+    const pickLocal = async () => {
       const f = fileInput.files?.[0];
       if (!f) return;
       try {
@@ -85,22 +85,28 @@ export class SetCoverModal extends Modal {
         const exist = this.app.vault.getAbstractFileByPath(path);
         if (exist instanceof TFile) await this.app.vault.modifyBinary(exist, ab);
         else await this.app.vault.createBinary(path, ab);
-        await this.apply(`[[${path}]]`, f.name);
+        await this.applyCover(`[[${path}]]`, f.name);
       } catch (e) {
         console.error('[vinyl] 设置封面失败', e);
         status.setText(`${t('cover.setFailed')}${(e as Error).message || e}`);
       }
+    };
+    fileInput.addEventListener('change', () => {
+      void pickLocal();
     });
-    removeBtn.addEventListener('click', () => void this.apply(null, ''));
+    removeBtn.addEventListener('click', () => void this.applyCover(null, ''));
   }
 
   /** 写回 frontmatter（cover 传 null = 移除）；metadataCache 变更会驱动专辑墙自动刷新 */
-  private async apply(cover: string | null, label: string) {
+  private async applyCover(cover: string | null, label: string) {
     try {
-      await this.app.fileManager.processFrontMatter(this.album.file, (fm) => {
-        if (cover) fm.cover = cover;
-        else delete fm.cover;
-      });
+      await this.app.fileManager.processFrontMatter(
+        this.album.file,
+        (fm: Record<string, unknown>) => {
+          if (cover) fm.cover = cover;
+          else delete fm.cover;
+        }
+      );
       notice(cover ? tf('cover.updated', { label }) : t('cover.removed'));
       this.close();
     } catch (e) {

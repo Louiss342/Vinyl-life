@@ -7,10 +7,12 @@ export function writeCredentialFile(file: string, value: string): void {
   try {
     fs.writeFileSync(tmp, String(value || '').trim(), { encoding: 'utf8', mode: 0o600 });
     fs.renameSync(tmp, file);
-  } catch (_) {
+  } catch {
     try {
       fs.unlinkSync(tmp);
-    } catch (_) {}
+    } catch {
+      // 临时文件可能本就没写成功：清不掉也无妨，直接报主错误
+    }
     throw new Error('登录凭据写入失败，请检查插件目录权限');
   }
 }
@@ -18,7 +20,7 @@ export function writeCredentialFile(file: string, value: string): void {
 export function readCredentialFile(file: string): string {
   try {
     return fs.readFileSync(file, 'utf8').trim();
-  } catch (_) {
-    return '';
+  } catch {
+    return ''; // 文件不存在 / 无权限：按「没有凭据」处理
   }
 }

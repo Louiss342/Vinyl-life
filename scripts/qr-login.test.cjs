@@ -89,6 +89,9 @@ function setup(overrides = {}) {
       const [id, job] = first;
       if (!job.interval) jobs.delete(id);
       await job.callback();
+      // 定时器回调不再把轮询 Promise 返回出来（回调位不接受 Promise 返回，
+      // 代码里改为抽成 tick 方法 + void 点火），故这里补一个宏任务等这一轮真正跑完。
+      await flush();
     },
   };
 }

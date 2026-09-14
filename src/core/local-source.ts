@@ -56,7 +56,9 @@ export class LocalSource {
       if (keep && keep.has(k)) continue;
       try {
         URL.revokeObjectURL(url);
-      } catch (_) {}
+      } catch {
+        // 已被释放 / 非法 URL：继续清缓存条目即可
+      }
       this.blobUrls.delete(k);
     }
   }

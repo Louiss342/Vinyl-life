@@ -212,8 +212,7 @@ export default class VinylLifePlugin extends Plugin {
 
   async loadSettings() {
     const loaded: unknown = await this.loadData();
-    const data: Partial<VinylSettings> =
-      loaded && typeof loaded === 'object' ? (loaded as Partial<VinylSettings>) : {};
+    const data: Partial<VinylSettings> = loaded && typeof loaded === 'object' ? loaded : {};
     this.settings = { ...DEFAULT_SETTINGS, ...data };
     this.settings.stats = ensureStats(data?.stats);
     // 卡片属性：数组结构必须显式归一化——Object.assign 对数组会产出 {0:…,length:…} 类数组怪物，

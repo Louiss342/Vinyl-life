@@ -3,6 +3,8 @@
 // 所有「显示什么属性」的规则都集中在这里：黑名单 / 预设别名 / 值格式化 / 旧设置迁移 / 有序变更。
 // 本模块不依赖 album-index（连类型也不依赖）：属性发现的入参只要求结构上有 displayProps。
 
+import { scalarText } from '../util';
+
 /** 默认卡片属性（顺序即显示顺序）；同时是旧 boolean 结构迁移时的键序真值。
  *  freeze 是护栏：设置里的数组与默认值可能共享引用（DEFAULT_SETTINGS 浅拷贝），
  *  所有变更函数一律返回新数组，设置只整表替换，防止「默认值」被就地改写后永久错乱。 */
@@ -82,7 +84,8 @@ function formatScalar(v: unknown): string {
     return `${v.getFullYear()}-${p(v.getMonth() + 1)}-${p(v.getDate())}`;
   }
   if (typeof v === 'object') return ''; // 嵌套对象一行放不下，序列化也不可读
-  const s = unwrapWikilinkForDisplay(String(v));
+  // 剩标量：symbol / function 不可读，scalarText 会返回 ''（直接用 String 对 symbol 会抛）
+  const s = unwrapWikilinkForDisplay(scalarText(v));
   return s.replace(/\s*\n\s*/g, ' ').trim(); // YAML block scalar 折成单行，避免撑破卡片
 }
 

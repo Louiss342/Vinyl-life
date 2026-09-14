@@ -2,7 +2,7 @@
 //   Obsidian 二进制禁用 ELECTRON_RUN_AS_NODE → 依赖系统 Node，先探测 PATH 再试常见绝对路径
 //   空闲端口探测 → 懒加载 spawn → 就绪等待 → 优雅关闭 → 崩溃自愈（限次重启）
 //   所有路径经 gatewayEnv 统一绝对化注入
-import { Plugin } from 'obsidian';
+import { Plugin, requestUrl } from 'obsidian';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -21,8 +21,8 @@ function execFileText(bin: string, args: string[]): Promise<string> {
       execFile(bin, args, { windowsHide: true, timeout: 4000 }, (err, stdout) => {
         resolve(err ? '' : String(stdout || ''));
       });
-    } catch (_) {
-      resolve('');
+    } catch {
+      resolve(''); // 命令不存在等同步异常：按「读不到命令行」处理
     }
   });
 }
@@ -59,8 +59,8 @@ export class ServerManager {
         p.on('error', () => resolve(false));
         p.on('close', (code) => resolve(code === 0 && out.trim().startsWith('v')));
         window.setTimeout(() => resolve(false), 4000);
-      } catch (_) {
-        resolve(false);
+      } catch {
+        resolve(false); // spawn 同步抛错（二进制不可执行等）：探测失败
       }
     });
   }
@@ -76,7 +76,9 @@ export class ServerManager {
     for (const c of candidates) {
       try {
         if (fs.existsSync(c) && (await this.probeNode(c))) return c;
-      } catch (_) {}
+      } catch {
+        // 单个候选路径不可用：继续试下一个
+      }
     }
     return null;
   }
@@ -85,13 +87,15 @@ export class ServerManager {
   async ensure(): Promise<boolean> {
     if (this.state === 'running') {
       try {
-        const r = await fetch(`${this.base}/api/ping`);
-        if (r.ok) return true;
-      } catch (_) {}
+        const r = await requestUrl({ url: `${this.base}/api/ping`, throw: false });
+        if (r.status >= 200 && r.status < 300) return true;
+      } catch {
+        // 探测失败（进程没了 / 端口已关）→ 下面归零重来
+      }
       // 进程已换/僵死 → 归零重来
       this.state = 'stopped';
     }
-    if (this.startPromise) return this.startPromise;
+    if (this.startPromise !== null) return this.startPromise;
     this.startPromise = this.start().finally(() => {
       this.startPromise = null;
     });
@@ -124,20 +128,20 @@ export class ServerManager {
       console.error('[vinyl] ' + this.lastError);
       return false;
     }
-    const t0 = Date.now();
+    // stdout 直接丢弃：网关自己写 gateway.log（VINYL_LOG_FILE 见 gatewayEnv），
+    // 再往 DevTools 控制台镜像一份属多余日志。stderr 仍需读取——既是排空管道（不读会让子进程写阻塞），
+    // 也用来给启动失败提供原因。
     this.child = spawn(this.nodeBinary, [gateway], {
       env: this.gatewayEnv(),
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', 'ignore', 'pipe'],
     });
     this.rememberPid(this.child.pid);
     let earlyError = '';
     this.child.on('error', (err) => {
       earlyError = earlyError || err.message;
     });
-    this.child.stdout?.on('data', (d) => console.log('[vinyl-server]', String(d).trim()));
     this.child.stderr?.on('data', (d) => {
       earlyError = earlyError || String(d).trim();
-      console.log('[vinyl-server-err]', String(d).trim());
     });
     this.child.on('exit', (code) => {
       const wasIntentional = this.stopping;
@@ -146,15 +150,14 @@ export class ServerManager {
       this.state = 'stopped';
       this.forgetPid();
       if (wasIntentional) return;
-      console.log('[vinyl] 网关意外退出 code=' + code);
       if (this.restarts < this.maxRestarts) {
         this.restarts++;
         window.setTimeout(() => {
-          this.ensure();
+          void this.ensure();
         }, 500);
       } else {
         this.state = 'error';
-        this.lastError = '网关多次崩溃，已停止自动重启（可在设置里重试，或查看 gateway.log）';
+        this.lastError = `网关多次崩溃（最近一次退出码 ${code ?? '未知'}），已停止自动重启（可在设置里重试，或查看 gateway.log）`;
       }
     });
 
@@ -162,14 +165,15 @@ export class ServerManager {
     for (let i = 0; i < 100; i++) {
       if (earlyError) break;
       try {
-        const r = await fetch(`${this.base}/api/ping`);
-        if (r.ok) {
+        const r = await requestUrl({ url: `${this.base}/api/ping`, throw: false });
+        if (r.status >= 200 && r.status < 300) {
           this.state = 'running';
           this.restarts = 0;
-          console.log(`[vinyl] 网关就绪 ${Date.now() - t0}ms 端口 ${this.port}`);
           return true;
         }
-      } catch (_) {}
+      } catch {
+        // 尚未监听（进程刚起来）：继续等下一轮
+      }
       await sleep(150);
     }
     const msg = earlyError ? `网关启动失败：${earlyError.slice(0, 200)}` : '网关 15s 未就绪';
@@ -202,10 +206,14 @@ export class ServerManager {
             if (/^gateway-[0-9a-f]+\.js$/.test(name) && name !== path.basename(file)) {
               try {
                 fs.unlinkSync(path.join(dir, name));
-              } catch (_) {}
+              } catch {
+                // 该版本可能正被其它 Obsidian 窗口的网关占用：留着无害
+              }
             }
           }
-        } catch (_) {}
+        } catch {
+          // 目录读不到（权限 / 竞态）：不影响本次落盘的文件
+        }
       }
       return file;
     } catch (e) {
@@ -234,7 +242,9 @@ export class ServerManager {
     if (this.child) {
       try {
         this.child.kill();
-      } catch (_) {}
+      } catch {
+        // 进程可能已自行退出：忽略，下面照常复位状态
+      }
       this.child = null;
     }
     this.port = 0;
@@ -266,8 +276,8 @@ export class ServerManager {
     try {
       process.kill(pid, 0);
       return true;
-    } catch (_) {
-      return false;
+    } catch {
+      return false; // 信号 0 抛错即进程不存在（或无权限）
     }
   }
 
@@ -290,33 +300,40 @@ export class ServerManager {
     let pid = NaN;
     try {
       pid = parseInt(fs.readFileSync(this.stalePidFile(), 'utf8').trim(), 10);
-    } catch (_) {
+    } catch {
       return; // 无记录：正常首次启动
     }
     try {
       if (Number.isInteger(pid) && pid > 0 && pid !== process.pid && (await this.isVinylGateway(pid))) {
         try {
           process.kill(pid);
-        } catch (_) {}
+        } catch {
+          // 期间已自行退出：无需再等
+        }
         for (let i = 0; i < 20 && this.pidAlive(pid); i++) await sleep(100);
-        console.log('[vinyl] 已清理上一个网关进程 pid=' + pid);
       }
     } finally {
       try {
         fs.unlinkSync(this.stalePidFile());
-      } catch (_) {}
+      } catch {
+        // 记录文件本就不在：无需清理
+      }
     }
   }
 
   private rememberPid(pid: number | undefined): void {
     try {
       if (pid) fs.writeFileSync(this.stalePidFile(), String(pid));
-    } catch (_) {}
+    } catch {
+      // 写不进去只影响「下次启动清理旧进程」，不阻塞本次启动
+    }
   }
 
   private forgetPid(): void {
     try {
       fs.unlinkSync(this.stalePidFile());
-    } catch (_) {}
+    } catch {
+      // 无记录可删
+    }
   }
 }

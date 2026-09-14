@@ -22,6 +22,7 @@ export class NeteaseService {
       try {
         return await this.web.album(id);
       } catch {
+        // 网页会话通道失败 → 落到下面的网关兜底
       }
     }
     await this.ensureGatewayReady();
@@ -33,6 +34,7 @@ export class NeteaseService {
       try {
         return await this.web.songUrl(id, level);
       } catch {
+        // 网页会话通道失败 → 落到下面的网关兜底
       }
     }
     await this.ensureGatewayReady();

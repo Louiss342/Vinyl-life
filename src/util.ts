@@ -48,6 +48,21 @@ export function isImageFile(name: string): boolean {
   return IMAGE_EXTENSIONS.includes(extOf(name));
 }
 
+/** unknown → 字符串：只认标量（string / number / boolean / bigint），其余（对象 / 数组 / 函数）
+ *  一律返回 ''。用于 frontmatter 等外部数据——直接 String() 会把对象印成 [object Object]。 */
+export function scalarText(v: unknown): string {
+  switch (typeof v) {
+    case 'string':
+      return v;
+    case 'number':
+    case 'boolean':
+    case 'bigint':
+      return String(v);
+    default:
+      return '';
+  }
+}
+
 // ============ 文件夹导入（一张专辑一个文件夹） ============
 
 export interface PickedAudio {
@@ -343,7 +358,7 @@ export async function ensureFolder(app: App, folderPath: string): Promise<void> 
 // 文件名净化（Obsidian vault 与 Windows 双重要求：禁 # ^ [ ] 与 \ / : * ? " < > |）
 export function sanitizeFileName(name: string): string {
   const cleaned = name
-    .replace(/[\\/:*?"<>|#^\[\]]/g, '_')
+    .replace(/[\\/:*?"<>|#^[\]]/g, '_')
     .replace(/^\.+/, '')
     .replace(/\s+$/, '')
     .trim();

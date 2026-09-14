@@ -1,7 +1,6 @@
 // 播放统计弹窗：总次数 / 最近播放 / 播放最多的专辑
 import { App, Modal } from 'obsidian';
 import { VinylStats, recentAlbums } from '../core/stats';
-import { fmtTime } from '../util';
 import { t, tf } from '../core/i18n';
 
 function fmtStamp(ts: number): string {

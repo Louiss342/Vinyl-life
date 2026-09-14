@@ -18,7 +18,7 @@ Music and notes may have a natural affinity for each other.
 
 Vinyl Life 把专辑笔记展示成一张张唱片，配有黑胶唱机样式的播放器。可以听电脑里的音乐，也可以接入自己的网易云音乐或 QQ 音乐账号。每张唱片对应一篇普通的 Markdown 笔记，用来记专辑资料、评分，或某次听歌时想到的事。
 
-支持 Obsidian 1.7.2 及以上版本，仅限桌面端。界面可切换中文和 English。
+支持 Obsidian 1.13.0 及以上版本，仅限桌面端。界面可切换中文和 English。
 
 ## 专辑墙
 
@@ -148,6 +148,14 @@ Vinyl Life/
 
 登录凭据、设置和播放统计保存在本机插件目录中。可以在设置里退出账号、清除统计；分享插件文件时，不要附带自己的 Cookie 和登录数据。
 
+## 权限说明
+
+社区插件审核会列出插件用到的系统能力，这里逐条说明用途。插件只在你的机器上运行，这些能力都只服务于上面写的功能。
+
+- **本地文件读写（Node `fs`）**：按你填写的绝对路径读取库外的音频目录（外链模式）；在插件目录保存登录凭据、设备标识与播放统计；把内联的网关源码落到系统临时目录后再启动。库内笔记、封面和复制进库的音频一律走 Obsidian 的 vault 接口，不直接读写文件系统。
+- **启动子进程（`child_process`）**：在线音源需要本机网关进程去对接网易云 / QQ 音乐的接口，插件用你系统里的 Node.js 把它启动起来，监听 `127.0.0.1` 上的随机空闲端口。纯本地音源不需要 Node.js，也不会启动任何进程。插件重载时会清理上一轮遗留的网关进程；这一步会读一次进程命令行，确认目标确实是本插件启动的网关，以免误杀别的程序。
+- **列举库内文件**：专辑墙要找出所有带 `tags: [album]` 的笔记，因此会枚举库内 Markdown 笔记与图片的路径（封面选择器）。除此之外不读取笔记内容。
+
 ## 开发与构建
 
 需要 Node.js 18 或以上版本和 npm。
@@ -187,7 +195,7 @@ npm test
 
 Vinyl Life presents album notes as records on a shelf, with a turntable-style player. You can listen to music on your computer, or connect your own NetEase Cloud Music or QQ Music account. Each record is an ordinary Markdown note, for album details, ratings, or whatever you happened to think about while listening.
 
-Requires Obsidian 1.7.2 or later, desktop only. The interface can be switched between Chinese and English.
+Requires Obsidian 1.13.0 or later, desktop only. The interface can be switched between Chinese and English.
 
 ## Album shelf
 
@@ -316,6 +324,14 @@ NetEase Cloud Music and QQ Music are reached through unofficial APIs, and the pl
 The plugin collects no telemetry and uploads no playback statistics. Online features connect to the login, music, and image services of the music platform you choose, and the local gateway only listens on `127.0.0.1`. When a note uses a remote cover, the corresponding image URL is fetched as well.
 
 Login credentials, settings, and playback statistics are stored in the plugin folder on your own machine. You can sign out and clear the statistics in the settings; when you share plugin files, do not include your own cookies and login data.
+
+## Permissions
+
+Community plugin reviews list the system capabilities a plugin uses; here is what each one is for. The plugin runs only on your own machine, and every capability below serves the features described above.
+
+- **Local file access (Node `fs`)**: reading audio folders outside the vault that you reference by absolute path (linked mode); keeping login credentials, the device identifier, and playback statistics in the plugin folder; and writing the inlined gateway source to the system temp folder before launching it. Notes, covers, and audio copied into the vault all go through Obsidian's vault API instead.
+- **Launching a child process (`child_process`)**: online sources need a local gateway process to talk to the NetEase Cloud Music and QQ Music APIs. The plugin starts it with the Node.js on your system, listening on a random free port on `127.0.0.1`. Local audio needs no Node.js and starts no process. When the plugin reloads it cleans up the gateway process left over from the previous run; that step reads the process command line once to confirm the target really is a gateway this plugin started, so it never kills an unrelated program.
+- **Scanning vault files**: the album shelf needs to find every note tagged `tags: [album]`, so it enumerates the paths of Markdown notes in the vault, and the cover picker lists images in the vault. Nothing else is read from your notes.
 
 ## Development
 

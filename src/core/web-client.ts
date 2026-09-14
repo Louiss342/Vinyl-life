@@ -7,7 +7,7 @@
 import { requestUrl } from 'obsidian';
 import * as fs from 'fs';
 import * as crypto from 'crypto';
-import { restrictionText } from '../util';
+import { restrictionText, scalarText } from '../util';
 import type {
   LoginResponse,
   NeteaseAlbumResponse,
@@ -93,7 +93,9 @@ function readOrCreateDeviceId(file: string): string | null {
   try {
     const cur = fs.readFileSync(file, 'utf8').trim();
     if (/^[0-9A-F]{52}$/.test(cur)) return cur;
-  } catch {}
+  } catch {
+    // 还没有落盘过 deviceId（或不可读）→ 下面生成一个新的
+  }
   try {
     const v = newDeviceId();
     fs.writeFileSync(file, v, { encoding: 'utf8', mode: 0o600 });
@@ -117,13 +119,16 @@ export class WebClient {
       const raw = fs.readFileSync(anonTokenFile, 'utf8').trim();
       const parsed: unknown = JSON.parse(raw);
       const j = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
-      if (j.token) {
-        this.anonToken = String(j.token);
-        bound = String(j.deviceId || '');
+      const token = scalarText(j.token);
+      if (token) {
+        this.anonToken = token;
+        bound = scalarText(j.deviceId);
       } else {
         this.anonToken = raw; // 旧格式
       }
-    } catch {}
+    } catch {
+      // 文件不存在 / 非 JSON：按「没有匿名身份」处理（deviceId 另走 .device-id）
+    }
     if (bound) {
       this.deviceId = bound;
     } else if (deviceIdFile) {
@@ -139,7 +144,7 @@ export class WebClient {
         ? new URLSearchParams(weapi(data)).toString()
         : new URLSearchParams(eapi(uri, data)).toString();
     const r = await requestUrl({
-      url: `${base}${uri.substr(5)}`,
+      url: `${base}${uri.slice(5)}`,
       method: 'POST',
       contentType: 'application/x-www-form-urlencoded',
       headers: {

@@ -29,7 +29,7 @@ export class QqAuth {
   cookieBytes(): number {
     try {
       return fs.readFileSync(this.cookieFile()).length;
-    } catch (_) {
+    } catch {
       return 0;
     }
   }
@@ -51,7 +51,8 @@ export class QqAuth {
         cookieBytes: bytes,
         serverOk: true,
       };
-    } catch (_) {
+    } catch {
+      // 网关在但状态接口失败：按未登录返回
       return { loggedIn: false, cookieBytes: bytes, serverOk: true };
     }
   }
@@ -74,10 +75,14 @@ export class QqAuth {
   async clear(): Promise<void> {
     try {
       if (await this.server.ensure()) await this.client.clearCookie();
-    } catch (_) {}
+    } catch {
+      // 网关不可用：忽略，下面直接删本地文件（网关按请求从磁盘读 Cookie，两路等价）
+    }
     try {
       fs.unlinkSync(this.cookieFile());
-    } catch (_) {}
+    } catch {
+      // 文件本就不存在：目标状态已达成
+    }
   }
 
   // —— 扫码（UI 复用 QrLoginModal，provider 配置见 views）——

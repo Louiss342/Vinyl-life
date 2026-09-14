@@ -134,7 +134,7 @@ export class BrowserLogin {
     const loadModule: (id: string) => unknown = require;
     let remote: RemoteLike;
     try {
-      remote = loadModule('@electron/remote') as RemoteLike;
+      remote = loadModule('@electron/remote');
     } catch {
       const electron = loadModule('electron') as { remote?: RemoteLike };
       remote = electron.remote ?? {};
@@ -307,8 +307,8 @@ export class BrowserLogin {
     let all: BrowserCookie[] = [];
     try {
       all = await attempt.session.cookies.get({});
-    } catch (_) {
-      return null;
+    } catch {
+      return null; // 读不到整个分区的 Cookie：兜底路径放弃
     }
     if (this.attempt !== attempt) return null;
     const names = this.acceptedNames();
@@ -336,7 +336,9 @@ export class BrowserLogin {
     for (const child of attempt.children) {
       try {
         if (!child.isDestroyed()) child.destroy();
-      } catch {}
+      } catch {
+        // 子窗口可能已被用户关掉：忽略，继续清其余窗口
+      }
     }
     attempt.children.clear();
     if (!attempt.win.isDestroyed()) attempt.win.destroy();

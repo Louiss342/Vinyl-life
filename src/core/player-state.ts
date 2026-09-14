@@ -94,7 +94,9 @@ export class PlaybackEngine {
         this.emit();
       }
     });
-    this.audio.addEventListener('error', () => this.onAudioError());
+    this.audio.addEventListener('error', () => {
+      void this.onAudioError();
+    });
   }
 
   // —— 订阅 ——
@@ -245,7 +247,9 @@ export class PlaybackEngine {
     this.audio.removeAttribute('src');
     try {
       this.audio.load();
-    } catch (_) {}
+    } catch {
+      // 某些实现下无 src 时 load() 会抛：卸载目的已达成
+    }
   }
 
   // 清空队列并复位（专辑被删除时调用）：状态回到首次打开播放器的样子
@@ -316,8 +320,9 @@ export class PlaybackEngine {
     }
     try {
       await this.audio.play();
-    } catch (_) {
-      this.onAudioError();
+    } catch {
+      // play() 拒绝（多为格式/解码问题）→ 交给统一的错误兜底链路
+      void this.onAudioError();
     }
   }
 
@@ -382,7 +387,7 @@ export class PlaybackEngine {
   // —— 内部事件 ——
   private onEnded() {
     if (this.index + 1 < this.queue.length) {
-      this.playIndex(this.index + 1);
+      void this.playIndex(this.index + 1);
     } else {
       this.status = 'paused';
       this.emit();
@@ -408,7 +413,9 @@ export class PlaybackEngine {
         this.status = 'playing';
         this.emit();
         return;
-      } catch (_) {}
+      } catch {
+        // Blob 兜底也失败 → 继续走下面的在线源重取 / 报错链路
+      }
     }
     // 在线源 URL 过期/失效 → 重取一次（缓存按 trackKey 键控，跨源互不影响）
     if (track.source === 'netease' || track.source === 'qq') {
@@ -420,7 +427,9 @@ export class PlaybackEngine {
           if (!stillCurrent()) return;
           await this.playIndex(idx, { retry: true });
           return;
-        } catch (_) {}
+        } catch {
+          // 重取后仍失败：落到底部的错误文案
+        }
       }
     }
     if (!stillCurrent()) return;
@@ -436,6 +445,8 @@ export class PlaybackEngine {
     this.audio.removeAttribute('src');
     try {
       this.audio.load();
-    } catch (_) {}
+    } catch {
+      // 同 unloadAudio：无 src 时 load() 可能抛，忽略
+    }
   }
 }

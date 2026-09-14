@@ -518,7 +518,9 @@ export class VinylShelfView extends ItemView {
     const cb = row.createEl('input', { attr: { type: 'checkbox' } });
     const toggle = (on: boolean) =>
       void this.applyShelfProps(toggleShelfProp(this.plugin.settings.shelfProps, key, on));
-    cb.addEventListener('change', () => toggle(cb.checked));
+    cb.addEventListener('change', () => {
+      toggle(cb.checked);
+    });
     row.addEventListener('click', (ev) => {
       if (ev.target === cb) return;
       cb.checked = !cb.checked;
@@ -678,7 +680,9 @@ export class VinylShelfView extends ItemView {
         .createSpan({ text: t('card.collect'), cls: 'vinyl-badge is-collect' });
     }
 
-    card.addEventListener('click', () => this.playAlbum(e));
+    card.addEventListener('click', () => {
+      void this.playAlbum(e);
+    });
     card.addEventListener('contextmenu', (ev) => {
       ev.preventDefault();
       this.showMenu(e, ev);
@@ -692,7 +696,7 @@ export class VinylShelfView extends ItemView {
       }
     });
     card.addEventListener('dragleave', () => card.removeClass('is-drag-over'));
-    card.addEventListener('drop', async (ev) => {
+    const onCardDrop = async (ev: DragEvent) => {
       ev.preventDefault();
       ev.stopPropagation();
       card.removeClass('is-drag-over');
@@ -705,6 +709,9 @@ export class VinylShelfView extends ItemView {
         e.album,
         droppedRootName(picked)
       );
+    };
+    card.addEventListener('drop', (ev) => {
+      void onCardDrop(ev);
     });
     return card;
   }
@@ -843,7 +850,7 @@ export class VinylShelfView extends ItemView {
       }
     });
     grid.addEventListener('dragleave', () => grid.removeClass('is-drag-over'));
-    grid.addEventListener('drop', async (ev) => {
+    const onGridDrop = async (ev: DragEvent) => {
       ev.preventDefault();
       grid.removeClass('is-drag-over');
       if (!ev.dataTransfer) return;
@@ -855,6 +862,9 @@ export class VinylShelfView extends ItemView {
         null,
         droppedRootName(picked)
       );
+    };
+    grid.addEventListener('drop', (ev) => {
+      void onGridDrop(ev);
     });
   }
 

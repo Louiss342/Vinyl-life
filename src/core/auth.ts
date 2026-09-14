@@ -42,15 +42,15 @@ export class Auth {
   hasLocalCookie(): boolean {
     try {
       return /(?:^|;\s*)MUSIC_U=[^;\s]+/.test(fs.readFileSync(this.cookieFile(), 'utf8'));
-    } catch (_) {
-      return false;
+    } catch {
+      return false; // 文件不存在 / 无权限：视为未登录
     }
   }
 
   cookieBytes(): number {
     try {
       return fs.readFileSync(this.cookieFile()).length;
-    } catch (_) {
+    } catch {
       return 0;
     }
   }
@@ -74,7 +74,8 @@ export class Auth {
         cookieBytes: bytes,
         serverOk: true,
       };
-    } catch (_) {
+    } catch {
+      // 网关在但状态接口失败：按未登录返回（cookieBytes 仍如实报告）
       return { loggedIn: false, cookieBytes: bytes, serverOk: true };
     }
   }
@@ -97,11 +98,14 @@ export class Auth {
   async clear(): Promise<void> {
     try {
       if (await this.server.ensure()) await this.client.clearCookie();
-    } catch (_) {}
-    // 网关不可用时直接删本地文件（网关按请求从磁盘读 Cookie，两路等价）
+    } catch {
+      // 网关不可用：忽略，下面直接删本地文件（网关按请求从磁盘读 Cookie，两路等价）
+    }
     try {
       fs.unlinkSync(this.cookieFile());
-    } catch (_) {}
+    } catch {
+      // 文件本就不存在：目标状态已达成
+    }
   }
 
   // —— 扫码（UI 在 QrLoginModal）——

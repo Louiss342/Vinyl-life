@@ -10,7 +10,14 @@ import {
   getAlbumInfo,
   parseQqAlbumMid,
 } from './core/album-index';
-import { isAudioFile, baseName, sanitizeFileName, ensureFolder, relDirOf } from './util';
+import {
+  isAudioFile,
+  baseName,
+  scalarText,
+  sanitizeFileName,
+  ensureFolder,
+  relDirOf,
+} from './util';
 import { t, tf } from './core/i18n';
 // 以下仅作类型使用（import type 让测试打包不牵连整条服务链）
 import type { VinylSettings } from './settings';
@@ -294,19 +301,26 @@ export async function importLocalAudio(
   if (!added.length) return { added, fallback, skippedUnsupported, skippedExisting };
 
   // 更新笔记 frontmatter（复制 → audioFolder；外链 → audio 列表追加）
-  await ctx.app.fileManager.processFrontMatter(album.file, (fm) => {
-    if (mode === 'copy') {
-      if (!fm.audioFolder) fm.audioFolder = `[[${copyDir}]]`;
-    } else {
-      const list: string[] = Array.isArray(fm.audio)
-        ? [...fm.audio]
-        : fm.audio != null
-          ? [fm.audio]
-          : [];
-      for (const a of added) if (!list.includes(a)) list.push(a);
-      fm.audio = list;
+  // 回调参数显式标注：Obsidian 的 processFrontMatter 把 frontmatter 声明为 any，
+  // 不标注会让下面每一次取值都落在 unsafe-member-access 上。
+  await ctx.app.fileManager.processFrontMatter(
+    album.file,
+    (fm: Record<string, unknown>) => {
+      if (mode === 'copy') {
+        if (!fm.audioFolder) fm.audioFolder = `[[${copyDir}]]`;
+      } else {
+        const raw = fm.audio;
+        // 旧数据可能是单值也可能是数组；非标量项（对象 / 数组）按无法使用丢弃
+        const list: string[] = Array.isArray(raw)
+          ? raw.map((v) => scalarText(v))
+          : raw != null
+            ? [scalarText(raw)]
+            : [];
+        for (const a of added) if (!list.includes(a)) list.push(a);
+        fm.audio = list;
+      }
     }
-  });
+  );
   return { added, fallback, skippedUnsupported, skippedExisting };
 }
 

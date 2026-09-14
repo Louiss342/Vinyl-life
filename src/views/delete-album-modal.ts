@@ -118,7 +118,7 @@ export class DeleteAlbumModal extends Modal {
     const cancelBtn = row.createEl('button', { text: t('common.cancel') });
     const delBtn = row.createEl('button', { text: t('common.delete'), cls: 'mod-warning' });
     cancelBtn.addEventListener('click', () => this.close());
-    delBtn.addEventListener('click', async () => {
+    const doDelete = async () => {
       if (this.busy) return;
       this.busy = true;
       cancelBtn.disabled = true;
@@ -137,6 +137,9 @@ export class DeleteAlbumModal extends Modal {
         status.setText(tf('delete.failed', { msg: (e as Error).message }));
         console.error('[vinyl] 删除专辑失败', e);
       }
+    };
+    delBtn.addEventListener('click', () => {
+      void doDelete();
     });
     window.setTimeout(() => cancelBtn.focus(), 50);
   }

@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import {
   isAudioFile,
+  scalarText,
   stripWikilink,
   collectFolderAudios,
   collectExternalAudios,
@@ -70,7 +71,7 @@ export function parseNeteaseId(fm: unknown): number | undefined {
     const n = Number(raw);
     if (isFinite(n)) return n;
   }
-  const url = String(data.netease ?? '');
+  const url = scalarText(data.netease);
   const m = url.match(NETEASE_ALBUM_RE);
   return m ? Number(m[1]) : undefined;
 }
@@ -80,10 +81,10 @@ export function parseQqAlbumMid(fm: unknown): string | undefined {
   const data = asFrontmatter(fm);
   const bare = data.qqId;
   if (bare != null) {
-    const t = String(bare).trim();
+    const t = scalarText(bare).trim();
     if (QQ_MID_RE.test(t)) return t;
   }
-  const url = String(data.qq ?? '');
+  const url = scalarText(data.qq);
   const m = url.match(QQ_ALBUM_RE) || url.match(QQ_ALBUM_LEGACY_RE);
   if (m) return m[1];
   const t = url.trim();
@@ -173,8 +174,8 @@ export function buildAlbumInfo(
     data.source === 'local' || data.source === 'netease' || data.source === 'qq'
       ? data.source
       : 'auto';
-  const coverRaw = data.cover != null ? String(data.cover) : undefined;
-  const audioFolderRef = data.audioFolder != null ? String(data.audioFolder) : undefined;
+  const coverRaw = data.cover != null ? scalarText(data.cover) : undefined;
+  const audioFolderRef = data.audioFolder != null ? scalarText(data.audioFolder) : undefined;
   // 显式 cover 优先；没写封面时按约定自动认一个（不写回笔记）
   let cover = resolveCover(app, coverRaw, file.path);
   if (!cover) {
@@ -185,9 +186,9 @@ export function buildAlbumInfo(
     file,
     path: file.path,
     title: file.basename,
-    artist: data.artist != null ? String(data.artist) : undefined,
+    artist: data.artist != null ? scalarText(data.artist) : undefined,
     year: typeof data.year === 'string' || typeof data.year === 'number' ? data.year : undefined,
-    genre: data.genre != null ? String(data.genre) : undefined,
+    genre: data.genre != null ? scalarText(data.genre) : undefined,
     rating:
       typeof data.rating === 'string' || typeof data.rating === 'number'
         ? data.rating
@@ -198,9 +199,9 @@ export function buildAlbumInfo(
     qqId: parseQqAlbumMid(fm),
     audioFolderRef,
     audioRefs: Array.isArray(data.audio)
-      ? data.audio.map(String)
+      ? data.audio.map((v) => scalarText(v))
       : data.audio != null
-        ? [String(data.audio)]
+        ? [scalarText(data.audio)]
         : [],
     sourcePref: source,
     displayProps: buildDisplayProps(data),

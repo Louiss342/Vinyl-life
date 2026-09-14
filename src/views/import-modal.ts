@@ -52,7 +52,7 @@ export class AlbumImportModal extends Modal {
       cls: 'vinyl-import-input',
     });
     input.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter') run();
+      if (ev.key === 'Enter') void run();
     });
     const status = c.createDiv({ cls: 'vinyl-muted' });
     const btnRow = c.createDiv({ cls: 'vinyl-import-actions' });
@@ -88,7 +88,9 @@ export class AlbumImportModal extends Modal {
         btn.disabled = false;
       }
     };
-    btn.addEventListener('click', run);
+    btn.addEventListener('click', () => {
+      void run();
+    });
     window.setTimeout(() => input.focus(), 50);
   }
 
@@ -298,13 +300,16 @@ export class LocalImportModal extends Modal {
       c.addClass('is-drop-active');
     });
     c.addEventListener('dragleave', () => c.removeClass('is-drop-active'));
-    c.addEventListener('drop', async (ev) => {
+    const onDrop = async (ev: DragEvent) => {
       ev.preventDefault();
       c.removeClass('is-drop-active');
       const dt = ev.dataTransfer;
       if (!dt) return;
       const picked = await collectDroppedFiles(dt);
       if (picked.length) takeFiles(picked.map((p) => p.file), droppedRootName(picked));
+    };
+    c.addEventListener('drop', (ev) => {
+      void onDrop(ev);
     });
 
     const run = async () => {
