@@ -683,6 +683,10 @@ const KEPT_COMMANDS = [
   'import-netease',
   'import-local',
   'insert-now-playing',
+  // 播放控制（1.0.6 起常驻）：给快捷键与系统媒体键之外的手动操作用
+  'player-toggle',
+  'player-next',
+  'player-prev',
 ];
 // 只应出现在调试门后的那批（登录 / 退出 —— 设置面板按钮没覆盖到的维护命令）
 const DEBUG_COMMANDS = [
@@ -696,7 +700,7 @@ test('main：命令面板 — 默认恰好注册那 5 条日常命令（一条�
   assert.deepEqual(
     plugin.commands.map((c) => c.id),
     KEPT_COMMANDS,
-    '非 debug 时命令列表应当恰好是这 5 条（多一条都算没裁干净）'
+    '非 debug 时命令列表应当恰好是这 8 条（多一条都算没裁干净）'
   );
 });
 

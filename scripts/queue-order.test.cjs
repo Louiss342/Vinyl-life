@@ -363,7 +363,32 @@ test('引擎：不接线 savedOrder / onQueueOrderChange 也能正常重排（�
 // ============ C. 设置归一化（settings.ts） ============
 
 const settingsMod = loadModule('src/settings.ts');
-const { normalizeQueueOrder, DEFAULT_SETTINGS } = settingsMod;
+const { normalizeQueueOrder, normalizeLastPlayback, normalizeVolume, DEFAULT_SETTINGS } = settingsMod;
+
+test('settings：音量与「上次播放位置」默认值 + 脏数据回落', () => {
+  assert.equal(DEFAULT_SETTINGS.volume, 0.8);
+  assert.equal(DEFAULT_SETTINGS.lastPlayback, undefined, '没播过就没有记录');
+
+  assert.equal(normalizeVolume(0.3), 0.3);
+  assert.equal(normalizeVolume(0), 0, '静音是合法值');
+  assert.equal(normalizeVolume(1), 1);
+  for (const bad of [undefined, null, '0.5', NaN, -0.1, 1.5, {}]) {
+    assert.equal(normalizeVolume(bad), 0.8, `脏值应回落默认：${String(bad)}`);
+  }
+});
+
+test('normalizeLastPlayback：缺字段 / 类型不对 / 负数一律丢弃或归零', () => {
+  const ok = normalizeLastPlayback({ albumPath: 'Vinyl Life/Vinyl Note/A.md', trackKey: 'ne:1', positionSec: 42.7 });
+  assert.deepEqual(plain(ok), { albumPath: 'Vinyl Life/Vinyl Note/A.md', trackKey: 'ne:1', positionSec: 42 }, '位置取整');
+
+  for (const bad of [undefined, null, 'x', [], {}, { albumPath: 'a.md' }, { albumPath: 'a.md', trackKey: '' }]) {
+    assert.equal(normalizeLastPlayback(bad), undefined, `脏数据应丢弃：${JSON.stringify(bad)}`);
+  }
+  const neg = normalizeLastPlayback({ albumPath: 'a.md', trackKey: 'k', positionSec: -5 });
+  assert.equal(neg.positionSec, 0, '负数位置归零（不回放，只是从头开始）');
+  const nan = normalizeLastPlayback({ albumPath: 'a.md', trackKey: 'k', positionSec: 'x' });
+  assert.equal(nan.positionSec, 0, '非数字位置归零');
+});
 
 test('settings：queueOrder 默认 {}，且归一化结果不与默认值共享引用', () => {
   assert.deepEqual(plain(DEFAULT_SETTINGS.queueOrder), {});

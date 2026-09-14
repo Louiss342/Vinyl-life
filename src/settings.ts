@@ -35,6 +35,13 @@ const PAGE_KEYS = [
   'settings.tab.about',
 ];
 
+/** 上次播放位置（重启后恢复用） */
+export interface LastPlayback {
+  albumPath: string;
+  trackKey: string;
+  positionSec: number;
+}
+
 /** 专辑墙每行卡片数：'auto' = 随面板宽度自适应 */
 export type ShelfColumns = 'auto' | number;
 
@@ -68,6 +75,10 @@ export interface VinylSettings {
   shelfProps: string[];
   /** 卡片属性显示名覆写（frontmatter 键 → 名称）；空 = 用预设别名 / 键名兜底 */
   shelfPropLabels: Record<string, string>;
+  /** 播放器音量（0–1）；上次用的音量，重启后沿用 */
+  volume: number;
+  /** 上次播放位置：重启后恢复队列并停在原处（不自动播放）；笔记被删则忽略 */
+  lastPlayback?: LastPlayback;
   /** 播放统计（次数/最近播放，仅存本插件 data.json，不写笔记） */
   stats: VinylStats;
   /** 每张专辑记住自己的自定义队列顺序（专辑笔记路径 → trackKey 顺序）。
@@ -95,6 +106,7 @@ export const DEFAULT_SETTINGS: VinylSettings = {
   shelfColumns: 'auto',
   discDirection: 'right',
   turntableSpeed: 'normal',
+  volume: 0.8,
   shelfProps: [...DEFAULT_SHELF_PROPS],
   shelfPropLabels: {},
   stats: EMPTY_STATS,
@@ -113,6 +125,24 @@ export function normalizeQueueOrder(raw: unknown): Record<string, string[]> {
     if (clean.length) out[albumPath] = clean; // 空顺序 = 没存过，不留空壳
   }
   return out;
+}
+
+/** 一行设置。name/desc 是 Obsidian 设置搜索的索引来源，控件在 render 里装配。
+ *  desc 传空串 = 这一行不带说明（如登录状态行，状态本身就在控件区）。 */
+/** data.json → lastPlayback。脏数据一律丢弃（缺字段 / 类型不对 / 负数位置）；没有有效记录返回 undefined。 */
+export function normalizeLastPlayback(raw: unknown): LastPlayback | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const j = raw as Record<string, unknown>;
+  const albumPath = typeof j.albumPath === 'string' ? j.albumPath.trim() : '';
+  const trackKey = typeof j.trackKey === 'string' ? j.trackKey.trim() : '';
+  const rawPos = typeof j.positionSec === 'number' && isFinite(j.positionSec) ? j.positionSec : 0;
+  if (!albumPath || !trackKey) return undefined;
+  return { albumPath, trackKey, positionSec: Math.max(0, Math.floor(rawPos)) };
+}
+
+/** 音量归一：非数字 / 越界一律回落默认（data.json 可能被手改） */
+export function normalizeVolume(raw: unknown): number {
+  return typeof raw === 'number' && isFinite(raw) && raw >= 0 && raw <= 1 ? raw : DEFAULT_SETTINGS.volume;
 }
 
 /** 一行设置。name/desc 是 Obsidian 设置搜索的索引来源，控件在 render 里装配。

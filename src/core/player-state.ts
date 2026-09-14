@@ -142,7 +142,9 @@ export class PlaybackEngine {
   }
 
   // —— 队列 ——
-  async loadAlbum(album: AlbumInfo): Promise<BuildQueueResult> {
+  /** opts.autoplay 缺省时看设置（「加载队列后立即播放」）；恢复上次会话传 false
+   *  —— 重启 Obsidian 时突然出声是惊吓，不是功能。 */
+  async loadAlbum(album: AlbumInfo, opts?: { autoplay?: boolean }): Promise<BuildQueueResult> {
     const seq = ++this.loadSeq;
     const res = await buildAlbumQueue(album, {
       local: this.deps.local,
@@ -161,7 +163,8 @@ export class PlaybackEngine {
     }
     const source: ActiveSource = res.resolvedSource === 'none' ? 'local' : res.resolvedSource;
     this.setQueue(res.tracks, album.path, album.title, source);
-    if (this.deps.settings().autoPlay) await this.playIndex(0);
+    const autoplay = opts?.autoplay ?? this.deps.settings().autoPlay;
+    if (autoplay) await this.playIndex(0);
     return res;
   }
 
@@ -304,6 +307,49 @@ export class PlaybackEngine {
       this.emit();
       notice(tf('player.cannotPlay', { title: track.title, msg: this.errorMsg }));
     }
+  }
+
+  /** 恢复队列位置（不播放）：加载曲目地址并停在 positionSec 处，等用户自己按播放。
+   *  位置要等元数据到位才设得上（duration 未就绪时赋值会被忽略），所以挂在 loadedmetadata 上。 */
+  async preloadIndex(i: number, positionSec = 0) {
+    if (i < 0 || i >= this.queue.length) return;
+    this.index = i;
+    this.status = 'paused';
+    this.errorMsg = '';
+    this.emit();
+    const track = this.queue[i];
+    const stillCurrent = () => this.queue[this.index] === track;
+    try {
+      const url = await this.resolveUrl(track);
+      if (!stillCurrent()) return;
+      this.quality = this.levelCache.get(trackKey(track)) || '';
+      const applyPosition = () => {
+        this.audio.removeEventListener('loadedmetadata', applyPosition);
+        if (!stillCurrent()) return;
+        const d = isFinite(this.audio.duration) ? this.audio.duration : track.duration || 0;
+        if (d > 0 && positionSec > 0) this.audio.currentTime = Math.min(positionSec, Math.max(0, d - 1));
+        this.emit();
+      };
+      this.audio.addEventListener('loadedmetadata', applyPosition);
+      this.audio.src = url; // 只设 src，不 play()
+      this.emit();
+    } catch (e) {
+      if (!stillCurrent()) return;
+      this.status = 'error';
+      this.errorMsg = String((e as Error).message || e);
+      this.emit();
+    }
+  }
+
+  /** 系统媒体键「播放」：已经在播就不动（别拿 toggle 当 play，否则系统面板会越点越乱） */
+  async play() {
+    if (this.status === 'playing') return;
+    await this.toggle();
+  }
+
+  /** 系统媒体键「暂停」 */
+  pause() {
+    if (this.status === 'playing') this.audio.pause();
   }
 
   async toggle() {

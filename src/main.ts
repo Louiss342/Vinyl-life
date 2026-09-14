@@ -1,7 +1,14 @@
 // Vinyl Life —— 主入口：注册视图 / 命令 / 设置面板，装配服务层与播放引擎。
 // 本地源（零后端）+ 网易云源（懒加载 Node 网关）统一为 Track 队列。
 import { Editor, Plugin, TFile, MarkdownView, WorkspaceLeaf, normalizePath } from 'obsidian';
-import { VinylSettings, DEFAULT_SETTINGS, VinylSettingTab, normalizeQueueOrder } from './settings';
+import {
+  VinylSettings,
+  DEFAULT_SETTINGS,
+  VinylSettingTab,
+  normalizeLastPlayback,
+  normalizeQueueOrder,
+  normalizeVolume,
+} from './settings';
 import { ServerManager } from './core/server-manager';
 import { ServerClient } from './core/server-client';
 import { WebClient } from './core/web-client';
@@ -12,6 +19,8 @@ import { QqService } from './core/qq';
 import { QqAuth } from './core/qq-auth';
 import { LocalSource } from './core/local-source';
 import { PlaybackEngine } from './core/player-state';
+import type { PlayerSnapshot } from './core/player-state';
+import { syncMediaSession } from './core/media-session';
 import { VinylPlayerView, PLAYER_VIEW_TYPE } from './views/player-view';
 import { VinylShelfView, SHELF_VIEW_TYPE } from './views/shelf-view';
 import { HandoffController } from './animation/handoff';
@@ -128,6 +137,20 @@ export default class VinylLifePlugin extends Plugin {
       onQueueOrderChange: (albumPath, keys) => this.rememberQueueOrder(albumPath, keys),
       onQueueOrderClear: (albumPath) => this.forgetQueueOrder(albumPath),
     });
+    // 音量沿用上次（引擎默认 0.8，这里覆盖成用户自己的值）
+    this.engine.setVolume(this.settings.volume);
+    // 系统媒体键（媒体键 / 耳机按键 / 系统媒体面板）：挂在插件层，播放器关着也管用。
+    // 顺带把「音量 + 播放位置」防抖落盘（与统计、队列顺序共用同一条 5 秒防抖）。
+    this.engine.subscribe((s) => {
+      syncMediaSession(s, {
+        play: () => void this.engine.play(),
+        pause: () => this.engine.pause(),
+        next: () => void this.engine.next(),
+        prev: () => void this.engine.prev(),
+        seek: (ratio) => this.engine.seek(ratio),
+      });
+      this.rememberPlayback(s);
+    });
     this.handoff = new HandoffController(this);
 
     // 视图与命令
@@ -164,8 +187,27 @@ export default class VinylLifePlugin extends Plugin {
       name: t('cmd.insertNowPlaying'),
       callback: () => this.insertNowPlaying(),
     });
+    // 播放控制：给快捷键与命令面板用（媒体键另走 MediaSession，见引擎订阅）
+    this.addCommand({
+      id: 'player-toggle',
+      name: t('player.playPause'),
+      callback: () => void this.engine.toggle(),
+    });
+    this.addCommand({
+      id: 'player-next',
+      name: t('player.next'),
+      callback: () => void this.engine.next(),
+    });
+    this.addCommand({
+      id: 'player-prev',
+      name: t('player.prev'),
+      callback: () => void this.engine.prev(),
+    });
     if (this.settings.debugCommands) this.registerDebugCommands();
     this.addSettingTab(new VinylSettingTab(this.app, this));
+
+    // 恢复上次的队列位置（不自动播放）：放在最后，失败也不影响插件可用
+    void this.restoreLastPlayback();
 
   }
 
@@ -227,6 +269,9 @@ export default class VinylLifePlugin extends Plugin {
     this.settings.shelfPropLabels = normalizeShelfPropLabels(data?.shelfPropLabels);
     // 队列自定义顺序：非对象 / 非字符串数组一律丢弃（data.json 可能被手改或来自旧版本）
     this.settings.queueOrder = normalizeQueueOrder(data?.queueOrder);
+    // 音量与上次播放位置：脏数据一律回落（data.json 可能被手改或来自旧版本）
+    this.settings.volume = normalizeVolume(data?.volume);
+    this.settings.lastPlayback = normalizeLastPlayback(data?.lastPlayback);
     // 调试命令开关：只认布尔 true（data.json 可能被手改成字符串，别让 "false" 也开启）
     this.settings.debugCommands = data?.debugCommands === true;
     // 外观项归一（data.json 可能来自旧版本或被手改）
@@ -247,6 +292,39 @@ export default class VinylLifePlugin extends Plugin {
     // 配色项（不认识的旧值由 normalize* 回落默认）
     this.settings.playerDeck = normalizeDeckStyle(data?.playerDeck);
     this.settings.recordColor = normalizeRecordColor(data?.recordColor);
+  }
+
+  /** 音量与播放位置的防抖持久化入口（引擎每次 emit 都会调，落盘由 5 秒防抖兜住） */
+  private rememberPlayback(s: PlayerSnapshot) {
+    this.settings.volume = s.volume;
+    // 没有当前曲目时别覆盖上次的记录（否则关掉播放器再重启就恢复不出东西了）
+    if (s.current && s.albumNotePath) {
+      this.settings.lastPlayback = {
+        albumPath: s.albumNotePath,
+        trackKey: trackKey(s.current),
+        positionSec: Math.max(0, Math.floor(s.currentTime)),
+      };
+    }
+    this.scheduleStatsSave();
+  }
+
+  /** 恢复上次播放的专辑与进度（不自动播放）。任何一步失败都静默放弃 —— 这属于锦上添花，不该阻塞启动。 */
+  private async restoreLastPlayback() {
+    const saved = this.settings.lastPlayback;
+    if (!saved) return;
+    try {
+      const file = this.app.vault.getAbstractFileByPath(saved.albumPath);
+      if (!(file instanceof TFile)) return; // 笔记被删 / 改名了
+      const album = getAlbumInfo(this.app, file, { coverFolder: this.settings.coverFolder });
+      if (!album) return;
+      const res = await this.engine.loadAlbum(album, { autoplay: false });
+      if (!res.tracks.length) return;
+      const queue = this.engine.snapshot().queue;
+      const i = queue.findIndex((tr) => trackKey(tr) === saved.trackKey);
+      await this.engine.preloadIndex(i >= 0 ? i : 0, saved.positionSec);
+    } catch (e) {
+      console.warn('[vinyl] 恢复上次播放失败', e);
+    }
   }
 
   // 设置页改动外观项后，就地刷新已打开的专辑墙与播放器（不重建 DOM，仅换类与 CSS 变量）
