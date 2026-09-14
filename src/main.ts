@@ -11,6 +11,8 @@ import {
   normalizeVolume,
 } from './settings';
 import { ServerManager } from './core/server-manager';
+import { installStyleFallback } from './core/style-fallback';
+import { STYLE_GZIP } from './core/style-bundle';
 import { ServerClient } from './core/server-client';
 import { WebClient } from './core/web-client';
 import { NeteaseService } from './core/netease';
@@ -94,6 +96,10 @@ export default class VinylLifePlugin extends Plugin {
   handoff!: HandoffController;
 
   async onload() {
+    // 样式兜底：手工安装漏掉 styles.css 时挂上构建期内联的副本（正常安装返回 null，什么都不做）
+    const disposeStyleFallback = installStyleFallback(pluginAbsPath(this, 'styles.css'), STYLE_GZIP);
+    if (disposeStyleFallback) this.register(disposeStyleFallback);
+
     await this.loadSettings();
 
     // 首次运行自动搭好目录结构（默认 Vinyl Life/{audio, covers, Vinyl Note}）：

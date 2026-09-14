@@ -7,6 +7,7 @@ main.js.map
 server.js
 server.js.map
 src/core/gateway-bundle.ts
+src/core/style-bundle.ts
 
 # 凭据与运行时状态（绝不入库）
 .cookie

@@ -21,8 +21,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # 顺序不可调换：build 会生成 src/core/gateway-bundle.ts（已 gitignore），
-      # typecheck（tsc --noEmit）依赖这个文件存在。
+      # 顺序不可调换：build 会生成 src/core/gateway-bundle.ts 与 src/core/style-bundle.ts
+      # （均已 gitignore），typecheck（tsc --noEmit）依赖这两个文件存在。
       - name: Build
         run: npm run build
 

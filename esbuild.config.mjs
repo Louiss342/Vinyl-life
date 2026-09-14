@@ -1,7 +1,9 @@
-// 双产物构建：
+// 三产物构建：
 //   1) server.js —— 独立网关产物，供 CLI 联调 / 本地排查（发布不携带）
 //   2) src/core/gateway-bundle.ts —— 把网关源码内联成 TS 模块，随 main.js 一起分发
 //      （社区市场只安装 main.js / manifest.json / styles.css，运行时再把源码落盘到临时目录 spawn）
+//   3) src/core/style-bundle.ts —— 把 styles.css 内联成 TS 模块：手工安装漏掉样式文件时，
+//      插件把它挂成构造样式表兜底（见 src/core/style-fallback.ts），界面不至于完全无样式
 import esbuild from 'esbuild';
 import fs from 'fs';
 import crypto from 'crypto';
@@ -23,6 +25,7 @@ const common = {
 };
 
 const GATEWAY_BUNDLE = 'src/core/gateway-bundle.ts';
+const STYLE_BUNDLE = 'src/core/style-bundle.ts';
 
 async function build() {
   // 1) 网关产物（内联用到的网易云子模块与 server/qq.js，可独立运行）
@@ -50,6 +53,20 @@ async function build() {
       `export const GATEWAY_GZIP = ${JSON.stringify(gz)};\n`
   );
 
+  // 2.5) styles.css → TS 模块（构建中间产物，不提交）：
+  //      手工安装漏掉 styles.css 时，插件用它挂一张构造样式表兜底（见 src/core/style-fallback.ts）。
+  //      与网关同一保证：构建期当场校验「解压结果与源文件逐字节一致」，坏了直接构建失败。
+  const cssSrc = fs.readFileSync('styles.css');
+  const cssGz = zlib.gzipSync(cssSrc, { level: 9 }).toString('base64');
+  if (!zlib.gunzipSync(Buffer.from(cssGz, 'base64')).equals(cssSrc)) {
+    throw new Error('styles.css 内联校验失败：解压结果与源文件不一致');
+  }
+  fs.writeFileSync(
+    STYLE_BUNDLE,
+    '// 由 esbuild.config.mjs 构建时生成，请勿手改、勿提交（见 .gitignore）。\n' +
+      `export const STYLE_GZIP = ${JSON.stringify(cssGz)};\n`
+  );
+
   // 3) 前端插件产物（minify；体积预算见 build 末尾的 MAIN_JS_BUDGET，超了直接失败）
   await esbuild.build({
     ...common,
@@ -62,13 +79,13 @@ async function build() {
   });
 
   const sizes = {};
-  for (const f of ['main.js', 'server.js', GATEWAY_BUNDLE]) {
+  for (const f of ['main.js', 'server.js', GATEWAY_BUNDLE, STYLE_BUNDLE]) {
     const s = fs.statSync(f).size;
     sizes[f] = s;
     console.log(`[vinyl-build] ${f}: ${(s / 1024).toFixed(1)} KB`);
   }
 
-  // 体积预算：main.js 是社区市场分发的下载主体（server.js / gateway-bundle 都会内联进去）。
+  // 体积预算：main.js 是社区市场分发的下载主体（server.js / gateway-bundle / styles.css 都会内联进去）。
   // 超了就构建失败而不是只打日志 —— 悄悄涨到几 MB 是没人会注意的那种退化。改预算时同步 README。
   const MAIN_JS_BUDGET = 260 * 1024;
   if (sizes['main.js'] > MAIN_JS_BUDGET) {

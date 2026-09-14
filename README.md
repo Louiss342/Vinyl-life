@@ -152,7 +152,7 @@ Vinyl Life/
 
 社区插件审核会列出插件用到的系统能力，这里逐条说明用途。插件只在你的机器上运行，这些能力都只服务于上面写的功能。
 
-- **本地文件读写（Node `fs`）**：按你填写的绝对路径读取库外的音频目录（外链模式）；在插件目录保存登录凭据、设备标识与播放统计；把内联的网关源码落到系统临时目录后再启动。库内笔记、封面和复制进库的音频一律走 Obsidian 的 vault 接口，不直接读写文件系统。
+- **本地文件读写（Node `fs`）**：按你填写的绝对路径读取库外的音频目录（外链模式）；在插件目录保存登录凭据、设备标识与播放统计；检查插件目录里的 `styles.css` 是否在位（手工安装漏了样式文件就挂出内置副本，避免界面裸奔）；把内联的网关源码落到系统临时目录后再启动。库内笔记、封面和复制进库的音频一律走 Obsidian 的 vault 接口，不直接读写文件系统。
 - **启动子进程（`child_process`）**：在线音源需要本机网关进程去对接网易云 / QQ 音乐的接口，插件用你系统里的 Node.js 把它启动起来，监听 `127.0.0.1` 上的随机空闲端口。纯本地音源不需要 Node.js，也不会启动任何进程。插件重载时会清理上一轮遗留的网关进程；这一步会读一次进程命令行，确认目标确实是本插件启动的网关，以免误杀别的程序。
 - **网关鉴权**：网关虽然只监听 `127.0.0.1`，但本机上任何程序、浏览器里的任何页面都能扫到这个端口。所以每次启动网关都会生成一个随机 token 交给它，插件发出的每个请求都必须带上；没有 token 的请求一律拒绝，网关也不发任何 CORS 头。封面的网络代理另有护栏：只允许 http(s)、目标地址不能是本机或内网、只接收图片，并限时 10 秒、限 12 MB。
 - **列举库内文件**：专辑墙要找出所有带 `tags: [album]` 的笔记，因此会枚举库内 Markdown 笔记与图片的路径（封面选择器）。除此之外不读取笔记内容。
@@ -170,8 +170,8 @@ npm test
 ```
 
 - `npm install`：安装依赖。
-- `npm run build`：构建，产出 `main.js`（插件本体）、`server.js`（本地网关，独立调试用）和 `src/core/gateway-bundle.ts`（构建生成物，勿手改）。
-- `npm run typecheck`：类型检查。它依赖 build 先生成 `src/core/gateway-bundle.ts`，两步顺序不能反。
+- `npm run build`：构建，产出 `main.js`（插件本体）、`server.js`（本地网关，独立调试用）和 `src/core/gateway-bundle.ts`、`src/core/style-bundle.ts`（这两个是构建生成物，勿手改）。
+- `npm run typecheck`：类型检查。它依赖 build 先生成 `src/core/gateway-bundle.ts` 与 `src/core/style-bundle.ts`，两步顺序不能反。
 - `npm run lint`：ESLint（含官方审核规则集），提交前保持零报错。
 - `npm test`：跑测试，200 多项，纯 Node 环境，不需要 Obsidian。
 - `main.js` 有体积预算（260 KB，超出直接构建失败）：它是社区市场的下载主体，预算写在 `esbuild.config.mjs`。
@@ -182,6 +182,7 @@ npm test
 - `src/views`：专辑墙、播放器与各类弹窗。
 - `src/animation`：交接动效。
 - `server/`：本地网关源码，构建时内联进 `main.js`。
+- `styles.css`：界面样式；构建时同样内联一份进 `main.js`（手工安装漏掉样式文件时的兜底，见 `src/core/style-fallback.ts`）。
 
 本地调试时，把 `main.js`、`manifest.json` 和 `styles.css` 放进 `<vault>/.obsidian/plugins/vinyl-life/`，重新加载 Obsidian 即可。
 
@@ -333,7 +334,7 @@ Login credentials, settings, and playback statistics are stored in the plugin fo
 
 Community plugin reviews list the system capabilities a plugin uses; here is what each one is for. The plugin runs only on your own machine, and every capability below serves the features described above.
 
-- **Local file access (Node `fs`)**: reading audio folders outside the vault that you reference by absolute path (linked mode); keeping login credentials, the device identifier, and playback statistics in the plugin folder; and writing the inlined gateway source to the system temp folder before launching it. Notes, covers, and audio copied into the vault all go through Obsidian's vault API instead.
+- **Local file access (Node `fs`)**: reading audio folders outside the vault that you reference by absolute path (linked mode); keeping login credentials, the device identifier, and playback statistics in the plugin folder; checking whether `styles.css` is present in the plugin folder (if missing, a built-in copy is applied so the UI stays styled); and writing the inlined gateway source to the system temp folder before launching it. Notes, covers, and audio copied into the vault all go through Obsidian's vault API instead.
 - **Launching a child process (`child_process`)**: online sources need a local gateway process to talk to the NetEase Cloud Music and QQ Music APIs. The plugin starts it with the Node.js on your system, listening on a random free port on `127.0.0.1`. Local audio needs no Node.js and starts no process. When the plugin reloads it cleans up the gateway process left over from the previous run; that step reads the process command line once to confirm the target really is a gateway this plugin started, so it never kills an unrelated program.
 - **Gateway authentication**: the gateway listens on `127.0.0.1` only, but any process on the machine — including a web page in a browser — can scan for that port. So every launch generates a random token for the gateway, and each request the plugin sends carries it; requests without the token are rejected, and the gateway sends no CORS headers at all. The cover proxy has its own guard rails: http(s) only, the target must not resolve to the local machine or a private network, only images are accepted, and it is capped at 10 seconds and 12 MB.
 - **Scanning vault files**: the album shelf needs to find every note tagged `tags: [album]`, so it enumerates the paths of Markdown notes in the vault, and the cover picker lists images in the vault. Nothing else is read from your notes.
@@ -351,8 +352,8 @@ npm test
 ```
 
 - `npm install`: install dependencies.
-- `npm run build`: build, producing `main.js` (the plugin itself), `server.js` (the local gateway, for standalone debugging), and `src/core/gateway-bundle.ts` (a generated file — do not edit it by hand).
-- `npm run typecheck`: type-check. It depends on `npm run build` having generated `src/core/gateway-bundle.ts` first, so the order cannot be reversed.
+- `npm run build`: build, producing `main.js` (the plugin itself), `server.js` (the local gateway, for standalone debugging), and `src/core/gateway-bundle.ts` / `src/core/style-bundle.ts` (both generated — do not edit them by hand).
+- `npm run typecheck`: type-check. It depends on `npm run build` having generated `src/core/gateway-bundle.ts` / `src/core/style-bundle.ts` first, so the order cannot be reversed.
 - `npm run lint`: ESLint with the official review rule set; keep it clean before committing.
 - `npm test`: run the tests — 200+ of them, in plain Node, with no Obsidian required.
 - `main.js` has a size budget (260 KB; exceeding it fails the build) because it is what the community store downloads — the budget lives in `esbuild.config.mjs`.
@@ -363,6 +364,7 @@ Source layout:
 - `src/views`: album shelf, player, and the various modals.
 - `src/animation`: handoff animation.
 - `server/`: the local gateway source, inlined into `main.js` at build time.
+- `styles.css`: the UI styling; a copy is also inlined into `main.js` at build time as a fallback for installs missing the stylesheet (see `src/core/style-fallback.ts`).
 
 To debug locally, put `main.js`, `manifest.json`, and `styles.css` into `<vault>/.obsidian/plugins/vinyl-life/` and reload Obsidian.
 

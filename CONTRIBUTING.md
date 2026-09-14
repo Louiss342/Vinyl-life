@@ -8,7 +8,7 @@
 
 ```bash
 npm install
-npm run build      # 生成 src/core/gateway-bundle.ts，typecheck 依赖它
+npm run build      # 生成 src/core/gateway-bundle.ts / style-bundle.ts，typecheck 依赖它们
 npm run typecheck
 npm run lint
 npm test
@@ -21,7 +21,7 @@ npm test
 ## 代码约定
 
 - **用户可见文案一律走 i18n**：用 `t()` / `tf()`，键写进 `src/core/i18n.ts` 的 `DICT`，中英两套都要有且不相同。测试会检查「源码里用到的每个键都在词典里」以及「中英齐备」，拼错键名或漏译文会直接红。
-- **样式只写在 `styles.css`**：不要写内联 `style`（Obsidian 审核明确要求）。需要主题适配就用 `var(--...)` 变量。
+- **样式只写在 `styles.css`**：不要写内联 `style`（Obsidian 审核明确要求）。需要主题适配就用 `var(--...)` 变量。构建会把 `styles.css` 内联一份进 `main.js`（`src/core/style-fallback.ts`：安装漏文件时用构造样式表兜底，不建 `<style>` 元素）——改样式只需改 `styles.css`，内联副本构建时自动同步。
 - **定时器走 `window.*`**：`window.setTimeout` / `window.setInterval`，弹出窗口场景下才正常。
 - **网络请求用 `requestUrl`**，不要用 `fetch`（插件环境下的跨域与凭据行为不同）。
 - **不要引入已废弃 API**：设置面板用声明式 API（`getSettingDefinitions()`，`minAppVersion` 1.13.0），每行一条设置定义 —— `name`/`desc` 会进 Obsidian 的设置搜索；需要整面板刷新时用 `refreshPanel()`，它为什么要绕一圈写在注释里，别改成裸 `update()`。
@@ -67,7 +67,7 @@ The minimum is five steps, and the order matters:
 
 ```bash
 npm install
-npm run build      # generates src/core/gateway-bundle.ts, which typecheck depends on
+npm run build      # generates src/core/gateway-bundle.ts / style-bundle.ts, which typecheck depends on
 npm run typecheck
 npm run lint
 npm test
@@ -80,7 +80,7 @@ Local debugging: copy `main.js`, `manifest.json` and `styles.css` into `<vault>/
 ## Code conventions
 
 - **User-visible text always goes through i18n**: use `t()` / `tf()` and add the key to `DICT` in `src/core/i18n.ts` with both Chinese and English, non-identical. Tests fail if a key used in the source is missing from the dictionary, or if a translation is missing.
-- **Styling belongs in `styles.css`**: no inline `style` attributes (an explicit Obsidian review requirement). Use `var(--...)` theme variables for theming.
+- **Styling belongs in `styles.css`**: no inline `style` attributes (an explicit Obsidian review requirement). Use `var(--...)` theme variables for theming. The build inlines a copy of `styles.css` into `main.js` (`src/core/style-fallback.ts`: applied via a constructed stylesheet when an install is missing the file — never by creating a `<style>` element), so editing `styles.css` is all it takes and the inlined copy follows at build time.
 - **Use `window.*` timers**: `window.setTimeout` / `window.setInterval`, so popout windows behave.
 - **Use `requestUrl`**, not `fetch` — cross-origin and credential handling differ inside the plugin sandbox.
 - **No deprecated APIs**: the settings panel uses the declarative API (`getSettingDefinitions()`, `minAppVersion` 1.13.0) with one definition per row, so `name`/`desc` reach Obsidian's settings search. Use `refreshPanel()` for a full-panel refresh; the comment explains why a bare `update()` is wrong there — please don't "simplify" it back.

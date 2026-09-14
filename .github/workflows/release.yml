@@ -25,7 +25,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # 与 CI 相同的构建顺序：build 生成 src/core/gateway-bundle.ts 并打进 main.js
+      # 与 CI 相同的构建顺序：build 生成 src/core/gateway-bundle.ts / style-bundle.ts 并打进 main.js
       - name: Build
         run: npm run build
 

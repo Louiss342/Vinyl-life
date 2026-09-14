@@ -13,6 +13,7 @@ export default defineConfig([
       'main.js',
       'server.js',
       'src/core/gateway-bundle.ts',
+      'src/core/style-bundle.ts',
     ],
   },
   {
