@@ -571,8 +571,8 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'settings.logoutDescQq': { zh: '清除本机 Cookie（.qq-cookie）', en: 'Clear the local cookie (.qq-cookie)' },
   'settings.sub.runtime': { zh: '运行环境', en: 'Runtime' },
   'settings.nodeMissing': {
-    zh: '未探测（在线音源首次使用时自动探测；未安装则仅本地源可用）',
-    en: 'Not detected yet (detected on first online use; without Node.js only local sources work)',
+    zh: '未检测到（在线音源自动使用应用内网关）',
+    en: 'Not detected (online sources use the in-app gateway)',
   },
   'settings.redetect': { zh: '重新探测', en: 'Detect again' },
   'settings.detecting': { zh: '探测中…', en: 'Detecting…' },
@@ -828,10 +828,14 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   },
   'queue.qqFailed': { zh: '获取 QQ 音乐专辑失败：{msg}', en: 'Could not fetch the QQ Music album: {msg}' },
 
-  // —— 网关与 Node 环境（core/server-manager）——
-  'gateway.nodeMissing': {
-    zh: '未找到 Node.js：在线音源（网易云 / QQ 音乐）需要系统 Node（PATH 与常见安装路径均未探测到）。纯本地源不受影响；可前往 nodejs.org 安装，或重启 Obsidian 后在设置里「重新探测」。',
-    en: 'Node.js not found: online sources (NetEase / QQ Music) need a system Node (not found on PATH or in the usual install locations). Local audio is unaffected — install it from nodejs.org, or restart Obsidian and hit “Detect again” in the settings.',
+  // —— 网关与运行环境（core/server-manager）——
+  'gateway.inAppUnavailable': {
+    zh: '未找到 Node.js，且应用内网关在本机不可用：在线音源（网易云 / QQ 音乐）暂不可用。可安装 Node.js（nodejs.org）后重启 Obsidian，或在设置里「重新探测」。',
+    en: 'No Node.js found and the in-app gateway is unavailable on this machine: online sources (NetEase / QQ Music) are unavailable. Install Node.js from nodejs.org and restart Obsidian, or hit “Detect again” in the settings.',
+  },
+  'gateway.inAppStartFailed': {
+    zh: '应用内网关启动失败：{msg}。可安装 Node.js（nodejs.org）后重启 Obsidian 作为替代。',
+    en: 'The in-app gateway failed to start: {msg}. Installing Node.js (nodejs.org) and restarting Obsidian is a fallback.',
   },
   'gateway.crashLoop': {
     zh: '网关多次崩溃（最近一次退出码 {code}），已停止自动重启（可在设置里重试，或查看 gateway.log）',

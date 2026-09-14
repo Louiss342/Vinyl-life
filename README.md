@@ -67,7 +67,7 @@ Vinyl Life 把专辑笔记展示成一张张唱片，配有黑胶唱机样式的
 
 在设置的「源」页面登录自己的账号。支持扫码、打开官方登录页面，以及手动填写 Cookie。QQ 的插件内二维码需要用手机 QQ 扫描；也可以选择浏览器登录，在官方页面完成登录。
 
-在线音源需要电脑安装 Node.js 18 或以上版本。首次使用时，插件会启动本机网关；只听本地文件不需要额外安装 Node.js。
+在线音源不再要求安装 Node.js：首次使用时插件会自动启动本机网关——装了 Node.js 走独立进程，没装就用 Obsidian 自带的 Node 在应用内运行；只听本地文件则完全不会启动网关。
 
 ## 专辑笔记与听歌记录
 
@@ -138,7 +138,7 @@ Vinyl Life/
 3. 重新加载 Obsidian，在「设置 → 第三方插件」中启用 Vinyl Life。
 4. 在命令面板中搜索 Vinyl Life，打开专辑墙，导入一张专辑。
 
-如果准备使用网易云或 QQ 音乐，先安装 Node.js，重启 Obsidian 后到插件的「源」设置页登录账号。
+如果准备使用网易云或 QQ 音乐，直接在插件的「源」设置页登录账号即可，无需安装 Node.js（装了则网关改走独立进程，隔离更彻底）。
 
 ## 在线音源与数据
 
@@ -152,8 +152,8 @@ Vinyl Life/
 
 社区插件审核会列出插件用到的系统能力，这里逐条说明用途。插件只在你的机器上运行，这些能力都只服务于上面写的功能。
 
-- **本地文件读写（Node `fs`）**：按你填写的绝对路径读取库外的音频目录（外链模式）；在插件目录保存登录凭据、设备标识与播放统计；检查插件目录里的 `styles.css` 是否在位（手工安装漏了样式文件就挂出内置副本，避免界面裸奔）；把内联的网关源码落到系统临时目录后再启动。库内笔记、封面和复制进库的音频一律走 Obsidian 的 vault 接口，不直接读写文件系统。
-- **启动子进程（`child_process`）**：在线音源需要本机网关进程去对接网易云 / QQ 音乐的接口，插件用你系统里的 Node.js 把它启动起来，监听 `127.0.0.1` 上的随机空闲端口。纯本地音源不需要 Node.js，也不会启动任何进程。插件重载时会清理上一轮遗留的网关进程；这一步会读一次进程命令行，确认目标确实是本插件启动的网关，以免误杀别的程序。
+- **本地文件读写（Node `fs`）**：按你填写的绝对路径读取库外的音频目录（外链模式）；在插件目录保存登录凭据、设备标识与播放统计；检查插件目录里的 `styles.css` 是否在位（手工安装漏了样式文件就挂出内置副本，避免界面裸奔）；把内联的网关源码落到系统临时目录后再启动（装了 Node.js 以独立进程运行，否则用 Electron 自带的 Node 在应用内运行）。库内笔记、封面和复制进库的音频一律走 Obsidian 的 vault 接口，不直接读写文件系统。
+- **启动子进程 / 应用内网关**：在线音源需要本机网关去对接网易云 / QQ 音乐的接口——装了 Node.js 时插件用系统 Node 以独立进程把它启动起来，没装时改用 Electron 自带的 Node（utility process）启动；两种方式都监听 `127.0.0.1` 上的随机空闲端口。纯本地音源不会启动任何网关。插件重载时会清理上一轮遗留的网关进程（读一次进程命令行，确认目标确实是本插件启动的，以免误杀别的程序）；应用内模式随 Obsidian 退出自动回收。
 - **网关鉴权**：网关虽然只监听 `127.0.0.1`，但本机上任何程序、浏览器里的任何页面都能扫到这个端口。所以每次启动网关都会生成一个随机 token 交给它，插件发出的每个请求都必须带上；没有 token 的请求一律拒绝，网关也不发任何 CORS 头。封面的网络代理另有护栏：只允许 http(s)、目标地址不能是本机或内网、只接收图片，并限时 10 秒、限 12 MB。
 - **列举库内文件**：专辑墙要找出所有带 `tags: [album]` 的笔记，因此会枚举库内 Markdown 笔记与图片的路径（封面选择器）。除此之外不读取笔记内容。
 
@@ -249,7 +249,7 @@ Paste an album link or ID and the plugin fetches the album information, creates 
 
 Sign in to your own account on the Sources settings page. Scanning a QR code, opening the official login page, and entering cookies by hand are all supported. For QQ, the QR code shown inside the plugin has to be scanned with mobile QQ; you can also choose browser login and finish signing in on the official page.
 
-Online sources require Node.js 18 or later installed on your computer. On first use the plugin starts a local gateway; if you only listen to local files, no extra Node.js installation is needed.
+Online sources no longer require Node.js: on first use the plugin starts a local gateway — with Node.js installed it runs as a separate process, otherwise it runs in-app on the Node bundled with Obsidian. If you only listen to local files, no gateway is started at all.
 
 ## Album notes and listening log
 
@@ -320,7 +320,7 @@ Vinyl Life/
 3. Reload Obsidian and enable Vinyl Life under Settings → Community plugins.
 4. Search for Vinyl Life in the command palette, open the album shelf, and import an album.
 
-If you plan to use NetEase Cloud Music or QQ Music, install Node.js first, restart Obsidian, and then sign in to your account on the plugin's Sources settings page.
+To use NetEase Cloud Music or QQ Music, just sign in on the plugin's Sources settings page — no Node.js installation is required (with Node.js installed the gateway runs as a separate process instead, which isolates it further).
 
 ## Online sources and data
 
@@ -334,8 +334,8 @@ Login credentials, settings, and playback statistics are stored in the plugin fo
 
 Community plugin reviews list the system capabilities a plugin uses; here is what each one is for. The plugin runs only on your own machine, and every capability below serves the features described above.
 
-- **Local file access (Node `fs`)**: reading audio folders outside the vault that you reference by absolute path (linked mode); keeping login credentials, the device identifier, and playback statistics in the plugin folder; checking whether `styles.css` is present in the plugin folder (if missing, a built-in copy is applied so the UI stays styled); and writing the inlined gateway source to the system temp folder before launching it. Notes, covers, and audio copied into the vault all go through Obsidian's vault API instead.
-- **Launching a child process (`child_process`)**: online sources need a local gateway process to talk to the NetEase Cloud Music and QQ Music APIs. The plugin starts it with the Node.js on your system, listening on a random free port on `127.0.0.1`. Local audio needs no Node.js and starts no process. When the plugin reloads it cleans up the gateway process left over from the previous run; that step reads the process command line once to confirm the target really is a gateway this plugin started, so it never kills an unrelated program.
+- **Local file access (Node `fs`)**: reading audio folders outside the vault that you reference by absolute path (linked mode); keeping login credentials, the device identifier, and playback statistics in the plugin folder; checking whether `styles.css` is present in the plugin folder (if missing, a built-in copy is applied so the UI stays styled); and writing the inlined gateway source to the system temp folder before launching it (as a separate process with system Node.js when installed, or in-app on Electron's bundled Node otherwise). Notes, covers, and audio copied into the vault all go through Obsidian's vault API instead.
+- **Gateway process**: online sources need a local gateway to talk to the NetEase Cloud Music and QQ Music APIs — with Node.js installed the plugin launches it as a separate process with your system Node.js; without it, it launches the same gateway with Electron's bundled Node (utility process). Either way it listens on a random free port on `127.0.0.1`. Local audio starts no gateway. When the plugin reloads it cleans up the gateway process left over from the previous run (that step reads the process command line once to confirm the target really is a gateway this plugin started, so it never kills an unrelated program); the in-app gateway is reclaimed automatically when Obsidian exits.
 - **Gateway authentication**: the gateway listens on `127.0.0.1` only, but any process on the machine — including a web page in a browser — can scan for that port. So every launch generates a random token for the gateway, and each request the plugin sends carries it; requests without the token are rejected, and the gateway sends no CORS headers at all. The cover proxy has its own guard rails: http(s) only, the target must not resolve to the local machine or a private network, only images are accepted, and it is capped at 10 seconds and 12 MB.
 - **Scanning vault files**: the album shelf needs to find every note tagged `tags: [album]`, so it enumerates the paths of Markdown notes in the vault, and the cover picker lists images in the vault. Nothing else is read from your notes.
 

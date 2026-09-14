@@ -13,6 +13,8 @@ import { getLanguage } from './i18n';
 import { gunzipSync } from 'zlib';
 import { GATEWAY_HASH, GATEWAY_GZIP } from './gateway-bundle';
 import { t, tf } from './i18n';
+import { loadUtilityProcess } from './in-app-gateway';
+import type { UtilityProcessLike } from './in-app-gateway';
 
 export type ServerState = 'stopped' | 'starting' | 'running' | 'error';
 
@@ -51,6 +53,8 @@ export class ServerManager {
   readonly token: string = randomToken();
 
   private child: ChildProcess | null = null;
+  /** 应用内网关进程（Electron utilityProcess；仅在未装系统 Node 时使用，见 startInApp） */
+  private utility: UtilityProcessLike | null = null;
   private port = 0;
   private startPromise: Promise<boolean> | null = null;
   private stopping = false;
@@ -129,16 +133,12 @@ export class ServerManager {
     this.lastError = '';
     this.stopping = false;
     if (!this.nodeBinary) this.nodeBinary = await this.resolveNodeBinary();
-    if (!this.nodeBinary) {
-      this.state = 'error';
-      this.lastError =
-        t('gateway.nodeMissing');
-      console.error('[vinyl] ' + this.lastError);
-      return false;
-    }
-    // 插件每次重载都会 spawn 新网关；旧进程不清会常驻堆积，先按 PID 记录清掉上一个。
+    // 插件每次重载都会起新网关；旧进程不清会常驻堆积，先按 PID 记录清掉上一个。
     await this.killStaleGateway();
     this.port = await this.findFreePort();
+    // 没装系统 Node：改用 Electron 自带的 Node（utilityProcess）在应用内跑同一个网关产物。
+    // 装了 Node 的用户仍走下面的独立进程分支：隔离与清理逻辑保持原样。
+    if (!this.nodeBinary) return this.startInApp();
     let gateway = '';
     try {
       gateway = this.materializeGateway();
@@ -171,15 +171,7 @@ export class ServerManager {
       this.state = 'stopped';
       this.forgetPid();
       if (wasIntentional) return;
-      if (this.restarts < this.maxRestarts) {
-        this.restarts++;
-        window.setTimeout(() => {
-          void this.ensure();
-        }, 500);
-      } else {
-        this.state = 'error';
-        this.lastError = tf('gateway.crashLoop', { code: code ?? t('gateway.exitCodeUnknown') });
-      }
+      this.scheduleRestart(code);
     });
 
     // 就绪等待（最多 15s）
@@ -209,6 +201,95 @@ export class ServerManager {
     this.lastError = msg;
     console.error('[vinyl] ' + msg);
     return false;
+  }
+
+  // —— 应用内网关（没装系统 Node 时的兜底）——
+  // 用 Electron 自带的 Node（utilityProcess.fork）跑同一个网关产物：扫码登录 / 导入 / 播放
+  // 等在线能力不再要求用户安装 Node.js。装了 Node 的用户走独立进程（start 的下半段），
+  // 隔离、清理、崩溃自愈完全不动；两条路共用同一份网关源码、同一套 env、同一条就绪检查。
+  private async startInApp(): Promise<boolean> {
+    const up = loadUtilityProcess();
+    if (!up) {
+      this.state = 'error';
+      this.lastError = t('gateway.inAppUnavailable');
+      console.error('[vinyl] ' + this.lastError);
+      return false;
+    }
+    let gateway = '';
+    try {
+      gateway = this.materializeGateway();
+    } catch (e) {
+      this.state = 'error';
+      this.lastError = (e as Error).message;
+      console.error('[vinyl] ' + this.lastError);
+      return false;
+    }
+    try {
+      this.utility = up.fork(gateway, [], {
+        env: this.gatewayEnv(),
+        stdio: 'ignore', // 网关自己写 gateway.log；stdout/stderr 不读
+        serviceName: 'Vinyl Life Gateway',
+      });
+      this.attachUtilityExit(this.utility);
+    } catch (e) {
+      this.utility = null;
+      this.state = 'error';
+      this.lastError = tf('gateway.inAppStartFailed', { msg: (e as Error).message });
+      console.error('[vinyl] ' + this.lastError);
+      return false;
+    }
+    // 就绪等待（最多 15s，与独立进程同一节奏；网关自身的报错写在 gateway.log）
+    for (let i = 0; i < 100; i++) {
+      try {
+        const r = await requestUrl({
+          url: `${this.base}/api/ping`,
+          headers: { 'x-vinyl-token': this.token },
+          throw: false,
+        });
+        if (r.status >= 200 && r.status < 300) {
+          this.state = 'running';
+          this.restarts = 0;
+          return true;
+        }
+      } catch {
+        // 尚未监听：继续等下一轮
+      }
+      await sleep(150);
+    }
+    this.stop();
+    this.state = 'error';
+    this.lastError = t('gateway.notReady');
+    console.error('[vinyl] ' + this.lastError);
+    return false;
+  }
+
+  private attachUtilityExit(proc: UtilityProcessLike): void {
+    if (typeof proc.on !== 'function') return; // remote 拿不到事件时：存活判断靠 ensure() 的 ping
+    try {
+      proc.on('exit', (code) => {
+        if (this.utility !== proc) return; // 已换代或主动停过
+        this.utility = null;
+        this.port = 0;
+        this.state = 'stopped';
+        if (this.stopping) return;
+        this.scheduleRestart(code);
+      });
+    } catch {
+      // 事件注册失败不影响启动：就绪与存活判断都走 ping
+    }
+  }
+
+  /** 网关退出后的自愈：限次重启；超过上限进入 error（独立进程与应用内共用同一策略）。 */
+  private scheduleRestart(code: number | undefined): void {
+    if (this.restarts < this.maxRestarts) {
+      this.restarts++;
+      window.setTimeout(() => {
+        void this.ensure();
+      }, 500);
+    } else {
+      this.state = 'error';
+      this.lastError = tf('gateway.crashLoop', { code: code ?? t('gateway.exitCodeUnknown') });
+    }
   }
 
   // 网关源码内联在 main.js 里（社区市场只安装 main.js / manifest.json / styles.css），
@@ -275,6 +356,14 @@ export class ServerManager {
         // 进程可能已自行退出：忽略，下面照常复位状态
       }
       this.child = null;
+    }
+    if (this.utility) {
+      try {
+        this.utility.kill();
+      } catch {
+        // 进程可能已自行退出：忽略
+      }
+      this.utility = null;
     }
     this.port = 0;
     this.state = 'stopped';
