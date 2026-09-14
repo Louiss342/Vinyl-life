@@ -15,6 +15,7 @@ import { DiscDirection, DISC_DIRECTIONS, SpinSpeed, SPIN_SPEEDS } from './core/d
 import { notice } from './util';
 import { DICT, Lang, LANGUAGES, t, tf } from './core/i18n';
 import { EMPTY_STATS, VinylStats, ensureStats } from './core/stats';
+import type { PlayMode } from './core/player-state';
 import { DEFAULT_SHELF_PROPS } from './core/shelf-props';
 import { ABOUT_TEXT, ABOUT_TEXT_EN, REPO_URL } from './core/about';
 import type { LoginState } from './core/auth';
@@ -81,6 +82,8 @@ export interface VinylSettings {
   lastPlayback?: LastPlayback;
   /** 专辑队列模式（播放器顶部开关，默认关）：开着时点专辑墙上的专辑是「排到队尾」而不是换碟 */
   queueMode: boolean;
+  /** 播放模式（播放器顶部按钮，默认单次）：单次 / 循环 / 随机；队列模式下作用于整条列表 */
+  playMode: PlayMode;
   /** 播放统计（次数/最近播放，仅存本插件 data.json，不写笔记） */
   stats: VinylStats;
   /** 每张专辑记住自己的自定义队列顺序（专辑笔记路径 → trackKey 顺序）。
@@ -110,6 +113,7 @@ export const DEFAULT_SETTINGS: VinylSettings = {
   turntableSpeed: 'normal',
   volume: 0.8,
   queueMode: false,
+  playMode: 'once',
   shelfProps: [...DEFAULT_SHELF_PROPS],
   shelfPropLabels: {},
   stats: EMPTY_STATS,
@@ -141,6 +145,11 @@ export function normalizeLastPlayback(raw: unknown): LastPlayback | undefined {
   const rawPos = typeof j.positionSec === 'number' && isFinite(j.positionSec) ? j.positionSec : 0;
   if (!albumPath || !trackKey) return undefined;
   return { albumPath, trackKey, positionSec: Math.max(0, Math.floor(rawPos)) };
+}
+
+/** 播放模式归一：只认三个合法值（data.json 可能被手改或来自旧版本） */
+export function normalizePlayMode(raw: unknown): PlayMode {
+  return raw === 'loop' || raw === 'shuffle' ? raw : 'once';
 }
 
 /** 音量归一：非数字 / 越界一律回落默认（data.json 可能被手改） */

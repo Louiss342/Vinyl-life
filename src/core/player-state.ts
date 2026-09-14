@@ -13,6 +13,10 @@ import { t, tf } from './i18n';
 
 export type PlayerStatus = 'idle' | 'loading' | 'playing' | 'paused' | 'error';
 
+/** 播放模式：单次（播完停）/ 循环（播完回到开头）/ 随机（打乱后一直放）。
+ *  队列模式下作用于整条列表（打乱的是「专辑段」），否则作用于当前专辑（打乱曲目）。 */
+export type PlayMode = 'once' | 'loop' | 'shuffle';
+
 /** 队列里的一段 = 同一张专辑连续的一段曲目。专辑队列模式下可以有多个段（同一张专辑也可以出现多次）。 */
 export interface QueueSegment {
   /** 专辑笔记路径（分组键；曲目没带路径时回落到当前专辑） */
@@ -37,6 +41,8 @@ export interface PlayerSnapshot {
   albumTitle?: string;
   /** 队列按专辑分段（视图按段渲染分组与整段操作） */
   segments: QueueSegment[];
+  /** 当前播放模式（顶部模式按钮按它显示图标与提示） */
+  playMode: PlayMode;
   /** 当前队列来源（本地 / 网易云） */
   sourceLabel?: string;
   /** 当前曲目实际拿到的音质档（standard/higher/exhigh/lossless；本地音轨为空） */
@@ -45,6 +51,10 @@ export interface PlayerSnapshot {
 }
 
 export interface EngineDeps {
+  /** 洗牌源（缺省 Math.random）：测试注入固定序列用 */
+  random?: () => number;
+  /** 初始播放模式（缺省 once）：由设置的持久值决定 */
+  playMode?: () => PlayMode;
   app: App;
   local: LocalSource;
   /** 统一网易云入口（网页会话优先，网关兜底，内部处理就绪） */
@@ -78,6 +88,7 @@ export class PlaybackEngine {
   private albumTitle = '';
   // 存来源枚举而非显示文案：文案语言可随时切换，必须等 snapshot() 时再求值（否则会停在建队列那一刻的语言）
   private sourceKind: ActiveSource | null = null;
+  private playMode: PlayMode = 'once';
   /** 专辑路径 → 标题：追加多张专辑后，界面要按段显示各自的名字（曲目上只有路径） */
   private albumTitles = new Map<string, string>();
   private quality = '';
@@ -94,6 +105,7 @@ export class PlaybackEngine {
   private loadSeq = 0;
 
   constructor(private deps: EngineDeps) {
+    this.playMode = deps.playMode?.() || 'once';
     this.audio.preload = 'auto';
     this.audio.volume = 0.8;
     this.audio.addEventListener('loadedmetadata', () => this.emit());
@@ -146,6 +158,7 @@ export class PlaybackEngine {
           ? sourceLabel(this.sourceKind)
           : '',
       segments: this.segments(),
+      playMode: this.playMode,
       quality: this.quality || undefined,
       error: this.errorMsg || undefined,
     };
@@ -608,10 +621,61 @@ export class PlaybackEngine {
   private onEnded() {
     if (this.index + 1 < this.queue.length) {
       void this.playIndex(this.index + 1);
-    } else {
-      this.status = 'paused';
-      this.emit();
+      return;
     }
+    // 队尾：单次 → 停；循环 → 回队首；随机 → 重洗一次再从头放（随机的语义是一直放下去）
+    if (this.playMode === 'loop') {
+      void this.playIndex(0);
+      return;
+    }
+    if (this.playMode === 'shuffle') {
+      this.shuffleQueue();
+      void this.playIndex(0);
+      return;
+    }
+    this.status = 'paused';
+    this.emit();
+  }
+
+  /** 单次 → 循环 → 随机 循环切换（播放器顶部那个模式按钮）。切到随机时立刻打乱一次。 */
+  cyclePlayMode(): PlayMode {
+    const order: PlayMode[] = ['once', 'loop', 'shuffle'];
+    const next = order[(order.indexOf(this.playMode) + 1) % order.length];
+    this.playMode = next;
+    if (next === 'shuffle') this.shuffleQueue();
+    this.emit();
+    return next;
+  }
+
+  /** 打乱队列。多段时打乱「段」（专辑顺序变、段内曲目顺序不变）—— 用户要的是
+   *  「随机播放列表中的专辑」，不是把各专辑的曲子混在一起；单段时打乱曲目。
+   *  当前播放的那首仍是当前曲目（下标跟着它走，不打断播放）。 */
+  shuffleQueue() {
+    if (this.queue.length < 2) return;
+    const currentKey = this.index >= 0 ? trackKey(this.queue[this.index]) : '';
+    const segs = this.segments();
+    if (segs.length > 1) {
+      const blocks = this.shuffle(segs.map((x) => this.queue.slice(x.start, x.start + x.count)));
+      this.queue = blocks.flat();
+    } else {
+      this.queue = this.shuffle(this.queue);
+    }
+    if (currentKey) {
+      const i = this.queue.findIndex((tr) => trackKey(tr) === currentKey);
+      if (i >= 0) this.index = i;
+    }
+    this.emit();
+  }
+
+  /** Fisher–Yates（洗牌源可注入，测试里给固定序列） */
+  private shuffle<T>(list: T[]): T[] {
+    const rnd = this.deps.random || Math.random;
+    const out = [...list];
+    for (let i = out.length - 1; i > 0; i--) {
+      const j = Math.floor(rnd() * (i + 1));
+      [out[i], out[j]] = [out[j], out[i]];
+    }
+    return out;
   }
 
   private async onAudioError() {

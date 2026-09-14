@@ -539,7 +539,7 @@ test('播放器：切语言后 applyLanguage 就地更新按钮提示与头部�
   assert.ok(noteBtn, '建壳时「追加感想」的提示应为中文');
   assert.equal(noteBtn.getAttribute('title'), null, '追加感想钮不得再设 title');
   assert.ok(hasLabel('上一首') && hasLabel('播放 / 暂停') && hasLabel('下一首'), '控制钮提示');
-  assert.ok(hasLabel('选择专辑'), '换碟钮提示');
+  assert.ok(hasLabel('单次播放整张专辑（点击切换）'), '播放模式钮提示（含点击切换的说明）');
   assert.ok(hasLabel('恢复原有顺序'), '恢复顺序钮提示');
   assert.ok(hasText('黑胶播放器'), '头部标题');
   assert.ok(hasText('空队列'), '空队列提示');
@@ -550,7 +550,7 @@ test('播放器：切语言后 applyLanguage 就地更新按钮提示与头部�
   view.applyLanguage();
 
   assert.ok(hasLabel('Previous track') && hasLabel('Play / pause') && hasLabel('Next track'));
-  assert.ok(hasLabel('Choose album'), '选择专辑 → Choose album');
+  assert.ok(hasLabel('Play the album once (click to switch)'), '模式钮提示跟着语言换');
   assert.ok(hasLabel('Restore original order'), '恢复原有顺序 → Restore original order');
   assert.equal(noteBtn.getAttribute('aria-label'), 'Append current thoughts to the album note');
   assert.equal(noteBtn.getAttribute('title'), null, '切语言也不该多出 title');

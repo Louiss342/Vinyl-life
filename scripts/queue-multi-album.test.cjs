@@ -110,7 +110,7 @@ const tr = (id, albumPath, title) => ({
   duration: 100,
 });
 
-function makeEngine({ autoPlay = false } = {}) {
+function makeEngine({ autoPlay = false, random } = {}) {
   const played = [];
   const engine = new PlaybackEngine({
     app: {},
@@ -133,10 +133,13 @@ function makeEngine({ autoPlay = false } = {}) {
     },
     qq: null,
     settings: () => ({ defaultSource: 'auto', autoPlay, quality: 'higher' }),
+    // 洗牌源可注入：给固定序列时打乱结果可预测（下面的用例就靠它断言具体顺序）
+    random,
     onTrackPlay: (track, albumPath, albumTitle) =>
       played.push([trackKey(track), albumPath, albumTitle]),
   });
-  return { engine, played };
+  // 队列行/队尾行为要手动触发 audio 的 ended 事件
+  return { engine, played, audio: audioInstances[audioInstances.length - 1] };
 }
 
 // 展开一层：vm 沙箱里的数组原型与测试侧不同，deepStrictEqual 会因原型不等而失败
@@ -262,6 +265,85 @@ test('enqueueAlbum：构建并追加（队列空时按普通换碟；有内容�
   assert.equal(segs.length, 2, '追加出一段新专辑');
   assert.equal(segs[1].albumTitle, 'B 专辑', '段标题来自专辑信息');
   assert.equal(engine.snapshot().queue.length > 2, true, '队尾接上了 B 的曲目');
+});
+
+test('播放模式：单次 → 循环 → 随机 循环切换（并写进快照）', () => {
+  const { engine } = makeEngine();
+  engine.setQueue([tr(1, A)], A, 'A 专辑', 'netease');
+  assert.equal(engine.snapshot().playMode, 'once', '默认单次');
+  assert.equal(engine.cyclePlayMode(), 'loop');
+  assert.equal(engine.cyclePlayMode(), 'shuffle');
+  assert.equal(engine.snapshot().playMode, 'shuffle');
+  assert.equal(engine.cyclePlayMode(), 'once', '转一圈回到单次');
+});
+
+test('随机（单专辑）：打乱曲目顺序，当前曲目仍是同一首', async () => {
+  const { engine } = makeEngine({ random: () => 0 }); // Fisher–Yates 取 j=0：结果是确定的轮转
+  const tracks = [tr(1, A), tr(2, A), tr(3, A), tr(4, A)];
+  engine.setQueue(tracks, A, 'A 专辑', 'netease');
+  await engine.playIndex(1); // 当前是 T2
+  const before = [...engine.snapshot().queue].map((x) => trackKey(x));
+
+  engine.cyclePlayMode(); // → loop
+  engine.cyclePlayMode(); // → shuffle（立刻打乱）
+  const after = [...engine.snapshot().queue].map((x) => trackKey(x));
+  assert.notDeepEqual(after, before, '顺序确实变了');
+  assert.deepEqual([...after].sort(), [...before].sort(), '曲目一首不多一首不少');
+  assert.equal(engine.snapshot().current.title, 'T2', '当前曲目没被换掉');
+});
+
+test('随机（队列模式）：打乱的是「专辑段」，段内曲目顺序不动', async () => {
+  const { engine } = makeEngine({ random: () => 0 });
+  engine.setQueue([tr(1, A), tr(2, A)], A, 'A 专辑', 'netease');
+  await engine.appendAlbum([tr(3, B), tr(4, B)], B, 'B 专辑', 'netease');
+  await engine.playIndex(1); // A 段第二首
+
+  engine.cyclePlayMode();
+  engine.cyclePlayMode(); // → shuffle
+  const segs = engine.segments();
+  assert.equal(segs.length, 2, '还是两段');
+  assert.deepEqual(
+    [...segs.map((x) => x.albumPath)].sort(),
+    [A, B].sort(),
+    '两段都在（只是顺序可能变）'
+  );
+  assert.equal(segs[0].count, 2, '段内曲目数不变');
+  assert.equal(engine.snapshot().current.title, 'T2', '当前曲目仍是同一首');
+});
+
+test('队尾行为：单次停住 / 循环回队首 / 随机重洗后继续', async () => {
+  const tick = () => new Promise((r) => setImmediate(r));
+
+  // 单次：队尾暂停
+  const once = makeEngine();
+  once.engine.setQueue([tr(1, A), tr(2, A)], A, 'A 专辑', 'netease');
+  await once.engine.playIndex(1); // 最后一首
+  once.audio.listeners.ended[0]();
+  await tick();
+  assert.equal(once.engine.snapshot().status, 'paused', '单次：播完就停');
+
+  // 循环：回队首继续
+  const loop = makeEngine();
+  loop.engine.setQueue([tr(1, A), tr(2, A)], A, 'A 专辑', 'netease');
+  loop.engine.cyclePlayMode(); // → loop
+  await loop.engine.playIndex(1);
+  loop.audio.listeners.ended[0]();
+  await tick();
+  assert.equal(loop.engine.snapshot().status, 'playing', '循环：接着放');
+  assert.equal(loop.engine.snapshot().index, 0, '回到队首');
+
+  // 随机：重洗后继续（顺序变了、仍在播）
+  const sh = makeEngine({ random: () => 0 });
+  sh.engine.setQueue([tr(1, A), tr(2, A), tr(3, A)], A, 'A 专辑', 'netease');
+  sh.engine.cyclePlayMode();
+  sh.engine.cyclePlayMode(); // → shuffle
+  const before = [...sh.engine.snapshot().queue].map((x) => trackKey(x));
+  await sh.engine.playIndex(2);
+  sh.audio.listeners.ended[0]();
+  await tick();
+  assert.equal(sh.engine.snapshot().status, 'playing', '随机：继续放');
+  const after = [...sh.engine.snapshot().queue].map((x) => trackKey(x));
+  assert.notDeepEqual(after, before, '队尾重洗了一次');
 });
 
 test('播报归属：跨段播放时，上报的是曲目自己那张专辑', async () => {

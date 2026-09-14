@@ -6,6 +6,7 @@ import {
   DEFAULT_SETTINGS,
   VinylSettingTab,
   normalizeLastPlayback,
+  normalizePlayMode,
   normalizeQueueOrder,
   normalizeVolume,
 } from './settings';
@@ -136,6 +137,8 @@ export default class VinylLifePlugin extends Plugin {
       savedOrder: (albumPath) => this.settings.queueOrder[albumPath],
       onQueueOrderChange: (albumPath, keys) => this.rememberQueueOrder(albumPath, keys),
       onQueueOrderClear: (albumPath) => this.forgetQueueOrder(albumPath),
+      // 播放模式是持久设置：引擎启动时读一次，之后由引擎自己维护
+      playMode: () => this.settings.playMode,
     });
     // 音量沿用上次（引擎默认 0.8，这里覆盖成用户自己的值）
     this.engine.setVolume(this.settings.volume);
@@ -274,6 +277,7 @@ export default class VinylLifePlugin extends Plugin {
     this.settings.lastPlayback = normalizeLastPlayback(data?.lastPlayback);
     // 专辑队列模式：同样只认布尔 true（脏数据一律当关）
     this.settings.queueMode = data?.queueMode === true;
+    this.settings.playMode = normalizePlayMode(data?.playMode);
     // 调试命令开关：只认布尔 true（data.json 可能被手改成字符串，别让 "false" 也开启）
     this.settings.debugCommands = data?.debugCommands === true;
     // 外观项归一（data.json 可能来自旧版本或被手改）

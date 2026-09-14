@@ -1369,6 +1369,12 @@
    点击不闪焦点圈，键盘操作才显示。 */
 .vinyl-shelf-card:focus-visible,
 .vinyl-queue-item:focus-visible,
+/* 播放模式非默认（循环 / 随机）时给个强调色：图标本来就不同，颜色是第二重提示。
+   只改颜色不改尺寸 —— 按钮宽度变化会牵动整条头部（见 .vinyl-player 的滚动条槽位注释）。 */
+.vinyl-btn.is-active {
+  color: var(--text-accent);
+}
+
 .vinyl-btn:focus-visible,
 .vinyl-props-icon:focus-visible,
 .vinyl-deck button:focus-visible {

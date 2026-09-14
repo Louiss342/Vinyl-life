@@ -87,8 +87,6 @@ export const DICT: Record<string, { zh: string; en: string }> = {
 
   // —— 播放器视图 ——
   'player.title': { zh: '黑胶播放器', en: 'Vinyl player' },
-  'player.pickAlbum': { zh: '选择专辑', en: 'Choose album' },
-  'player.noAlbumNotes': { zh: '（没有找到专辑笔记）', en: '(No album notes found)' },
   'player.prev': { zh: '上一首', en: 'Previous track' },
   'player.playPause': { zh: '播放 / 暂停', en: 'Play / pause' },
   'player.next': { zh: '下一首', en: 'Next track' },
@@ -696,6 +694,14 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'util.restrictionUnavailable': { zh: '音源不可用', en: 'Source unavailable' },
 
   // —— 专辑队列模式（播放器顶部开关 + 队列分组）——
+  // 播放模式（播放器顶部按钮）：队列模式下作用于整条列表，否则作用于当前专辑
+  'player.modeOnceAlbum': { zh: '单次播放整张专辑', en: 'Play the album once' },
+  'player.modeLoopAlbum': { zh: '循环播放整张专辑', en: 'Repeat the album' },
+  'player.modeShuffleAlbum': { zh: '随机播放专辑曲目', en: 'Shuffle the album' },
+  'player.modeOnceList': { zh: '单次播放整个列表', en: 'Play the list once' },
+  'player.modeLoopList': { zh: '循环播放整个列表', en: 'Repeat the list' },
+  'player.modeShuffleList': { zh: '随机播放列表中的专辑', en: 'Shuffle the albums in the list' },
+  'player.modeHint': { zh: '{mode}（点击切换）', en: '{mode} (click to switch)' },
   'player.queueMode': { zh: '专辑队列模式', en: 'Album queue mode' },
   'player.queueModeOn': {
     zh: '专辑队列模式已开启：点专辑墙上的专辑会排到队尾，不换碟',

@@ -382,7 +382,7 @@ test('resolveSegmentDropIndex：整段拖拽落点（块先摘掉，下标按摘
 
 test('专辑队列模式接线：顶部开关在「选择专辑」左边 / 分段渲染 / 整段操作都在', () => {
   const src = require('fs').readFileSync(require('path').join(__dirname, '../src/views/player-view.ts'), 'utf8');
-  const headerBlock = src.slice(src.indexOf('const header = '), src.indexOf('const swapBtn'));
+  const headerBlock = src.slice(src.indexOf('const header = '), src.indexOf('const playModeBtn'));
   assert.match(headerBlock, /queueModeBtn/, '队列模式开关要建在「选择专辑」之前（顶部那一行的顺序就是创建顺序）');
   // 追加发生在专辑墙的点击路径上（播放器只负责显示与整段操作）
   const shelf = require('fs').readFileSync(require('path').join(__dirname, '../src/views/shelf-view.ts'), 'utf8');

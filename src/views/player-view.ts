@@ -2,11 +2,11 @@
 //   胡桃木设备面板（.vinyl-deck）：金属圆钮控制、红色填充进度轨、丝印品牌行；
 //   换碟 = 头部圆钮弹 Menu。
 // 增量渲染：壳只建一次，状态更新只改目标节点——旋转动画不被打断。
-import { ItemView, WorkspaceLeaf, Menu, setIcon, TFile, CachedMetadata } from 'obsidian';
+import { ItemView, WorkspaceLeaf, setIcon } from 'obsidian';
 import type VinylLifePlugin from '../main';
 import type { PlayerSnapshot } from '../core/player-state';
-import { AlbumInfo, findAlbumNotes, getAlbumInfo, hasAlbumTag } from '../core/album-index';
 import type { Track } from '../core/track';
+import type { PlayMode } from '../core/player-state';
 import { trackSourceLabel, trackSourceClass, qualityText } from '../core/track';
 import { fmtTime, notice, prefersReducedMotion } from '../util';
 import { SPIN_SPEEDS } from '../core/disc-motion';
@@ -20,7 +20,8 @@ interface PlayerEls {
   headerTitle: HTMLElement;
   /** 标题里真正装文字的那一层（marquee 动的是它，不是外层容器） */
   headerTitleText: HTMLElement;
-  swapBtn: HTMLButtonElement;
+  /** 播放模式按钮（单次 / 循环 / 随机）：队列模式下作用于整条列表 */
+  playModeBtn: HTMLButtonElement;
   discOuter: HTMLElement;
   vinyl: HTMLElement;
   labelImg: HTMLImageElement;
@@ -46,6 +47,20 @@ export function qualityReadout(s: PlayerSnapshot): string {
   if (!s.queue.length || !s.sourceLabel) return '';
   const q = qualityText(s.quality);
   return q ? `${s.sourceLabel} · ${q}` : s.sourceLabel;
+}
+
+/** 三种播放模式的图标（Obsidian 的 lucide 图标名） */
+export const PLAY_MODE_ICON: Record<PlayMode, string> = {
+  once: 'repeat-off',
+  loop: 'repeat',
+  shuffle: 'shuffle',
+};
+
+/** 模式文案键：队列模式下讲「列表」，否则讲「这张专辑」（用户要的正是这个区分） */
+export function modeLabelKey(mode: PlayMode, queueMode: boolean): string {
+  const scope = queueMode ? 'List' : 'Album';
+  const name = mode === 'once' ? 'Once' : mode === 'loop' ? 'Loop' : 'Shuffle';
+  return `player.mode${name}${scope}`;
 }
 
 function setVal(el: HTMLInputElement, v: string) {
@@ -93,7 +108,6 @@ const ARM_INNER = -46;
 export class VinylPlayerView extends ItemView {
   private plugin: VinylLifePlugin;
   private unsub: (() => void) | null = null;
-  private albums: AlbumInfo[] = [];
   private els: PlayerEls | null = null;
   private renderedQueue: Track[] | null = null;
   private queueRows: HTMLElement[] = [];
@@ -126,6 +140,8 @@ export class VinylPlayerView extends ItemView {
   private dragSegment: { start: number; count: number } | null = null;
   /** 上一次渲染的段数：变多说明刚排入新专辑 → 闪一下作为反馈 */
   private lastSegmentCount = -1;
+  /** 上一次渲染的播放模式：图标只在模式变化时重设 */
+  private lastPlayMode: PlayMode | null = null;
   /** 当前画出来的段数（折叠提示要用；不去问引擎，渲染之外也能调用） */
   private renderedSegmentCount = 0;
   private dragFrom = -1;
@@ -160,16 +176,6 @@ export class VinylPlayerView extends ItemView {
 
   async onOpen() {
     this.applyAppearance();
-    this.refreshAlbums();
-    // 性能：只响应专辑相关文件的元数据变化（任意笔记编辑不再触发全库扫描）
-    this.registerEvent(
-      this.plugin.app.metadataCache.on('changed', (file: TFile, _data: string, cache: CachedMetadata) => {
-        if (file.extension !== 'md') return;
-        const isAlbumNow = !!cache?.frontmatter && hasAlbumTag(cache.frontmatter);
-        const inAlbumFolder = file.path.startsWith(this.plugin.settings.albumFolder);
-        if (isAlbumNow || inAlbumFolder) this.refreshAlbumsDebounced();
-      })
-    );
     // 顶部专辑名的悬停滚动：委托挂在 contentEl（标题文字随播放状态变，逐次挂监听会漏）
     this.registerDomEvent(this.contentEl, 'pointerover', (ev) => onMarqueeOver(ev));
     this.registerDomEvent(this.contentEl, 'pointerout', (ev) => onMarqueeOut(ev));
@@ -197,24 +203,6 @@ export class VinylPlayerView extends ItemView {
     // isShown 缺失时按「可见」处理：宁可持续转，也不要静默停转
     const shown = typeof el.isShown === 'function' ? el.isShown() : true;
     this.els.vinyl.classList.toggle('is-hidden', !!doc.hidden || !shown);
-  }
-
-  refreshAlbums() {
-    this.albums = findAlbumNotes(this.plugin.app)
-      .map((f) =>
-        getAlbumInfo(this.plugin.app, f, { coverFolder: this.plugin.settings.coverFolder })
-      )
-      .filter((a): a is AlbumInfo => !!a)
-      .sort((a, b) => a.title.localeCompare(b.title, 'zh-CN'));
-  }
-
-  private albumsTimer: number | null = null;
-  private refreshAlbumsDebounced() {
-    if (this.albumsTimer) window.clearTimeout(this.albumsTimer);
-    this.albumsTimer = window.setTimeout(() => {
-      this.albumsTimer = null;
-      this.refreshAlbums();
-    }, 500);
   }
 
   // ============ 壳（只建一次） ============
@@ -248,6 +236,12 @@ export class VinylPlayerView extends ItemView {
     const els = this.els;
     if (els) {
       els.queueModeBtn.setAttribute('aria-label', t('player.queueMode'));
+      els.playModeBtn.setAttribute(
+        'aria-label',
+        tf('player.modeHint', {
+          mode: t(modeLabelKey(this.lastPlayMode || 'once', this.plugin.settings.queueMode)),
+        })
+      );
       els.clearQueueBtn.setAttribute('aria-label', t('player.queueClearOthers'));
     }
     for (const { el, seg } of this.segmentEls) {
@@ -291,10 +285,10 @@ export class VinylPlayerView extends ItemView {
     const queueModeBtn = header.createEl('button', { cls: 'vinyl-btn vinyl-btn-small' });
     setIcon(queueModeBtn, 'list-plus');
     queueModeBtn.addEventListener('click', () => this.toggleQueueMode());
-    const swapBtn = header.createEl('button', { cls: 'vinyl-btn vinyl-btn-small' });
-    setIcon(swapBtn, 'disc-3');
-    this.bindLabel(() => swapBtn.setAttribute('aria-label', t('player.pickAlbum')));
-    swapBtn.addEventListener('click', (ev) => this.showAlbumMenu(ev));
+    // 播放模式：单次 → 循环 → 随机 循环切换（队列模式下作用于整条列表，见 modeLabelKey）
+    const playModeBtn = header.createEl('button', { cls: 'vinyl-btn vinyl-btn-small' });
+    setIcon(playModeBtn, PLAY_MODE_ICON.once);
+    playModeBtn.addEventListener('click', () => this.cyclePlayMode());
 
     // 设备面板（胡桃木底座，样式见 .vinyl-deck）
     const deck = c.createDiv({ cls: 'vinyl-deck' });
@@ -435,7 +429,7 @@ export class VinylPlayerView extends ItemView {
       headerTitle,
       headerTitleText,
       queueModeBtn,
-      swapBtn,
+      playModeBtn,
       discOuter,
       vinyl,
       labelImg,
@@ -453,26 +447,6 @@ export class VinylPlayerView extends ItemView {
       qualityEl,
     };
     return this.els;
-  }
-
-  // 换碟：弹专辑菜单（当前专辑打勾）
-  private showAlbumMenu(ev: MouseEvent) {
-    const snap = this.plugin.engine.snapshot();
-    const menu = new Menu();
-    for (const a of this.albums) {
-      menu.addItem((it) =>
-        it
-          .setTitle(`${a.title}${a.artist ? ' — ' + a.artist : ''}`)
-          .setChecked(snap.albumNotePath === a.path)
-          .onClick(() => {
-            void this.plugin.engine.loadAlbum(a);
-          })
-      );
-    }
-    if (!this.albums.length) {
-      menu.addItem((it) => it.setTitle(t('player.noAlbumNotes')).setDisabled(true));
-    }
-    menu.showAtMouseEvent(ev);
   }
 
   // 「恢复原有顺序」（Vinyl order 行的 ↺ 按钮）：
@@ -511,6 +485,12 @@ export class VinylPlayerView extends ItemView {
     if (s.queue !== this.renderedQueue) this.rebuildQueue(els, s);
     // 队列模式开关 / 清空按钮的可见性（设置改了、段数变了都要跟着走）
     this.syncQueueControls(s.segments.length);
+    // 播放模式按钮：图标随模式变，非默认（单次）时给个高亮色
+    if (s.playMode !== this.lastPlayMode) {
+      this.lastPlayMode = s.playMode;
+      setIcon(els.playModeBtn, PLAY_MODE_ICON[s.playMode]);
+      els.playModeBtn.toggleClass('is-active', s.playMode !== 'once');
+    }
     this.queueRows.forEach((row, i) => row.classList.toggle('is-current', i === s.index));
 
     // 头部（错误并入标题行；值不变不写 DOM）
@@ -735,6 +715,15 @@ export class VinylPlayerView extends ItemView {
     if (!els) return;
     els.queueModeBtn.toggleClass('is-active', this.plugin.settings.queueMode);
     els.clearQueueBtn.toggleClass('vinyl-hidden', segmentCount <= 1);
+  }
+
+  /** 播放模式按钮：切到下一档并弹一条提示（模式名随「队列模式」讲专辑还是讲列表） */
+  private cyclePlayMode() {
+    const mode = this.plugin.engine.cyclePlayMode();
+    this.plugin.settings.playMode = mode;
+    void this.plugin.saveSettings();
+    notice(t(modeLabelKey(mode, this.plugin.settings.queueMode)));
+    this.applyQueueLabels();
   }
 
   /** 专辑队列模式开关：改设置 + 提示；关掉时把队列收缩回当前专辑（用户定的语义） */
