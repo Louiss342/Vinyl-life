@@ -24,6 +24,8 @@ qr-login-tmp*.png
 qr-802-debug.json
 tmp/
 *.log
+# lint / 检查产物（含本地绝对路径，不入库）
+.eslint-current.json
 
 # 系统与编辑器
 .DS_Store

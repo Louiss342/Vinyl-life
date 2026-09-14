@@ -16,6 +16,7 @@ import { t, tf } from './core/i18n';
 import type { VinylSettings } from './settings';
 import type { NeteaseService } from './core/netease';
 import type { QqService } from './core/qq';
+import type { NeteaseAlbumResponse, QqAlbumResponse } from './core/api-types';
 
 export interface ImportContext {
   app: App;
@@ -107,7 +108,7 @@ export async function importNeteaseAlbum(
     }
   }
 
-  let body: any;
+  let body: NeteaseAlbumResponse;
   try {
     body = await ctx.client.album(id);
   } catch (e) {
@@ -171,7 +172,7 @@ export async function importQqAlbum(ctx: ImportContext, input: string): Promise<
     }
   }
 
-  let body: any;
+  let body: QqAlbumResponse;
   try {
     body = await ctx.qq.album(mid);
   } catch (e) {
@@ -269,7 +270,7 @@ export async function importLocalAudio(
       await ctx.app.vault.createBinary(p, ab);
       added.push(p);
     } else {
-      const abs = (f as any).path as string | undefined;
+      const abs = f.path;
       if (abs && typeof abs === 'string') {
         if (added.includes(abs)) skippedExisting.push(f.name);
         else added.push(abs);

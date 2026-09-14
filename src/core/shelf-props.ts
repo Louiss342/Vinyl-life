@@ -103,12 +103,13 @@ function unwrapWikilinkForDisplay(raw: string): string {
 }
 
 /** frontmatter → 显示值映射（剔除黑名单键；空值保留为 ''，由渲染侧跳过）。 */
-export function buildDisplayProps(fm: any): Record<string, string> {
+export function buildDisplayProps(fm: unknown): Record<string, string> {
   const out: Record<string, string> = {};
   if (!fm || typeof fm !== 'object') return out;
-  for (const key of Object.keys(fm)) {
+  const props = fm as Record<string, unknown>;
+  for (const key of Object.keys(props)) {
     if (!isDisplayablePropKey(key)) continue;
-    out[key] = formatPropValue(fm[key]);
+    out[key] = formatPropValue(props[key]);
   }
   return out;
 }

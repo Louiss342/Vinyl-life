@@ -48,12 +48,12 @@ export const QQ_BROWSER_LOGIN: BrowserLoginOptions = {
 };
 
 interface LoginAttempt {
-  win: any;
-  session: any;
+  win: BrowserWindowLike;
+  session: SessionLike;
   partition: string;
   /** 登录页弹出的子窗口（关窗时一并销毁） */
-  children: Set<any>;
-  timer?: ReturnType<typeof setInterval>;
+  children: Set<BrowserWindowLike>;
+  timer?: number;
   promise: Promise<boolean>;
   resolve: (loggedIn: boolean) => void;
   abort: AbortController;
@@ -62,6 +62,50 @@ interface LoginAttempt {
   rejectedAt: number;
   lastInventoryAt: number;
   onStatus?: (message: string) => void;
+}
+
+interface BrowserCookie {
+  name: string;
+  value: string;
+}
+
+interface PreventableEvent {
+  preventDefault(): void;
+}
+
+interface SessionLike {
+  cookies: { get(filter: { url?: string }): Promise<BrowserCookie[]> };
+  setPermissionRequestHandler(
+    handler: (contents: unknown, permission: string, callback: (allowed: boolean) => void) => void
+  ): void;
+  setPermissionCheckHandler(handler: () => boolean): void;
+  clearStorageData(): Promise<void>;
+}
+
+interface WebContentsLike {
+  session: SessionLike;
+  setWindowOpenHandler(
+    handler: (details: { url: string }) => { action: 'allow' | 'deny'; overrideBrowserWindowOptions?: object }
+  ): void;
+  on(event: string, handler: (...args: never[]) => void): void;
+}
+
+interface BrowserWindowLike {
+  webContents: WebContentsLike;
+  show(): void;
+  focus(): void;
+  loadURL(url: string): Promise<void>;
+  once(event: string, handler: () => void): void;
+  isDestroyed(): boolean;
+  destroy(): void;
+}
+
+interface BrowserWindowConstructor {
+  new (options: object): BrowserWindowLike;
+}
+
+interface RemoteLike {
+  BrowserWindow?: BrowserWindowConstructor;
 }
 
 export class BrowserLogin {
@@ -87,11 +131,13 @@ export class BrowserLogin {
       return this.attempt.promise;
     }
 
-    let remote: any;
+    const loadModule: (id: string) => unknown = require;
+    let remote: RemoteLike;
     try {
-      remote = require('@electron/remote');
-    } catch (_) {
-      remote = require('electron').remote;
+      remote = loadModule('@electron/remote') as RemoteLike;
+    } catch {
+      const electron = loadModule('electron') as { remote?: RemoteLike };
+      remote = electron.remote ?? {};
     }
     if (!remote?.BrowserWindow) {
       return Promise.reject(new Error('当前环境无法创建登录窗口，请使用桌面版 Obsidian'));
@@ -130,7 +176,7 @@ export class BrowserLogin {
       onStatus,
     };
     this.attempt = attempt;
-    attempt.session.setPermissionRequestHandler((_contents: any, _permission: string, callback: any) => callback(false));
+    attempt.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     attempt.session.setPermissionCheckHandler(() => false);
     // 登录页没有本机权限。新链接默认复用此窗口（避免遗留无管理的弹窗）；
     // 但部分官方登录页（如 QQ 音乐）依赖弹窗 + window.opener 回传登录结果，
@@ -157,21 +203,21 @@ export class BrowserLogin {
       void win.loadURL(url).catch(() => this.loadError(attempt));
       return { action: 'deny' };
     });
-    win.webContents.on('did-create-window', (child: any) => {
-      if (this.attempt !== attempt || !child?.webContents) return;
+    win.webContents.on('did-create-window', (child: BrowserWindowLike) => {
+      if (this.attempt !== attempt || !child.webContents) return;
       attempt.children.add(child);
       child.once('closed', () => attempt.children.delete(child));
-      child.webContents.on('will-navigate', (event: any, url: string) => {
+      child.webContents.on('will-navigate', (event: PreventableEvent, url: string) => {
         if (!this.isHttps(url)) event.preventDefault();
       });
     });
-    win.webContents.on('will-navigate', (event: any, url: string) => {
+    win.webContents.on('will-navigate', (event: PreventableEvent, url: string) => {
       if (!this.isHttps(url)) event.preventDefault();
     });
-    win.webContents.on('will-redirect', (event: any, url: string) => {
+    win.webContents.on('will-redirect', (event: PreventableEvent, url: string) => {
       if (!this.isHttps(url)) event.preventDefault();
     });
-    win.webContents.on('did-fail-load', (_event: any, code: number, _description: string, _url: string, mainFrame: boolean) => {
+    win.webContents.on('did-fail-load', (_event: PreventableEvent, code: number, _description: string, _url: string, mainFrame: boolean) => {
       if (mainFrame && code !== -3) this.loadError(attempt);
     });
     win.webContents.on('render-process-gone', () => {
@@ -180,7 +226,7 @@ export class BrowserLogin {
       this.finish(attempt, false);
     });
     win.once('closed', () => this.finish(attempt, false));
-    attempt.timer = setInterval(() => { void this.poll(attempt, false); }, 2000);
+    attempt.timer = window.setInterval(() => { void this.poll(attempt, false); }, 2000);
     onStatus?.('请在官方窗口点击右上角「登录」。登录完成后会自动验证并返回。');
     void win.loadURL(this.opts.loginUrl).catch(() => this.loadError(attempt));
     void this.poll(attempt, false);
@@ -244,7 +290,7 @@ export class BrowserLogin {
     return [this.opts.requiredCookie, ...(this.opts.altCookies || [])];
   }
 
-  private accepts(cookies: { name: string; value: string }[]): boolean {
+  private accepts(cookies: BrowserCookie[]): boolean {
     const names = this.acceptedNames();
     return cookies.some((cookie) => names.includes(cookie.name) && cookie.value);
   }
@@ -255,10 +301,10 @@ export class BrowserLogin {
    */
   private async findByCookieName(
     attempt: LoginAttempt,
-    scoped: { name: string; value: string }[]
-  ): Promise<{ name: string; value: string }[] | null> {
+    scoped: BrowserCookie[]
+  ): Promise<BrowserCookie[] | null> {
     if (!this.opts.searchSessionByCookieName) return null;
-    let all: { name: string; value: string }[] = [];
+    let all: BrowserCookie[] = [];
     try {
       all = await attempt.session.cookies.get({});
     } catch (_) {
@@ -271,7 +317,6 @@ export class BrowserLogin {
       if (names.includes(cookie.name) && cookie.value) merged.set(cookie.name, cookie.value);
     }
     if (!names.some((name) => merged.has(name) && merged.get(name))) {
-      this.logInventory(attempt, all);
       return null;
     }
     // 账号标识也一并带上（校验接口需要）
@@ -283,28 +328,15 @@ export class BrowserLogin {
     return [...merged].map(([name, value]) => ({ name, value }));
   }
 
-  /** 长时间捕获不到凭据时打印 Cookie 名单（仅名称，绝不含值） */
-  private logInventory(attempt: LoginAttempt, all: { name: string }[]): void {
-    if (!this.opts.debugCookieInventory) return;
-    const now = Date.now();
-    if (now - attempt.lastInventoryAt < 20000) return;
-    attempt.lastInventoryAt = now;
-    const names = [...new Set(all.map((cookie) => cookie.name))].sort();
-    console.log(
-      `[vinyl] ${this.opts.displayName}登录窗口未捕获到 ${this.opts.requiredCookie}；Cookie 名单（仅名称）：`,
-      names.join(', ') || '(空)'
-    );
-  }
-
   private finish(attempt: LoginAttempt, loggedIn: boolean): void {
     if (this.attempt !== attempt) return;
     this.attempt = null;
     attempt.abort.abort();
-    if (attempt.timer) clearInterval(attempt.timer);
+    if (attempt.timer) window.clearInterval(attempt.timer);
     for (const child of attempt.children) {
       try {
         if (!child.isDestroyed()) child.destroy();
-      } catch (_) {}
+      } catch {}
     }
     attempt.children.clear();
     if (!attempt.win.isDestroyed()) attempt.win.destroy();
@@ -322,6 +354,6 @@ export class BrowserLogin {
   }
 
   private isHttps(url: string): boolean {
-    try { return new URL(url).protocol === 'https:'; } catch (_) { return false; }
+    try { return new URL(url).protocol === 'https:'; } catch { return false; }
   }
 }

@@ -635,7 +635,7 @@ export class VinylShelfView extends ItemView {
 
   private buildCard(e: ShelfEntry): HTMLElement {
     const { album } = e;
-    const card = document.createElement('div');
+    const card = createDiv();
     card.className = 'vinyl-shelf-card';
     card.dataset.path = album.path;
     card.setAttribute('title', album.path);
@@ -810,14 +810,14 @@ export class VinylShelfView extends ItemView {
 
   // 唱片回归动画：与离墙动画同参数逆向（WAAPI，700ms），避免突然出现
   private playDiscReturn(cardEl: HTMLElement) {
-    const lift = (cardEl as any).__vinylLift as Animation | undefined;
+    const lift = cardEl.__vinylLift;
     if (lift) {
       lift.cancel();
-      (cardEl as any).__vinylLift = null;
+      cardEl.__vinylLift = null;
     }
-    const prev = (cardEl as any).__vinylReturn as Animation | undefined;
+    const prev = cardEl.__vinylReturn;
     if (prev) prev.cancel();
-    const disc = cardEl.querySelector('.vinyl-shelf-disc') as HTMLElement | null;
+    const disc = cardEl.querySelector<HTMLElement>('.vinyl-shelf-disc');
     if (!disc) return;
     // 关键帧取 CSS 变量（--vinyl-disc-{off,lift,rest}），随「黑胶动画方向」设置变化
     const anim = disc.animate(
@@ -830,7 +830,7 @@ export class VinylShelfView extends ItemView {
     );
     cardEl.addClass('is-returning');
     anim.addEventListener('finish', () => cardEl.removeClass('is-returning'));
-    (cardEl as any).__vinylReturn = anim;
+    cardEl.__vinylReturn = anim;
   }
 
   // ============ 拖拽（空白处新建专辑） ============

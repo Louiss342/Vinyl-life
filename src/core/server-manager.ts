@@ -58,7 +58,7 @@ export class ServerManager {
         p.stdout?.on('data', (d) => (out += String(d)));
         p.on('error', () => resolve(false));
         p.on('close', (code) => resolve(code === 0 && out.trim().startsWith('v')));
-        setTimeout(() => resolve(false), 4000);
+        window.setTimeout(() => resolve(false), 4000);
       } catch (_) {
         resolve(false);
       }
@@ -149,7 +149,7 @@ export class ServerManager {
       console.log('[vinyl] 网关意外退出 code=' + code);
       if (this.restarts < this.maxRestarts) {
         this.restarts++;
-        setTimeout(() => {
+        window.setTimeout(() => {
           this.ensure();
         }, 500);
       } else {
@@ -240,7 +240,7 @@ export class ServerManager {
     this.port = 0;
     this.state = 'stopped';
     this.forgetPid();
-    setTimeout(() => {
+    window.setTimeout(() => {
       this.stopping = false;
     }, 300);
   }

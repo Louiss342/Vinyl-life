@@ -34,9 +34,7 @@ export class HandoffController {
     this.state = 'handoff';
 
     // A 拾取 + B 离墙（墙上动画，与解析/开窗并行）
-    const discEl = cardEl
-      ? (cardEl.querySelector('.vinyl-shelf-disc') as HTMLElement | null)
-      : null;
+    const discEl = cardEl?.querySelector<HTMLElement>('.vinyl-shelf-disc') ?? null;
     if (cardEl && discEl) {
       cardEl.addClass('is-handing-off');
       // 关键帧取 CSS 变量（--vinyl-disc-{rest,lift,off}）：
@@ -70,13 +68,15 @@ export class HandoffController {
       );
       lift.addEventListener('finish', () => cardEl.removeClass('is-handing-off'));
       // 挂在卡片上：渲染刷新时随 DOM 一起消亡，无需手动回收
-      (cardEl as any).__vinylLift = lift;
+      cardEl.__vinylLift = lift;
     }
 
     // C 落盘前：先打开/聚焦播放器（未打开时先 revealLeaf）
     try {
       await this.plugin.openPlayer();
-    } catch (_) {}
+    } catch {
+      // Queue loading below still reports failure and restores the card.
+    }
 
     // D 出声（并行于 C 的入场动画）：解析队列 + 播放
     let ok = false;

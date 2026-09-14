@@ -163,7 +163,7 @@ export class VinylPlayerView extends ItemView {
   private syncVisibility() {
     if (!this.els) return;
     const doc = this.containerEl.ownerDocument;
-    const el = this.containerEl as HTMLElement;
+    const el = this.containerEl;
     // isShown 缺失时按「可见」处理：宁可持续转，也不要静默停转
     const shown = typeof el.isShown === 'function' ? el.isShown() : true;
     this.els.vinyl.classList.toggle('is-hidden', !!doc.hidden || !shown);

@@ -3,6 +3,7 @@
 import { App, Plugin, Notice, TFile, TFolder, normalizePath } from 'obsidian';
 import * as path from 'path';
 import { readdirSync as fsReaddirSync } from 'fs';
+import type { Dirent } from 'fs';
 import { t, tf } from './core/i18n';
 
 // 受支持的音频容器（插件本身不解码，最终取决于 Chromium/Electron 内置解码器）：
@@ -28,7 +29,7 @@ const MIME_BY_EXT: Record<string, string> = {
 };
 
 export function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+  return new Promise((r) => window.setTimeout(r, ms));
 }
 
 export function extOf(name: string): string {
@@ -78,8 +79,7 @@ export function relDirOfPath(relPath: string): string {
 
 /** File → 相对路径（选择器读 webkitRelativePath；拖拽由扫描器注入 relPath） */
 export function relPathOf(file: File): string {
-  const anyFile = file as any;
-  return String(anyFile.webkitRelativePath || anyFile.relPath || '');
+  return String(file.webkitRelativePath || file.relPath || '');
 }
 
 /** File → 子目录（`A/CD1/01.flac` → `CD1`） */
@@ -98,20 +98,25 @@ export function droppedRootName(picked: PickedAudio[]): string {
 }
 
 /** 拖入的目录条目递归展开（readEntries 每次最多 100 条，必须循环到空） */
-async function readEntry(entry: any, parent: string, out: PickedAudio[]): Promise<void> {
+async function readEntry(entry: FileSystemEntry, parent: string, out: PickedAudio[]): Promise<void> {
   const path = parent + entry.name;
   if (entry.isFile) {
-    const file: File = await new Promise((res, rej) => entry.file(res, rej));
+    const fileEntry = entry as FileSystemFileEntry;
+    const file = await new Promise<File>((resolve, reject) => fileEntry.file(resolve, reject));
     try {
-      (file as any).relPath = path; // 供 relDirOf / 子目录保留使用
-    } catch (_) {}
+      file.relPath = path; // 供 relDirOf / 子目录保留使用
+    } catch {
+      // Some browser File implementations are non-extensible; PickedAudio still keeps relPath.
+    }
     out.push({ file, relPath: path });
     return;
   }
   if (!entry.isDirectory) return;
-  const reader = entry.createReader();
+  const reader = (entry as FileSystemDirectoryEntry).createReader();
   for (;;) {
-    const batch: any[] = await new Promise((res, rej) => reader.readEntries(res, rej));
+    const batch = await new Promise<FileSystemEntry[]>((resolve, reject) =>
+      reader.readEntries(resolve, reject)
+    );
     if (!batch.length) break;
     for (const child of batch) await readEntry(child, path + '/', out);
   }
@@ -121,9 +126,9 @@ async function readEntry(entry: any, parent: string, out: PickedAudio[]): Promis
 export async function collectDroppedFiles(dt: DataTransfer): Promise<PickedAudio[]> {
   const entries = Array.from(dt.items || [])
     .map((it) =>
-      typeof (it as any).webkitGetAsEntry === 'function' ? (it as any).webkitGetAsEntry() : null
+      typeof it.webkitGetAsEntry === 'function' ? it.webkitGetAsEntry() : null
     )
-    .filter((e): e is any => !!e);
+    .filter((e): e is FileSystemEntry => e !== null);
   if (entries.length) {
     const out: PickedAudio[] = [];
     for (const entry of entries) await readEntry(entry, '', out);
@@ -173,7 +178,7 @@ export function collectFolderAudios(folder: TFolder): TFile[] {
 export function collectExternalAudios(dir: string, depth = 3): string[] {
   const out: string[] = [];
   const walk = (d: string, left: number) => {
-    let entries: any[];
+    let entries: Dirent[];
     try {
       entries = fsReaddirSync(d, { withFileTypes: true });
     } catch {
@@ -247,7 +252,7 @@ export function suggestAlbumTitle(files: File[]): string {
   const list = files.filter((f) => isAudioFile(f.name));
   if (!list.length) return '';
   const dirOf = (f: File): string => {
-    const p = (f as any).path;
+    const p = f.path;
     if (typeof p !== 'string') return '';
     const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
     return i > 0 ? p.slice(0, i) : '';
@@ -308,9 +313,11 @@ export function restrictionText(code: number | string | undefined | null): strin
 export function pluginAbsPath(plugin: Plugin, ...parts: string[]): string {
   let base = '';
   try {
-    const adapter = plugin.app.vault.adapter as any;
+    const adapter = plugin.app.vault.adapter as { getBasePath?: () => string };
     if (typeof adapter.getBasePath === 'function') base = adapter.getBasePath() || '';
-  } catch (_) {}
+  } catch {
+    // Non-filesystem adapters cannot expose an absolute vault path.
+  }
   const dir = plugin.manifest.dir || '';
   const absDir = path.isAbsolute(dir) ? dir : path.join(base, dir);
   return path.join(absDir, ...parts);

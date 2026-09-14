@@ -1,8 +1,17 @@
 // QQ 音乐源客户端：与本地网关（server.js 的 /api/qq/* 路由）通信。
 // 与网易云不同：QQ 只有网关单通道（无网页直连），且音质降级 ladder 在网关侧完成，
 // 客户端只做一次请求 → 拿到最终可播地址或中文限制文案。
+import { requestUrl } from 'obsidian';
 import { Track } from './track';
 import type { SongUrlResult } from './server-client';
+import type {
+  ApiErrorResponse,
+  LoginResponse,
+  QqAlbumResponse,
+  QqSong,
+  QrKeyResponse,
+  SongUrlResponse,
+} from './api-types';
 
 export class QqService {
   constructor(private base: () => string) {}
@@ -12,65 +21,72 @@ export class QqService {
     return `${this.base()}${pathname}${qs}`;
   }
 
-  private async getJson(pathname: string, params?: Record<string, string>): Promise<any> {
-    const res = await fetch(this.url(pathname, params), { signal: AbortSignal.timeout(20000) });
-    const body = await res.json();
-    if (!res.ok) throw new Error(body?.error || `网关 HTTP ${res.status}（${pathname}）`);
-    return body;
+  private async request<T>(pathname: string, options?: { method?: string; body?: string }): Promise<T> {
+    const res = await requestUrl({
+      url: this.url(pathname),
+      method: options?.method,
+      contentType: options?.body ? 'application/json' : undefined,
+      body: options?.body,
+      throw: false,
+    });
+    const body: unknown = res.json;
+    if (res.status < 200 || res.status >= 300) {
+      const error = (body as ApiErrorResponse | null)?.error;
+      throw new Error(error || `网关 HTTP ${res.status}（${pathname}）`);
+    }
+    return body as T;
+  }
+
+  private getJson<T>(pathname: string, params?: Record<string, string>): Promise<T> {
+    return this.request<T>(params ? `${pathname}?${new URLSearchParams(params).toString()}` : pathname);
   }
 
   // —— 登录 ——
   async qrKey(): Promise<{ key: string; qrimg: string }> {
-    const body = await this.getJson('/api/qq/login/qr/key');
+    const body = await this.getJson<QrKeyResponse>('/api/qq/login/qr/key');
     const d = body?.data;
     if (!d?.unikey || !d?.qrimg) throw new Error('获取 QQ 登录二维码失败');
     return { key: String(d.unikey), qrimg: String(d.qrimg) };
   }
 
-  async qrCheck(key: string): Promise<any> {
-    const body = await this.getJson('/api/qq/login/qr/check', { key });
-    return body;
+  async qrCheck(key: string): Promise<LoginResponse> {
+    return this.getJson<LoginResponse>('/api/qq/login/qr/check', { key });
   }
 
-  async loginStatus(): Promise<any> {
-    return this.getJson('/api/qq/login/status');
+  async loginStatus(): Promise<LoginResponse> {
+    return this.getJson<LoginResponse>('/api/qq/login/status');
   }
 
-  async validateCookie(cookie: string, signal?: AbortSignal): Promise<any> {
-    const res = await fetch(this.url('/api/qq/cookie/validate'), {
+  async validateCookie(cookie: string, signal?: AbortSignal): Promise<LoginResponse> {
+    signal?.throwIfAborted();
+    const body = await this.request<LoginResponse>('/api/qq/cookie/validate', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cookie }),
-      signal: signal || AbortSignal.timeout(20000),
     });
-    const body = await res.json();
-    if (!res.ok) throw new Error(body?.error || `QQ 登录验证失败 HTTP ${res.status}`);
+    signal?.throwIfAborted();
     return body;
   }
 
   async setCookie(cookie: string): Promise<void> {
-    const res = await fetch(this.url('/api/qq/cookie'), {
+    await this.request<unknown>('/api/qq/cookie', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cookie }),
     });
-    const body = await res.json();
-    if (!res.ok) throw new Error(body?.error || `Cookie 写入失败 HTTP ${res.status}`);
   }
 
   async clearCookie(): Promise<void> {
-    await fetch(this.url('/api/qq/cookie'), { method: 'DELETE' });
+    await this.request<unknown>('/api/qq/cookie', { method: 'DELETE' });
   }
 
   // —— 曲库 ——
-  async album(mid: string): Promise<any> {
-    return this.getJson('/api/qq/album', { id: mid });
+  async album(mid: string): Promise<QqAlbumResponse> {
+    return this.getJson<QqAlbumResponse>('/api/qq/album', { id: mid });
   }
 
   async songUrl(mid: string, level: string, mediaMid?: string): Promise<SongUrlResult> {
     const params: Record<string, string> = { id: mid, level };
     if (mediaMid) params.mediaMid = mediaMid;
-    const body = await this.getJson('/api/qq/song/url', params);
+    const body = await this.getJson<SongUrlResponse>('/api/qq/song/url', params);
     const d = body?.data?.[0];
     if (d?.url) {
       return { url: String(d.url), br: d.br, type: d.type, level: d.level };
@@ -78,13 +94,13 @@ export class QqService {
     return { restriction: d?.msg || '音源不可用' };
   }
 
-  async lyric(songmid: string): Promise<any> {
+  async lyric(songmid: string): Promise<{ code?: number; lyric?: string; trans?: string }> {
     return this.getJson('/api/qq/lyric', { songmid });
   }
 }
 
 // QQ 曲目（网关归一化形态）→ 统一 Track
-export function qqSongsToTracks(songs: any[], albumNotePath?: string): Track[] {
+export function qqSongsToTracks(songs: QqSong[], albumNotePath?: string): Track[] {
   return (songs || []).map((s) => ({
     source: 'qq' as const,
     id: String(s.mid ?? ''),

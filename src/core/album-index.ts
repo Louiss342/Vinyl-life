@@ -47,6 +47,11 @@ const NETEASE_ALBUM_RE = /album\?id=(\d+)/;
 const QQ_ALBUM_RE = /albumDetail\/([A-Za-z0-9]+)/;
 const QQ_ALBUM_LEGACY_RE = /album\/([A-Za-z0-9]+)\.html/;
 const QQ_MID_RE = /^[A-Za-z0-9]{8,24}$/;
+type Frontmatter = Record<string, unknown>;
+
+function asFrontmatter(value: unknown): Frontmatter {
+  return value && typeof value === 'object' ? (value as Frontmatter) : {};
+}
 
 function toTagList(v: unknown): string[] {
   if (Array.isArray(v)) return v.map(String);
@@ -54,29 +59,31 @@ function toTagList(v: unknown): string[] {
   return [];
 }
 
-export function hasAlbumTag(fm: any): boolean {
-  return toTagList(fm?.tags).some((t) => t.replace(/^\[|\]$/g, '').trim() === 'album');
+export function hasAlbumTag(fm: unknown): boolean {
+  return toTagList(asFrontmatter(fm).tags).some((t) => t.replace(/^\[|\]$/g, '').trim() === 'album');
 }
 
-export function parseNeteaseId(fm: any): number | undefined {
-  const raw = fm?.neteaseId;
+export function parseNeteaseId(fm: unknown): number | undefined {
+  const data = asFrontmatter(fm);
+  const raw = data.neteaseId;
   if (raw) {
     const n = Number(raw);
     if (isFinite(n)) return n;
   }
-  const url = String(fm?.netease ?? '');
+  const url = String(data.netease ?? '');
   const m = url.match(NETEASE_ALBUM_RE);
   return m ? Number(m[1]) : undefined;
 }
 
 // QQ 专辑 mid 解析：qqId 裸 mid / qq 链接（新版 albumDetail、旧版 /album/<mid>.html）
-export function parseQqAlbumMid(fm: any): string | undefined {
-  const bare = fm?.qqId;
+export function parseQqAlbumMid(fm: unknown): string | undefined {
+  const data = asFrontmatter(fm);
+  const bare = data.qqId;
   if (bare != null) {
     const t = String(bare).trim();
     if (QQ_MID_RE.test(t)) return t;
   }
-  const url = String(fm?.qq ?? '');
+  const url = String(data.qq ?? '');
   const m = url.match(QQ_ALBUM_RE) || url.match(QQ_ALBUM_LEGACY_RE);
   if (m) return m[1];
   const t = url.trim();
@@ -158,15 +165,16 @@ export function findConventionCover(
 export function buildAlbumInfo(
   app: App,
   file: TFile,
-  fm: any,
+  fm: unknown,
   opts?: AlbumInfoOpts
 ): AlbumInfo {
+  const data = asFrontmatter(fm);
   const source: AlbumSourcePref =
-    fm.source === 'local' || fm.source === 'netease' || fm.source === 'qq'
-      ? fm.source
+    data.source === 'local' || data.source === 'netease' || data.source === 'qq'
+      ? data.source
       : 'auto';
-  const coverRaw = fm.cover != null ? String(fm.cover) : undefined;
-  const audioFolderRef = fm.audioFolder != null ? String(fm.audioFolder) : undefined;
+  const coverRaw = data.cover != null ? String(data.cover) : undefined;
+  const audioFolderRef = data.audioFolder != null ? String(data.audioFolder) : undefined;
   // 显式 cover 优先；没写封面时按约定自动认一个（不写回笔记）
   let cover = resolveCover(app, coverRaw, file.path);
   if (!cover) {
@@ -177,22 +185,25 @@ export function buildAlbumInfo(
     file,
     path: file.path,
     title: file.basename,
-    artist: fm.artist != null ? String(fm.artist) : undefined,
-    year: fm.year,
-    genre: fm.genre != null ? String(fm.genre) : undefined,
-    rating: fm.rating,
+    artist: data.artist != null ? String(data.artist) : undefined,
+    year: typeof data.year === 'string' || typeof data.year === 'number' ? data.year : undefined,
+    genre: data.genre != null ? String(data.genre) : undefined,
+    rating:
+      typeof data.rating === 'string' || typeof data.rating === 'number'
+        ? data.rating
+        : undefined,
     coverRaw,
     cover,
     neteaseId: parseNeteaseId(fm),
     qqId: parseQqAlbumMid(fm),
     audioFolderRef,
-    audioRefs: Array.isArray(fm.audio)
-      ? fm.audio.map(String)
-      : fm.audio != null
-        ? [String(fm.audio)]
+    audioRefs: Array.isArray(data.audio)
+      ? data.audio.map(String)
+      : data.audio != null
+        ? [String(data.audio)]
         : [],
     sourcePref: source,
-    displayProps: buildDisplayProps(fm),
+    displayProps: buildDisplayProps(data),
   };
 }
 
@@ -268,15 +279,16 @@ function audioRefExists(app: App, ref: string): boolean {
 }
 
 // 简易 YAML frontmatter 解析（metadataCache 未命中时的兜底）
-export function parseFrontmatterSimple(text: string): any {
+export function parseFrontmatterSimple(text: string): Frontmatter {
   const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!m) return {};
-  const out: any = {};
+  const out: Frontmatter = {};
   let listKey = '';
   for (const line of m[1].split(/\r?\n/)) {
     const listMatch = line.match(/^\s*-\s+(.+)$/);
     if (listMatch && listKey) {
-      out[listKey].push(unquote(listMatch[1].trim()));
+      const list = out[listKey];
+      if (Array.isArray(list)) list.push(unquote(listMatch[1].trim()));
       continue;
     }
     listKey = '';

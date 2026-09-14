@@ -196,6 +196,20 @@ function setupBrowser() {
     },
     URL,
     AbortController,
+    // 生产代码按 Obsidian 要求走 window.setInterval / window.clearInterval（弹出窗口兼容），
+    // 沙箱里补一个 window 代理到同一套被追踪的计时器，断言才有意义。
+    window: {
+      setInterval: (fn) => {
+        timers.add(fn);
+        return fn;
+      },
+      clearInterval: (fn) => timers.delete(fn),
+      setTimeout: (fn) => {
+        timers.add(fn);
+        return fn;
+      },
+      clearTimeout: (fn) => timers.delete(fn),
+    },
     setInterval: (fn) => {
       timers.add(fn);
       return fn;

@@ -39,11 +39,11 @@ export class AlbumImportModal extends Modal {
   async onOpen() {
     const c = this.contentEl;
     c.empty();
-    c.createEl('div', {
+    c.createDiv({
       text: t('import.pasteHint'),
       cls: 'vinyl-muted',
     });
-    c.createEl('div', {
+    c.createDiv({
       text: t('import.exampleHint'),
       cls: 'vinyl-muted',
     });
@@ -220,7 +220,7 @@ export class LocalImportModal extends Modal {
             this.rootName,
             this.picked.map((f) => ({
               file: f,
-              relPath: String((f as any).webkitRelativePath || (f as any).relPath || ''),
+              relPath: String(f.webkitRelativePath || f.relPath || ''),
             }))
           )
         : null;
@@ -288,7 +288,7 @@ export class LocalImportModal extends Modal {
     fileInput.addEventListener('change', () => takeFiles(Array.from(fileInput.files || [])));
     dirInput.addEventListener('change', () => {
       const files = Array.from(dirInput.files || []);
-      const root = String((files[0] as any)?.webkitRelativePath || '').split('/')[0] || '';
+      const root = String(files[0]?.webkitRelativePath || '').split('/')[0] || '';
       takeFiles(files, root);
     });
 

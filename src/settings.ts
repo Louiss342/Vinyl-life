@@ -2,6 +2,7 @@
 // 外观（专辑墙 / 播放器）、源（外来源 / 本地源）、关于（版本 / 作者手记 / 许可）。
 // 卡片属性不在设置页出现：专辑墙工具栏「卡片属性」直接维护 shelfProps。
 import { App, PluginSettingTab, Setting } from 'obsidian';
+import type { SettingDefinitionItem } from 'obsidian';
 import type VinylLifePlugin from './main';
 import { QrLoginModal, qqQrProvider } from './views/qr-login-modal';
 import { WebLoginModal, qqWebProvider } from './views/web-login-modal';
@@ -12,6 +13,7 @@ import { Lang, LANGUAGES, t, tf } from './core/i18n';
 import { EMPTY_STATS, VinylStats, ensureStats } from './core/stats';
 import { DEFAULT_SHELF_PROPS } from './core/shelf-props';
 import { ABOUT_TEXT, ABOUT_TEXT_EN, REPO_URL } from './core/about';
+import type { LoginState } from './core/auth';
 import {
   DeckStyle,
   RecordColor,
@@ -149,16 +151,24 @@ export class VinylSettingTab extends PluginSettingTab {
     this.plugin = plugin;
   }
 
-  async display() {
-    const { containerEl } = this;
-    containerEl.empty();
-    containerEl.addClass('vinyl-settings');
-    this.renderTabs(containerEl);
-    const body = containerEl.createDiv({ cls: 'vinyl-settings-body' });
-    if (this.tab === 'general') this.renderGeneral(body);
-    else if (this.tab === 'appearance') this.renderAppearance(body);
-    else if (this.tab === 'about') this.renderAbout(body);
-    else await this.renderSource(body);
+  getSettingDefinitions(): SettingDefinitionItem[] {
+    return [
+      {
+        name: 'Vinyl Life',
+        aliases: tabs().map(([, label]) => label),
+        render: (setting) => {
+          const root = setting.settingEl;
+          root.empty();
+          root.addClass('vinyl-settings');
+          this.renderTabs(root);
+          const body = root.createDiv({ cls: 'vinyl-settings-body' });
+          if (this.tab === 'general') this.renderGeneral(body);
+          else if (this.tab === 'appearance') this.renderAppearance(body);
+          else if (this.tab === 'about') this.renderAbout(body);
+          else void this.renderSource(body);
+        },
+      },
+    ];
   }
 
   private renderTabs(parent: HTMLElement) {
@@ -169,7 +179,7 @@ export class VinylSettingTab extends PluginSettingTab {
       btn.addEventListener('click', () => {
         if (this.tab === key) return;
         this.tab = key;
-        this.display();
+        this.update();
       });
     }
   }
@@ -197,7 +207,7 @@ export class VinylSettingTab extends PluginSettingTab {
           this.plugin.settings.language = v === 'en' ? 'en' : 'zh';
           await this.plugin.saveSettings();
           this.plugin.refreshLanguage();
-          this.display(); // 设置面板自身立即按新语言重绘（否则要重开标签页才变）
+          this.update(); // 设置面板自身立即按新语言重绘（否则要重开标签页才变）
         });
       });
     // 维护类命令（登录 / 退出）默认不注册。
@@ -255,7 +265,7 @@ export class VinylSettingTab extends PluginSettingTab {
       .addButton((b) =>
         b.setButtonText(t('settings.generateTemplate')).onClick(async () => {
           await this.plugin.createAlbumTemplate();
-          this.display(); // 路径已被回填，重绘让输入框显示新值
+          this.update(); // 路径已被回填，重绘让输入框显示新值
         })
       );
 
@@ -336,11 +346,11 @@ export class VinylSettingTab extends PluginSettingTab {
       .addButton((b) =>
         b
           .setButtonText(t('settings.clearStats'))
-          .setWarning()
+          .setDestructive()
           .onClick(async () => {
             this.plugin.settings.stats = ensureStats(null);
             await this.plugin.saveSettings();
-            this.display();
+            this.update();
           })
       );
   }
@@ -430,7 +440,7 @@ export class VinylSettingTab extends PluginSettingTab {
       const request = ++neteaseRefresh;
       neteaseStatus.empty();
       neteaseStatus.createSpan({ text: t('settings.checkingLogin'), cls: 'vinyl-muted' });
-      let st;
+      let st: LoginState;
       try {
         st = await this.plugin.auth.getStatus();
       } catch (e) {
@@ -483,7 +493,7 @@ export class VinylSettingTab extends PluginSettingTab {
       .addButton((b) =>
         b
           .setButtonText(t('settings.logoutAction'))
-          .setWarning()
+          .setDestructive()
           .onClick(async () => {
             this.plugin.browserLogin.cancel();
             await this.plugin.auth.clear();
@@ -498,7 +508,7 @@ export class VinylSettingTab extends PluginSettingTab {
       const request = ++qqRefresh;
       qqStatus.empty();
       qqStatus.createSpan({ text: t('settings.checkingLogin'), cls: 'vinyl-muted' });
-      let st;
+      let st: LoginState;
       try {
         st = await this.plugin.qqAuth.getStatus();
       } catch (e) {
@@ -552,7 +562,7 @@ export class VinylSettingTab extends PluginSettingTab {
       .addButton((b) =>
         b
           .setButtonText(t('settings.logoutAction'))
-          .setWarning()
+          .setDestructive()
           .onClick(async () => {
             this.plugin.qqBrowserLogin.cancel();
             await this.plugin.qqAuth.clear();
@@ -575,7 +585,7 @@ export class VinylSettingTab extends PluginSettingTab {
         b.setButtonText(t('settings.redetect')).onClick(async () => {
           b.setButtonText(t('settings.detecting')).setDisabled(true);
           this.plugin.server.nodeBinary = await this.plugin.server.resolveNodeBinary();
-          this.display();
+          this.update();
         })
       );
 

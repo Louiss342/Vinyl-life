@@ -2,6 +2,7 @@
 // 对外方法与 ServerClient 同构，queue / engine / import 无需感知路由细节。
 import { ServerClient, SongUrlResult } from './server-client';
 import { WebClient } from './web-client';
+import type { NeteaseAlbumResponse, SearchAlbumResponse } from './api-types';
 
 export class NeteaseService {
   constructor(
@@ -16,12 +17,11 @@ export class NeteaseService {
     if (!ok) throw new Error(this.gatewayError() || '网易云网关未就绪');
   }
 
-  async album(id: number): Promise<any> {
+  async album(id: number): Promise<NeteaseAlbumResponse> {
     if (await this.web.isLoggedIn()) {
       try {
         return await this.web.album(id);
-      } catch (e) {
-        console.warn('[vinyl] 网页直连获取专辑失败，回退网关', e);
+      } catch {
       }
     }
     await this.ensureGatewayReady();
@@ -32,15 +32,14 @@ export class NeteaseService {
     if (await this.web.isLoggedIn()) {
       try {
         return await this.web.songUrl(id, level);
-      } catch (e) {
-        console.warn('[vinyl] 网页直连获取音源失败，回退网关', e);
+      } catch {
       }
     }
     await this.ensureGatewayReady();
     return this.gateway.songUrl(id, level);
   }
 
-  async searchAlbum(keywords: string): Promise<any> {
+  async searchAlbum(keywords: string): Promise<SearchAlbumResponse> {
     await this.ensureGatewayReady();
     return this.gateway.searchAlbum(keywords);
   }

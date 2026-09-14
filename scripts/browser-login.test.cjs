@@ -45,6 +45,14 @@ function harness(save = async () => {}) {
     destroy() { this.destroyed = true; this.emit('closed'); }
   }
   const mod = { exports: {} };
+  // 生产代码按 Obsidian 要求走 window.setInterval / window.clearInterval（弹出窗口兼容），
+  // 沙箱里补一个 window 代理到同一套被追踪的计时器，断言才有意义。
+  const windowShim = {
+    setInterval: (fn) => { timers.add(fn); return fn; },
+    clearInterval: (fn) => timers.delete(fn),
+    setTimeout: (fn) => { timers.add(fn); return fn; },
+    clearTimeout: (fn) => timers.delete(fn),
+  };
   vm.runInNewContext(compiled, {
     module: mod,
     exports: mod.exports,
@@ -54,6 +62,7 @@ function harness(save = async () => {}) {
       throw new Error(`Unexpected runtime import: ${name}`);
     },
     URL, AbortController,
+    window: windowShim,
     setInterval: (fn) => { timers.add(fn); return fn; },
     clearInterval: (fn) => timers.delete(fn),
   });

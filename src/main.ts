@@ -1,6 +1,6 @@
 // Vinyl Life —— 主入口：注册视图 / 命令 / 设置面板，装配服务层与播放引擎。
 // 本地源（零后端）+ 网易云源（懒加载 Node 网关）统一为 Track 队列。
-import { Plugin, TFile, MarkdownView, normalizePath } from 'obsidian';
+import { Editor, Plugin, TFile, MarkdownView, WorkspaceLeaf, normalizePath } from 'obsidian';
 import { VinylSettings, DEFAULT_SETTINGS, VinylSettingTab, normalizeQueueOrder } from './settings';
 import { ServerManager } from './core/server-manager';
 import { ServerClient } from './core/server-client';
@@ -161,7 +161,6 @@ export default class VinylLifePlugin extends Plugin {
     if (this.settings.debugCommands) this.registerDebugCommands();
     this.addSettingTab(new VinylSettingTab(this.app, this));
 
-    console.log('[vinyl] loaded');
   }
 
   /** 维护类命令（默认不注册）：登录 / 退出。触发条件见 onload 里的 settings.debugCommands。 */
@@ -212,8 +211,10 @@ export default class VinylLifePlugin extends Plugin {
   }
 
   async loadSettings() {
-    const data = await this.loadData();
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
+    const loaded: unknown = await this.loadData();
+    const data: Partial<VinylSettings> =
+      loaded && typeof loaded === 'object' ? (loaded as Partial<VinylSettings>) : {};
+    this.settings = { ...DEFAULT_SETTINGS, ...data };
     this.settings.stats = ensureStats(data?.stats);
     // 卡片属性：数组结构必须显式归一化——Object.assign 对数组会产出 {0:…,length:…} 类数组怪物，
     // 且浅拷贝会让设置与 DEFAULT_SETTINGS 共享引用（push 即污染默认值）；归一化同时完成旧 boolean 结构迁移
@@ -316,8 +317,8 @@ export default class VinylLifePlugin extends Plugin {
     ]) {
       try {
         await ensureFolder(this.app, p);
-      } catch (e) {
-        console.warn('[vinyl] 创建目录失败：' + p, e);
+      } catch {
+        // Folder creation is retried when the corresponding feature is used.
       }
     }
   }
@@ -408,7 +409,6 @@ export default class VinylLifePlugin extends Plugin {
       );
     } catch (e) {
       notice(tf('notice.importFailed', { msg: (e as Error).message }));
-      console.error('[vinyl] 导入异常', e);
     }
   }
 
@@ -458,7 +458,7 @@ export default class VinylLifePlugin extends Plugin {
     await this.app.vault.modify(file, newContent);
     const leaf = this.app.workspace.getLeaf(false);
     await leaf.openFile(file);
-    const editor = (leaf.view as any)?.editor;
+    const editor = (leaf.view as { editor?: Editor }).editor;
     if (editor) {
       const lastLine = editor.lastLine();
       editor.setCursor({ line: lastLine, ch: editor.getLine(lastLine).length });
@@ -534,7 +534,7 @@ export default class VinylLifePlugin extends Plugin {
       leaf = workspace.getLeaf('tab');
       await leaf.setViewState({ type: SHELF_VIEW_TYPE, active: true });
     }
-    workspace.revealLeaf(leaf);
+    await workspace.revealLeaf(leaf);
   }
 
   // —— 播放器落位（G2：侧栏 / 主区 / 独立窗口）——
@@ -545,7 +545,10 @@ export default class VinylLifePlugin extends Plugin {
     if (!leaf) {
       if (loc === 'window') {
         try {
-          leaf = (workspace as any).openPopoutLeaf();
+          const popoutWorkspace = workspace as typeof workspace & {
+            openPopoutLeaf(): WorkspaceLeaf;
+          };
+          leaf = popoutWorkspace.openPopoutLeaf();
         } catch {
           leaf = workspace.getLeaf('tab');
         }
@@ -556,7 +559,7 @@ export default class VinylLifePlugin extends Plugin {
       }
       await leaf.setViewState({ type: PLAYER_VIEW_TYPE, active: true });
     }
-    workspace.revealLeaf(leaf);
+    await workspace.revealLeaf(leaf);
   }
 
   openLogin() {

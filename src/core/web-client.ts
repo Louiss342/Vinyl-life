@@ -8,6 +8,11 @@ import { requestUrl } from 'obsidian';
 import * as fs from 'fs';
 import * as crypto from 'crypto';
 import { restrictionText } from '../util';
+import type {
+  LoginResponse,
+  NeteaseAlbumResponse,
+  SongUrlResponse,
+} from './api-types';
 
 const IV = '0102030405060708';
 const PRESET_KEY = '0CoJUm6Qyw8W8jud';
@@ -40,7 +45,7 @@ function rsaNoPaddingHex(text: string, pem: string): string {
     .toString('hex');
 }
 
-function weapi(object: any): { params: string; encSecKey: string } {
+function weapi(object: unknown): { params: string; encSecKey: string } {
   const text = JSON.stringify(object);
   let secretKey = '';
   for (let i = 0; i < 16; i++) secretKey += BASE62.charAt(Math.floor(Math.random() * 62));
@@ -50,7 +55,7 @@ function weapi(object: any): { params: string; encSecKey: string } {
   };
 }
 
-function eapi(uri: string, object: any): { params: string } {
+function eapi(uri: string, object: unknown): { params: string } {
   const text = JSON.stringify(object);
   const digest = crypto
     .createHash('md5')
@@ -88,12 +93,12 @@ function readOrCreateDeviceId(file: string): string | null {
   try {
     const cur = fs.readFileSync(file, 'utf8').trim();
     if (/^[0-9A-F]{52}$/.test(cur)) return cur;
-  } catch (_) {}
+  } catch {}
   try {
     const v = newDeviceId();
     fs.writeFileSync(file, v, { encoding: 'utf8', mode: 0o600 });
     return v;
-  } catch (_) {
+  } catch {
     return null;
   }
 }
@@ -110,14 +115,15 @@ export class WebClient {
     let bound = '';
     try {
       const raw = fs.readFileSync(anonTokenFile, 'utf8').trim();
-      const j = JSON.parse(raw);
+      const parsed: unknown = JSON.parse(raw);
+      const j = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
       if (j.token) {
         this.anonToken = String(j.token);
         bound = String(j.deviceId || '');
       } else {
         this.anonToken = raw; // 旧格式
       }
-    } catch (_) {}
+    } catch {}
     if (bound) {
       this.deviceId = bound;
     } else if (deviceIdFile) {
@@ -125,7 +131,7 @@ export class WebClient {
     }
   }
 
-  private async post(uri: string, data: any, mode: 'weapi' | 'eapi'): Promise<any> {
+  private async post<T>(uri: string, data: Record<string, unknown>, mode: 'weapi' | 'eapi'): Promise<T> {
     const base = mode === 'weapi' ? 'https://music.163.com/weapi' : 'https://interface.music.163.com/eapi';
     if (mode === 'eapi') data.header = this.fingerprint();
     const body =
@@ -142,12 +148,13 @@ export class WebClient {
       },
       body,
     });
-    return r.json;
+    const json: unknown = r.json;
+    return json as T;
   }
 
   // eapi 指纹头（对齐网关 buildFingerprintCookie；MUSIC_A 在未登录会话时提供匿名身份）
-  private fingerprint(): any {
-    const header: any = {
+  private fingerprint(): Record<string, string> {
+    const header: Record<string, string> = {
       osver: 'Microsoft-Windows-10-Professional-build-19045-64bit',
       deviceId: this.deviceId,
       os: 'pc',
@@ -176,8 +183,8 @@ export class WebClient {
       return this.probeCache.state;
     }
     try {
-      const j = await this.post('/api/w/nuser/account/get', {}, 'weapi');
-      const inner = j?.data || j || {};
+      const j = await this.post<LoginResponse>('/api/w/nuser/account/get', {}, 'weapi');
+      const inner = j.data || j;
       const nick = inner.profile?.nickname;
       const uid = inner.account?.id ?? inner.profile?.userId;
       const state: WebLoginState = {
@@ -188,7 +195,7 @@ export class WebClient {
       };
       this.probeCache = { at: Date.now(), state };
       return state;
-    } catch (_) {
+    } catch {
       return { loggedIn: false };
     }
   }
@@ -198,8 +205,8 @@ export class WebClient {
   }
 
   // 专辑详情（weapi v1/album/{id}，与网关同源响应结构）
-  async album(id: number): Promise<any> {
-    return this.post(`/api/v1/album/${id}`, {}, 'weapi');
+  async album(id: number): Promise<NeteaseAlbumResponse> {
+    return this.post<NeteaseAlbumResponse>(`/api/v1/album/${id}`, {}, 'weapi');
   }
 
   // 音源地址（eapi song/enhance/player/url/v1，与网关同款降级阶梯）
@@ -207,7 +214,7 @@ export class WebClient {
     const idx = QUALITY_LADDER.indexOf(level);
     const start = idx === -1 ? 1 : idx;
     for (let i = start; i >= 0; i--) {
-      const j = await this.post(
+      const j = await this.post<SongUrlResponse>(
         '/api/song/enhance/player/url/v1',
         { ids: `[${id}]`, level: QUALITY_LADDER[i], encodeType: 'flac' },
         'eapi'

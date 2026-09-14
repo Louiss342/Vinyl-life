@@ -101,10 +101,10 @@ export class QrLoginModal extends Modal {
       const qrSec = c.createDiv({ cls: 'vinyl-qr-section' });
       qrSec.createEl('h4', { text: t('login.qrSection') });
       const img = qrSec.createEl('img', { attr: { width: '220', height: '220' } });
-      const qrStatus = qrSec.createEl('div', { text: t('login.generating'), cls: 'vinyl-muted' });
+      const qrStatus = qrSec.createDiv({ text: t('login.generating'), cls: 'vinyl-muted' });
       const refreshBtn = qrSec.createEl('button', { text: t('login.refreshQr') });
       if (this.provider.fallbackHint) {
-        qrSec.createEl('div', { text: this.provider.fallbackHint, cls: 'vinyl-muted' });
+        qrSec.createDiv({ text: this.provider.fallbackHint, cls: 'vinyl-muted' });
       }
 
       const start = async () => {
@@ -124,7 +124,7 @@ export class QrLoginModal extends Modal {
             try {
               const b64 = qrimg.replace(/^data:image\/\w+;base64,/, '');
               const buf = Buffer.from(b64, 'base64');
-              const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
+              const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
               const tmpPath = '.obsidian/plugins/vinyl-note/' + this.provider.tempPng;
               await this.app.vault.adapter.writeBinary(tmpPath, ab);
               if (generation !== this.qrGeneration) return;
@@ -149,7 +149,7 @@ export class QrLoginModal extends Modal {
     if (this.showManual) {
       if (this.showQr) c.createEl('hr');
       c.createEl('h4', { text: t('login.manualSection') });
-      c.createEl('div', {
+      c.createDiv({
         text: this.provider.manualHint,
         cls: 'vinyl-muted',
       });
@@ -157,7 +157,7 @@ export class QrLoginModal extends Modal {
         attr: { placeholder: this.provider.placeholder },
       });
       const saveBtn = c.createEl('button', { text: t('login.saveCookie'), cls: 'mod-cta' });
-      const manualStatus = c.createEl('div', { cls: 'vinyl-muted' });
+      const manualStatus = c.createDiv({ cls: 'vinyl-muted' });
       saveBtn.addEventListener('click', async () => {
         const val = ta.value.trim();
         if (!val) {
