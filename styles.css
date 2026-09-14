@@ -1387,3 +1387,67 @@
     transition: none;
   }
 }
+
+/* ============ 播放器：队列按专辑分段（专辑队列模式） ============ */
+/* 一段 = 一张专辑：段头（专辑名 + ✕ 移除 + 可整段拖拽）+ 段内的单曲行。
+   只有一段时不画段头，单专辑队列的观感与以前完全一致。 */
+.vinyl-queue-segment {
+  display: flex;
+  flex-direction: column;
+}
+
+.vinyl-queue-segment-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0 2px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: grab;
+  color: var(--text-muted);
+  font-size: 0.82em;
+  font-weight: 600;
+}
+
+.vinyl-queue-segment.is-current .vinyl-queue-segment-head {
+  color: var(--text-normal);
+}
+
+.vinyl-queue-segment-head:hover {
+  background: var(--background-modifier-hover);
+}
+
+.vinyl-queue-segment-head:active {
+  cursor: grabbing;
+}
+
+.vinyl-queue-segment-title {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vinyl-queue-segment-remove {
+  flex: none;
+}
+
+/* 刚排入的一张专辑闪一下：给「收到了，正在排队」一个视觉回执 */
+.vinyl-queue-segment.is-just-added {
+  animation: vinyl-queue-flash 1.2s ease-out;
+}
+
+@keyframes vinyl-queue-flash {
+  from {
+    background: var(--background-modifier-hover);
+  }
+  to {
+    background: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vinyl-queue-segment.is-just-added {
+    animation: none;
+  }
+}

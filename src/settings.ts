@@ -79,6 +79,8 @@ export interface VinylSettings {
   volume: number;
   /** 上次播放位置：重启后恢复队列并停在原处（不自动播放）；笔记被删则忽略 */
   lastPlayback?: LastPlayback;
+  /** 专辑队列模式（播放器顶部开关，默认关）：开着时点专辑墙上的专辑是「排到队尾」而不是换碟 */
+  queueMode: boolean;
   /** 播放统计（次数/最近播放，仅存本插件 data.json，不写笔记） */
   stats: VinylStats;
   /** 每张专辑记住自己的自定义队列顺序（专辑笔记路径 → trackKey 顺序）。
@@ -107,6 +109,7 @@ export const DEFAULT_SETTINGS: VinylSettings = {
   discDirection: 'right',
   turntableSpeed: 'normal',
   volume: 0.8,
+  queueMode: false,
   shelfProps: [...DEFAULT_SHELF_PROPS],
   shelfPropLabels: {},
   stats: EMPTY_STATS,

@@ -759,6 +759,12 @@ export class VinylShelfView extends ItemView {
       notice(t('card.noSource'));
       return;
     }
+    // 专辑队列模式：点专辑 = 排到队尾（不换碟、不走交接动画）；队列空时引擎按普通换碟处理
+    if (this.plugin.settings.queueMode) {
+      const res = await this.plugin.engine.enqueueAlbum(album);
+      if (res.tracks.length) notice(tf('notice.queuedAlbum', { name: album.title }));
+      return;
+    }
     if (
       this.lastSnap &&
       this.lastSnap.albumNotePath === album.path &&

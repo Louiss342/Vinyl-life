@@ -11,7 +11,7 @@ import { trackSourceLabel, trackSourceClass, qualityText } from '../core/track';
 import { fmtTime, notice, prefersReducedMotion } from '../util';
 import { SPIN_SPEEDS } from '../core/disc-motion';
 import { DECK_STYLES, RECORD_COLORS, deckClass, recordClass } from '../core/appearance';
-import { t } from '../core/i18n';
+import { t, tf } from '../core/i18n';
 import { onMarqueeOver, onMarqueeOut } from './marquee';
 
 export const PLAYER_VIEW_TYPE = 'vinyl-player';
@@ -34,6 +34,11 @@ interface PlayerEls {
   volSlider: HTMLInputElement;
   queueTitle: HTMLElement;
   queueBox: HTMLElement;
+  /** 专辑队列模式开关（顶部，「选择专辑」左边） */
+  queueModeBtn: HTMLButtonElement;
+  /** 队列折叠开关与「清空后面的专辑」（Vinyl order 行） */
+  foldBtn: HTMLButtonElement;
+  clearQueueBtn: HTMLButtonElement;
   qualityEl: HTMLElement;
 }
 
@@ -62,6 +67,18 @@ const FILL_SILVER = '#c8c8d0';
 
 /** 拖拽落点 → 结果下标：drop 落在第 target 行的前 / 后（与 shelf-props 的 resolveDropIndex 同构）。
  *  被拖行先移除、其后的行左移一位，故落点在它之后时要减一；落到自己身上返回原位（无副作用）。 */
+/** 整段拖拽的落点换算：块会先被摘掉，所以落点是「摘掉之后」的下标（引擎 moveRange 的语义）。 */
+export function resolveSegmentDropIndex(
+  fromStart: number,
+  count: number,
+  targetStart: number,
+  targetCount: number,
+  after: boolean
+): number {
+  const shift = fromStart < targetStart ? count : 0;
+  return after ? targetStart + targetCount - shift : targetStart - shift;
+}
+
 export function resolveQueueDropIndex(from: number, target: number, after: boolean): number {
   const to = target + (after ? 1 : 0);
   return from < to ? to - 1 : to;
@@ -81,6 +98,8 @@ export class VinylPlayerView extends ItemView {
   private els: PlayerEls | null = null;
   private renderedQueue: Track[] | null = null;
   private queueRows: HTMLElement[] = [];
+  /** 段容器（多专辑时画出来的分组）：切语言要按它重写段头提示 */
+  private segmentEls: Array<{ el: HTMLElement; seg: { start: number; count: number; albumTitle: string; albumPath: string } }> = [];
   // 队列行右侧的来源角标（文案随语言变；行不重建，切语言时按 renderedQueue 就地重写）
   private queueBadges: HTMLElement[] = [];
   private currentCoverSrc: string | null = null;
@@ -104,6 +123,14 @@ export class VinylPlayerView extends ItemView {
   private onVisibility = () => this.syncVisibility();
   // 队列拖拽态：dragging 抑制拖拽尾巴上的 click（见 endQueueDrag），dragFrom 是被拖行的下标
   private dragging = false;
+  /** 队列列表是否折叠（默认展开；不落盘，重开播放器回到展开） */
+  private queueCollapsed = false;
+  /** 整段拖拽中的来源段（与行拖拽互斥，避免两套拖拽同时生效） */
+  private dragSegment: { start: number; count: number } | null = null;
+  /** 上一次渲染的段数：变多说明刚排入新专辑 → 闪一下作为反馈 */
+  private lastSegmentCount = -1;
+  /** 当前画出来的段数（折叠提示要用；不去问引擎，渲染之外也能调用） */
+  private renderedSegmentCount = 0;
   private dragFrom = -1;
   private clickBlockUntil = 0;
 
@@ -221,8 +248,32 @@ export class VinylPlayerView extends ItemView {
 
   // 队列文案（行拖拽提示 / 空态 / 来源角标）不挂在壳上、随队列重建，故单独就地刷新（只改属性与文本，不重建节点）
   private applyQueueLabels() {
+    const els = this.els;
+    if (els) {
+      els.queueModeBtn.setAttribute('aria-label', t('player.queueMode'));
+      els.foldBtn.setAttribute(
+        'aria-label',
+        this.queueCollapsed ? t('player.queueExpand') : t('player.queueCollapse')
+      );
+      els.clearQueueBtn.setAttribute('aria-label', t('player.queueClearOthers'));
+    }
+    for (const { el, seg } of this.segmentEls) {
+      const head = el.querySelector<HTMLElement>('.vinyl-queue-segment-head');
+      if (head) head.setAttribute('title', t('player.queueDragAlbum'));
+      const removeBtn = el.querySelector<HTMLElement>('.vinyl-queue-segment-remove');
+      if (removeBtn) {
+        removeBtn.setAttribute(
+          'aria-label',
+          tf('player.queueRemoveAlbum', { name: seg.albumTitle || seg.albumPath })
+        );
+      }
+    }
     for (const row of this.queueRows) row.setAttribute('title', t('player.dragToReorder'));
-    if (this.emptyQueueEl) this.emptyQueueEl.textContent = t('player.emptyQueue');
+    if (this.emptyQueueEl) {
+      this.emptyQueueEl.textContent = this.queueCollapsed
+        ? tf('player.queueCollapsed', { n: this.renderedSegmentCount })
+        : t('player.emptyQueue');
+    }
     // 来源角标走 trackSourceLabel（随语言变）：行不重建，按当前队列就地重写文本
     const queue = this.renderedQueue;
     if (!queue) return;
@@ -246,6 +297,11 @@ export class VinylPlayerView extends ItemView {
       cls: 'vinyl-marquee-text',
       text: t('player.title'),
     });
+    // 专辑队列模式开关（默认关）：开着时点专辑墙上的专辑是排队，不是换碟。
+    // 必须建在「选择专辑」之前 —— 顶部这一行的顺序就是创建顺序。
+    const queueModeBtn = header.createEl('button', { cls: 'vinyl-btn vinyl-btn-small' });
+    setIcon(queueModeBtn, 'list-plus');
+    queueModeBtn.addEventListener('click', () => this.toggleQueueMode());
     const swapBtn = header.createEl('button', { cls: 'vinyl-btn vinyl-btn-small' });
     setIcon(swapBtn, 'disc-3');
     this.bindLabel(() => swapBtn.setAttribute('aria-label', t('player.pickAlbum')));
@@ -326,6 +382,22 @@ export class VinylPlayerView extends ItemView {
     // Vinyl order 行：标题 + ✎ 追加感想 + ↺ 恢复原有顺序
     const orderRow = c.createDiv({ cls: 'vinyl-order-row' });
     const queueTitle = orderRow.createDiv({ cls: 'vinyl-queue-title' });
+    // 折叠 / 展开队列（默认展开；不落盘）
+    const foldBtn = orderRow.createEl('button', { cls: 'vinyl-btn vinyl-btn-small' });
+    setIcon(foldBtn, 'chevron-down');
+    foldBtn.addEventListener('click', () => {
+      this.queueCollapsed = !this.queueCollapsed;
+      this.syncQueueControls(this.renderedSegmentCount);
+      this.applyQueueLabels();
+      this.renderQueue(this.plugin.engine.snapshot());
+    });
+    // 清空后面的专辑（保留当前这张）：只在队列里不止一张专辑时有意义
+    const clearQueueBtn = orderRow.createEl('button', { cls: 'vinyl-btn vinyl-btn-small' });
+    setIcon(clearQueueBtn, 'list-x');
+    clearQueueBtn.addEventListener('click', () => {
+      this.plugin.engine.keepCurrentAlbum();
+      notice(t('player.queueClearOthers'));
+    });
     const noteBtn = orderRow.createEl('button', { cls: 'vinyl-btn vinyl-btn-small' });
     setIcon(noteBtn, 'pencil');
     // 只设 aria-label：Obsidian 自己会按它渲染样式化提示，再设 title 会同时弹出浏览器原生提示（两个气泡）
@@ -382,6 +454,7 @@ export class VinylPlayerView extends ItemView {
     this.els = {
       headerTitle,
       headerTitleText,
+      queueModeBtn,
       swapBtn,
       discOuter,
       vinyl,
@@ -396,6 +469,8 @@ export class VinylPlayerView extends ItemView {
       volSlider,
       queueTitle,
       queueBox,
+      foldBtn,
+      clearQueueBtn,
       qualityEl,
     };
     return this.els;
@@ -455,6 +530,8 @@ export class VinylPlayerView extends ItemView {
 
     // 队列（引用变化才重建；当前高亮走 class 切换）
     if (s.queue !== this.renderedQueue) this.rebuildQueue(els, s);
+    // 队列模式开关 / 折叠按钮 / 清空按钮的可见性（设置改了、段数变了都要跟着走）
+    this.syncQueueControls(s.segments.length);
     this.queueRows.forEach((row, i) => row.classList.toggle('is-current', i === s.index));
 
     // 头部（错误并入标题行；值不变不写 DOM）
@@ -554,38 +631,152 @@ export class VinylPlayerView extends ItemView {
     // 「Vinyl order」是丝印品牌式的固定英文标签（与 'Vinyl Life' 同款）：中英同形，
     // 建 i18n 键会撞上「中英不得逐字相同」的词典测试，故保持硬编码。
     els.queueTitle.textContent = 'Vinyl order';
-    els.queueBox.empty();
+    // 段数变多 = 刚排入新专辑 → 记下来，画完闪一下（只在已经渲染过之后才比较）
+    const grew = this.lastSegmentCount >= 0 && s.segments.length > this.lastSegmentCount;
+    this.lastSegmentCount = s.segments.length;
+    this.renderQueue(s, grew);
+  }
+
+  /** 按「专辑分段」画队列：一段 = 一张专辑（头部 + 它的曲目行）。
+   *  只有一段时不画头部，保持单专辑队列原来的样子。 */
+  private renderQueue(s: PlayerSnapshot, flashLast = false) {
+    const els = this.els;
+    if (!els) return;
+    const box = els.queueBox;
+    box.empty();
     this.queueRows = [];
     this.queueBadges = [];
     this.emptyQueueEl = null;
-    // 先记下本次渲染的队列，applyQueueLabels 要按它重写来源角标
+    this.segmentEls = [];
     this.renderedQueue = s.queue;
+
+    this.renderedSegmentCount = s.segments.length;
     if (!s.queue.length) {
-      this.emptyQueueEl = els.queueBox.createDiv({ text: t('player.emptyQueue'), cls: 'vinyl-muted' });
-    } else {
-      s.queue.forEach((t, i) => {
-        const row = els.queueBox.createDiv({ cls: 'vinyl-queue-item' });
+      this.emptyQueueEl = box.createDiv({ text: t('player.emptyQueue'), cls: 'vinyl-muted' });
+      this.applyQueueLabels();
+      return;
+    }
+    if (this.queueCollapsed) {
+      this.emptyQueueEl = box.createDiv({
+        text: tf('player.queueCollapsed', { n: s.segments.length }),
+        cls: 'vinyl-muted',
+      });
+      this.applyQueueLabels();
+      return;
+    }
+
+    const multi = s.segments.length > 1;
+    for (const seg of s.segments) {
+      const segEl = box.createDiv({ cls: 'vinyl-queue-segment' });
+      segEl.dataset.start = String(seg.start);
+      if (seg.current) segEl.addClass('is-current');
+      if (multi) {
+        const head = segEl.createDiv({ cls: 'vinyl-queue-segment-head' });
+        head.createDiv({ text: seg.albumTitle || seg.albumPath, cls: 'vinyl-queue-segment-title' });
+        const removeBtn = head.createEl('button', { cls: 'clickable-icon vinyl-queue-segment-remove' });
+        setIcon(removeBtn, 'x');
+        removeBtn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          this.plugin.engine.removeRange(seg.start, seg.count);
+        });
+        this.bindSegmentDrag(head, seg);
+        this.segmentEls.push({ el: segEl, seg });
+      }
+      for (let i = seg.start; i < seg.start + seg.count; i++) {
+        const track = s.queue[i];
+        const row = segEl.createDiv({ cls: 'vinyl-queue-item' });
         row.dataset.idx = String(i);
         // 键盘可达：Tab 落到行上，Enter / 空格切歌，Alt+↑/↓ 调整顺序（拖拽的键盘等价）
         row.tabIndex = 0;
         row.setAttribute('role', 'button');
-        row.setAttribute('aria-label', t.title);
+        row.setAttribute('aria-label', track.title);
         this.bindQueueDrag(row, i);
         row.createSpan({ text: String(i + 1).padStart(2, '0'), cls: 'vinyl-idx' });
-        row.createSpan({ text: t.title, cls: 'vinyl-q-title' });
+        row.createSpan({ text: track.title, cls: 'vinyl-q-title' });
         const badge = row.createSpan({
-          text: trackSourceLabel(t),
-          cls: 'vinyl-badge ' + trackSourceClass(t),
+          text: trackSourceLabel(track),
+          cls: 'vinyl-badge ' + trackSourceClass(track),
         });
         row.createSpan({
-          text: t.duration ? fmtTime(t.duration) : '–:–',
+          text: track.duration ? fmtTime(track.duration) : '–:–',
           cls: 'vinyl-muted',
         });
         this.queueRows.push(row);
         this.queueBadges.push(badge);
-      });
+      }
+      if (flashLast && seg === s.segments[s.segments.length - 1]) {
+        segEl.addClass('is-just-added');
+        window.setTimeout(() => segEl.removeClass('is-just-added'), 1200);
+      }
     }
     this.applyQueueLabels(); // 行拖拽提示 / 来源角标统一在这里按当前语言写（切语言时由 applyLanguage 重放）
+  }
+
+  /** 整段拖拽（跨专辑排序）：只认段头作落点，段内单曲拖拽仍走 bindQueueDrag */
+  private bindSegmentDrag(head: HTMLElement, seg: { start: number; count: number }) {
+    head.setAttribute('draggable', 'true');
+    head.addEventListener('dragstart', (ev) => {
+      this.dragging = true;
+      this.dragSegment = { start: seg.start, count: seg.count };
+      head.addClass('is-dragging');
+      if (ev.dataTransfer) {
+        ev.dataTransfer.effectAllowed = 'move';
+        ev.dataTransfer.setData('text/plain', String(seg.start));
+      }
+    });
+    head.addEventListener('dragover', (ev) => {
+      if (!this.dragSegment) return;
+      ev.preventDefault();
+      if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+      const rect = head.getBoundingClientRect();
+      this.setSegmentDropIndicator(head, ev.clientY > rect.top + rect.height / 2);
+    });
+    head.addEventListener('dragleave', (ev) => {
+      if (!this.dragSegment) return;
+      const to = ev.relatedTarget as Node | null;
+      if (to && head.contains(to)) return;
+      head.removeClass('is-drop-before', 'is-drop-after');
+    });
+    head.addEventListener('drop', (ev) => {
+      ev.preventDefault();
+      const from = this.dragSegment;
+      const rect = head.getBoundingClientRect();
+      const after = ev.clientY > rect.top + rect.height / 2;
+      this.endQueueDrag();
+      if (!from) return;
+      this.plugin.engine.moveRange(
+        from.start,
+        from.count,
+        resolveSegmentDropIndex(from.start, from.count, seg.start, seg.count, after)
+      );
+    });
+    head.addEventListener('dragend', () => this.endQueueDrag());
+  }
+
+  private setSegmentDropIndicator(target: HTMLElement, after: boolean) {
+    for (const x of this.segmentEls) x.el.removeClass('is-drop-before', 'is-drop-after');
+    target.addClass(after ? 'is-drop-after' : 'is-drop-before');
+  }
+
+  /** 队列相关的三个按钮的当前状态（开关高亮 / 折叠图标 / 清空按钮可见性）。
+   *  update() 与主动改设置的路径都要调 —— 只在 update() 里写的话，刚点完开关会看到状态滞后。 */
+  private syncQueueControls(segmentCount: number) {
+    const els = this.els;
+    if (!els) return;
+    els.queueModeBtn.toggleClass('is-active', this.plugin.settings.queueMode);
+    els.clearQueueBtn.toggleClass('vinyl-hidden', segmentCount <= 1);
+    setIcon(els.foldBtn, this.queueCollapsed ? 'chevron-right' : 'chevron-down');
+  }
+
+  /** 专辑队列模式开关：改设置 + 提示；关掉时把队列收缩回当前专辑（用户定的语义） */
+  private toggleQueueMode() {
+    const on = !this.plugin.settings.queueMode;
+    this.plugin.settings.queueMode = on;
+    void this.plugin.saveSettings();
+    if (!on) this.plugin.engine.keepCurrentAlbum();
+    notice(t(on ? 'player.queueModeOn' : 'player.queueModeOff'));
+    this.syncQueueControls(this.renderedSegmentCount);
+    this.applyQueueLabels();
   }
 
   // —— 队列行拖拽排序 ——
@@ -635,6 +826,11 @@ export class VinylPlayerView extends ItemView {
     target.addClass(after ? 'is-drop-after' : 'is-drop-before');
   }
 
+  private endSegmentDrag() {
+    for (const x of this.segmentEls) x.el.removeClass('is-drop-before', 'is-drop-after', 'is-dragging');
+    this.dragSegment = null;
+  }
+
   private clearQueueDropIndicators() {
     for (const row of this.queueRows) {
       row.removeClass('is-drop-before', 'is-drop-after', 'is-dragging');
@@ -656,6 +852,7 @@ export class VinylPlayerView extends ItemView {
     this.dragging = false;
     this.dragFrom = -1;
     this.clearQueueDropIndicators();
+    this.endSegmentDrag();
   }
 
   // 落盘入场（交接 C 阶段）：唱片滑入转盘

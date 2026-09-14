@@ -695,6 +695,27 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'util.restrictionUnknown': { zh: '未知限制码 {code}', en: 'Unknown restriction code {code}' },
   'util.restrictionUnavailable': { zh: '音源不可用', en: 'Source unavailable' },
 
+  // —— 专辑队列模式（播放器顶部开关 + 队列分组）——
+  'player.queueMode': { zh: '专辑队列模式', en: 'Album queue mode' },
+  'player.queueModeOn': {
+    zh: '专辑队列模式已开启：点专辑墙上的专辑会排到队尾，不换碟',
+    en: 'Album queue mode is on: clicking an album queues it instead of switching',
+  },
+  'player.queueModeOff': {
+    zh: '专辑队列模式已关闭：点专辑会立即换碟',
+    en: 'Album queue mode is off: clicking an album switches to it immediately',
+  },
+  'player.queueCollapse': { zh: '折叠队列', en: 'Collapse the queue' },
+  'player.queueExpand': { zh: '展开队列', en: 'Expand the queue' },
+  'player.queueRemoveAlbum': { zh: '从队列移除「{name}」', en: 'Remove “{name}” from the queue' },
+  'player.queueDragAlbum': { zh: '拖拽调整专辑顺序', en: 'Drag to reorder albums' },
+  'player.queueClearOthers': {
+    zh: '清空后面的专辑（保留当前这张）',
+    en: 'Clear the queued albums (keep the current one)',
+  },
+  'player.queueCollapsed': { zh: '队列已折叠（{n} 张专辑）', en: 'Queue collapsed ({n} albums)' },
+  'notice.queuedAlbum': { zh: '已加入队列：{name}', en: 'Queued: {name}' },
+
   // —— 登录 / 凭据 / 网关错误（core/auth, qq-auth, credential-file, netease, server-client, qq, web-client）——
   'auth.cookieMissingMusicU': { zh: 'Cookie 缺少有效的 MUSIC_U', en: 'The cookie has no valid MUSIC_U' },
   'auth.cookieMissingQmKeyst': { zh: 'Cookie 缺少有效的 qm_keyst', en: 'The cookie has no valid qm_keyst' },

@@ -494,11 +494,19 @@ function playerModule() {
   return playerBundle;
 }
 
-// 引擎快照最小面（播放器只读这些字段）
+// 引擎快照最小面（播放器只读这些字段）。
+// segments 必须与 queue 自洽：播放器按段渲染队列，段数/长度对不上就会画错行。
 function snap(over = {}) {
+  const queue = over.queue || [];
+  const segments =
+    over.segments ||
+    (queue.length
+      ? [{ albumPath: 'a.md', albumTitle: 'A', start: 0, count: queue.length, current: true }]
+      : []);
   return {
     status: 'idle',
-    queue: [],
+    queue,
+    segments,
     index: -1,
     currentTime: 0,
     duration: 0,
@@ -755,6 +763,14 @@ test('main：打开「调试命令」后补齐登录 / 退出（id 与回调都�
   for (const c of plugin.commands) {
     assert.equal(typeof c.callback, 'function', `${c.id} 缺回调`);
     assert.ok(String(c.name || '').trim().length > 0, `${c.id} 缺显示名`);
+  }
+});
+
+test('main：专辑队列模式同样只认布尔 true（脏 data.json 一律当关）', async () => {
+  for (const [raw, want] of [[true, true], ['true', false], [1, false], [undefined, false]]) {
+    const plugin = makePlugin({ data: raw === undefined ? {} : { queueMode: raw } });
+    await plugin.onload();
+    assert.equal(plugin.settings.queueMode, want, `queueMode=${String(raw)} → ${want}`);
   }
 });
 

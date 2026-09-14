@@ -365,6 +365,35 @@ test('引擎：不接线 savedOrder / onQueueOrderChange 也能正常重排（�
 const settingsMod = loadModule('src/settings.ts');
 const { normalizeQueueOrder, normalizeLastPlayback, normalizeVolume, DEFAULT_SETTINGS } = settingsMod;
 
+test('resolveSegmentDropIndex：整段拖拽落点（块先摘掉，下标按摘后算）', () => {
+  const { resolveSegmentDropIndex } = loadModule('src/views/player-view.ts', {
+    document: { createElement: () => ({ style: {}, classList: { add() {}, remove() {} }, setAttribute() {} }) },
+    Notice: class {},
+  });
+  // A(0,2) B(2,1) C(3,1)：把 A 拖到 C 之后 → 摘掉 A 后是 [B,C]，插到 C 后 = 2
+  assert.equal(resolveSegmentDropIndex(0, 2, 3, 1, true), 2);
+  // 把 A 拖到 B 之前 → 摘掉 A 后是 [B,C]，插到 B 前 = 0
+  assert.equal(resolveSegmentDropIndex(0, 2, 2, 1, false), 0);
+  // 把 C 拖到 A 之前 → 摘掉 C 后是 [A,B]，插到 A 前 = 0
+  assert.equal(resolveSegmentDropIndex(3, 1, 0, 2, false), 0);
+  // 把 B 拖到 A 之后 → 摘掉 B 后是 [A,C]，插到 A 后 = 2
+  assert.equal(resolveSegmentDropIndex(2, 1, 0, 2, true), 2);
+});
+
+test('专辑队列模式接线：顶部开关在「选择专辑」左边 / 分段渲染 / 折叠 / 整段操作都在', () => {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '../src/views/player-view.ts'), 'utf8');
+  const headerBlock = src.slice(src.indexOf('const header = '), src.indexOf('const swapBtn'));
+  assert.match(headerBlock, /queueModeBtn/, '队列模式开关要建在「选择专辑」之前（顶部那一行的顺序就是创建顺序）');
+  // 追加发生在专辑墙的点击路径上（播放器只负责显示与整段操作）
+  const shelf = require('fs').readFileSync(require('path').join(__dirname, '../src/views/shelf-view.ts'), 'utf8');
+  assert.match(shelf, /settings\.queueMode[\s\S]{0,200}?enqueueAlbum\(/, '队列模式下点专辑走引擎的 enqueueAlbum');
+  assert.match(src, /engine\.removeRange\(seg\.start, seg\.count\)/, '整段移除按段的下标与长度');
+  assert.match(src, /engine\.moveRange\(/, '跨专辑排序走 moveRange');
+  assert.match(src, /engine\.keepCurrentAlbum\(\)/, '关开关 / 清空走 keepCurrentAlbum');
+  assert.match(src, /resolveSegmentDropIndex\(/, '整段落点用纯函数换算');
+  assert.match(src, /queueCollapsed/, '折叠状态在视图里');
+});
+
 test('settings：音量与「上次播放位置」默认值 + 脏数据回落', () => {
   assert.equal(DEFAULT_SETTINGS.volume, 0.8);
   assert.equal(DEFAULT_SETTINGS.lastPlayback, undefined, '没播过就没有记录');

@@ -36,7 +36,7 @@ test('可访问性：队列行可聚焦、Enter 切歌、Alt+↑/↓ 调序（�
   const src = read('src/views/player-view.ts');
   assert.match(src, /row\.tabIndex = 0/, '队列行要能被 Tab 选中');
   assert.match(src, /row\.setAttribute\('role', 'button'\)/);
-  assert.match(src, /row\.setAttribute\('aria-label', t\.title\)/, '行要有可读名称（曲名）');
+  assert.match(src, /row\.setAttribute\('aria-label', track\.title\)/, '行要有可读名称（曲名）');
   assert.match(src, /ev\.key === 'Enter'[\s\S]{0,200}?playIndex\(idx\)/, 'Enter / 空格切歌');
   assert.match(
     src,

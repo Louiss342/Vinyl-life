@@ -1,7 +1,7 @@
 // 播放引擎：统一面向 Track 解析可播放地址、推进队列、状态快照事件。
 // 交接动效与黑胶转盘视觉接在此状态之上（IDLE → HANDOFF → PLAYING）。
 import { App } from 'obsidian';
-import { Track, trackKey, applyTrackOrder, reorderTracks } from './track';
+import { Track, trackKey, trackSourceLabel, applyTrackOrder, reorderTracks } from './track';
 import { AlbumInfo } from './album-index';
 import { LocalSource } from './local-source';
 import { NeteaseService } from './netease';
@@ -13,6 +13,18 @@ import { t, tf } from './i18n';
 
 export type PlayerStatus = 'idle' | 'loading' | 'playing' | 'paused' | 'error';
 
+/** 队列里的一段 = 同一张专辑连续的一段曲目。专辑队列模式下可以有多个段（同一张专辑也可以出现多次）。 */
+export interface QueueSegment {
+  /** 专辑笔记路径（分组键；曲目没带路径时回落到当前专辑） */
+  albumPath: string;
+  albumTitle: string;
+  /** 在整条队列里的起始下标与长度 */
+  start: number;
+  count: number;
+  /** 当前播放的曲目是否落在这一段里 */
+  current: boolean;
+}
+
 export interface PlayerSnapshot {
   status: PlayerStatus;
   queue: Track[];
@@ -23,6 +35,8 @@ export interface PlayerSnapshot {
   volume: number;
   albumNotePath?: string;
   albumTitle?: string;
+  /** 队列按专辑分段（视图按段渲染分组与整段操作） */
+  segments: QueueSegment[];
   /** 当前队列来源（本地 / 网易云） */
   sourceLabel?: string;
   /** 当前曲目实际拿到的音质档（standard/higher/exhigh/lossless；本地音轨为空） */
@@ -64,6 +78,8 @@ export class PlaybackEngine {
   private albumTitle = '';
   // 存来源枚举而非显示文案：文案语言可随时切换，必须等 snapshot() 时再求值（否则会停在建队列那一刻的语言）
   private sourceKind: ActiveSource | null = null;
+  /** 专辑路径 → 标题：追加多张专辑后，界面要按段显示各自的名字（曲目上只有路径） */
+  private albumTitles = new Map<string, string>();
   private quality = '';
   private listeners = new Set<(s: PlayerSnapshot) => void>();
   // 在线源 URL 缓存：按 trackKey 区分来源（netease id 为数字、qq id 为 mid 字符串，
@@ -120,12 +136,50 @@ export class PlaybackEngine {
         ? this.audio.duration
         : this.queue[this.index]?.duration || 0,
       volume: this.audio.volume,
-      albumNotePath: this.albumNotePath,
-      albumTitle: this.albumTitle,
-      sourceLabel: this.sourceKind ? sourceLabel(this.sourceKind) : '',
+      // 专辑信息按「当前曲目」推：多专辑队列里播放会跨段，用最后一次 loadAlbum 的那张会串
+      albumNotePath: this.albumOfCurrent().path,
+      albumTitle: this.albumOfCurrent().title,
+      // 来源标签也按当前曲目算（跨段后自动跟着变）
+      sourceLabel: this.queue[this.index]
+        ? trackSourceLabel(this.queue[this.index])
+        : this.sourceKind
+          ? sourceLabel(this.sourceKind)
+          : '',
+      segments: this.segments(),
       quality: this.quality || undefined,
       error: this.errorMsg || undefined,
     };
+  }
+
+  /** 当前曲目所属的专辑（路径 + 标题）。曲目没带路径时回落到「最后加载的那张」。 */
+  private albumOfCurrent(): { path?: string; title?: string } {
+    const track = this.index >= 0 ? this.queue[this.index] : undefined;
+    const path = track?.albumNotePath || this.albumNotePath;
+    const title = (path ? this.albumTitles.get(path) : undefined) || this.albumTitle;
+    return { path, title };
+  }
+
+  /** 队列按专辑分段：连续且 albumNotePath 相同的曲目算一段（同一张专辑可以出现多次）。
+   *  段是界面分组与「移除整张专辑 / 跨段排序」的操作单位。 */
+  segments(): QueueSegment[] {
+    const out: QueueSegment[] = [];
+    for (let i = 0; i < this.queue.length; i++) {
+      const path = this.queue[i].albumNotePath || this.albumNotePath || '';
+      const last = out[out.length - 1];
+      if (last && last.albumPath === path) {
+        last.count++;
+      } else {
+        out.push({
+          albumPath: path,
+          albumTitle: this.albumTitles.get(path) || this.albumTitle || '',
+          start: i,
+          count: 1,
+          current: false,
+        });
+      }
+    }
+    for (const seg of out) seg.current = this.index >= seg.start && this.index < seg.start + seg.count;
+    return out;
   }
 
   private emit() {
@@ -189,6 +243,7 @@ export class PlaybackEngine {
     this.index = -1;
     this.albumNotePath = albumNotePath;
     this.albumTitle = albumTitle;
+    if (albumNotePath) this.albumTitles.set(albumNotePath, albumTitle);
     this.sourceKind = source;
     this.quality = '';
     this.urlCache.clear();
@@ -198,9 +253,123 @@ export class PlaybackEngine {
     this.emit();
   }
 
+  /** 专辑队列模式：构建这张专辑的队列并追加到队尾（界面只调这一句）。
+   *  与 loadAlbum 共用代次：快速连点两张专辑时，先发起的构建后返回会被丢弃。 */
+  async enqueueAlbum(album: AlbumInfo): Promise<BuildQueueResult> {
+    const seq = ++this.loadSeq;
+    const res = await buildAlbumQueue(album, {
+      local: this.deps.local,
+      netease: this.deps.netease,
+      qq: this.deps.qq,
+      defaultSource: this.deps.settings().defaultSource,
+    });
+    if (seq !== this.loadSeq) return res;
+    if (!res.tracks.length) {
+      notice(res.reason || t('player.noPlayableTrack'));
+      return res;
+    }
+    const source: ActiveSource = res.resolvedSource === 'none' ? 'local' : res.resolvedSource;
+    await this.appendAlbum(res.tracks, album.path, album.title, source);
+    return res;
+  }
+
+  /** 专辑队列模式：把一张专辑的队列追加到队尾（不动当前播放，允许同一张专辑重复排入）。
+   *  队列原本是空的 → 按普通换碟处理（否则用户点了专辑却什么都不发生，比排队更奇怪）。 */
+  async appendAlbum(
+    tracks: Track[],
+    albumPath: string,
+    albumTitle: string,
+    source: ActiveSource
+  ): Promise<void> {
+    if (!tracks.length) return;
+    // 只看队列是否为空：队列在但不处于播放态（index=-1，例如暂停着）时，仍然应当追加
+    if (!this.queue.length) {
+      this.setQueue(tracks, albumPath, albumTitle, source);
+      if (this.deps.settings().autoPlay) await this.playIndex(0);
+      return;
+    }
+    if (albumPath) this.albumTitles.set(albumPath, albumTitle);
+    // 该专辑存过自定义顺序 → 追加时照样套用（与换碟一致）
+    const saved = this.deps.savedOrder?.(albumPath);
+    const ordered = saved && saved.length ? applyTrackOrder(tracks, saved) : tracks;
+    this.queue = [...this.queue, ...ordered];
+    this.originalOrder = [...this.originalOrder, ...ordered.map((tr) => trackKey(tr))];
+    this.emit();
+  }
+
+  /** 移除队列里的一段（整张专辑）。正在播的曲目落在这一段里时，顺延到同位置剩下的那一首
+   *  （删的是队尾段就往前退一首）；队列空了就复位成「没在播」。 */
+  removeRange(start: number, count: number) {
+    if (start < 0 || count <= 0 || start >= this.queue.length) return;
+    const end = Math.min(this.queue.length, start + count);
+    const removed = this.queue.slice(start, end);
+    const wasCurrent = this.index >= start && this.index < end;
+    const removedKeys = new Set(removed.map((tr) => trackKey(tr)));
+    const currentKey = this.index >= 0 ? trackKey(this.queue[this.index]) : '';
+    this.deps.local.clearBlobs(this.deps.local.keysOf(removed));
+    const nextQueue = [...this.queue.slice(0, start), ...this.queue.slice(end)];
+    this.queue = nextQueue;
+    this.originalOrder = this.originalOrder.filter((k) => !removedKeys.has(k));
+    if (!nextQueue.length) {
+      this.unloadAudio();
+      this.index = -1;
+      this.status = 'idle';
+      this.albumNotePath = undefined;
+      this.albumTitle = '';
+      this.errorMsg = '';
+    } else if (wasCurrent) {
+      // 顺延：原来的位置现在接着后面的段；删的是尾段就退到最后一首
+      this.unloadAudio();
+      this.index = Math.min(start, nextQueue.length - 1);
+      this.status = 'paused';
+      void this.playIndex(this.index, { retry: true });
+    } else {
+      const i = nextQueue.findIndex((tr) => trackKey(tr) === currentKey);
+      if (i >= 0) this.index = i;
+    }
+    this.emit();
+  }
+
+  /** 只保留当前曲目所在的那张专辑（关掉专辑队列模式时收缩队列用）。 */
+  keepCurrentAlbum() {
+    const segs = this.segments();
+    const seg = segs.find((x) => x.current) || segs[0];
+    if (!seg) return;
+    if (this.queue.length === seg.count) return; // 本来就只有一段
+    const keep = this.queue.slice(seg.start, seg.start + seg.count);
+    const keepKeys = new Set(keep.map((tr) => trackKey(tr)));
+    const removed = this.queue.filter((tr) => !keepKeys.has(trackKey(tr)));
+    this.deps.local.clearBlobs(this.deps.local.keysOf(removed));
+    this.queue = keep;
+    this.originalOrder = this.originalOrder.filter((k) => keepKeys.has(k));
+    if (this.index >= 0) this.index -= seg.start;
+    this.emit();
+  }
+
+  /** 整体移动一段（跨专辑拖拽排序）：把 [start, start+count) 移到下标 to 处。 */
+  moveRange(start: number, count: number, to: number) {
+    if (start < 0 || count <= 0 || start + count > this.queue.length) return;
+    const clamped = Math.max(0, Math.min(this.queue.length - count, to));
+    if (clamped === start) return;
+    const currentKey = this.index >= 0 ? trackKey(this.queue[this.index]) : '';
+    const block = this.queue.slice(start, start + count);
+    const rest = [...this.queue.slice(0, start), ...this.queue.slice(start + count)];
+    this.queue = [...rest.slice(0, clamped), ...block, ...rest.slice(clamped)];
+    if (currentKey) {
+      const i = this.queue.findIndex((tr) => trackKey(tr) === currentKey);
+      if (i >= 0) this.index = i;
+    }
+    this.emit();
+  }
+
   /** 拖拽重排队列：把 from 处的曲目移到 to 位（to = 结果下标）。
    *  正在播放的那首歌必须继续是「当前」——先记住它（对象引用 + trackKey 双保险），
    *  重排后按新位置重置 index，否则 UI 高亮 / next() 的推进基准会跟着下标漂到别的曲子上。 */
+  /** 曲目在队列里的所属段（供拖拽约束与界面分组用） */
+  private segmentOf(index: number): QueueSegment | undefined {
+    return this.segments().find((x) => index >= x.start && index < x.start + x.count);
+  }
+
   moveTrack(from: number, to: number) {
     if (from === to) return;
     if (from < 0 || to < 0 || from >= this.queue.length || to >= this.queue.length) return;
@@ -267,6 +436,7 @@ export class PlaybackEngine {
     this.errorMsg = '';
     this.albumNotePath = undefined;
     this.albumTitle = '';
+    this.albumTitles.clear();
     this.sourceKind = null;
     this.quality = '';
     this.urlCache.clear();
@@ -298,7 +468,9 @@ export class PlaybackEngine {
       this.status = 'playing';
       this.emit();
       if (!opts?.retry) {
-        this.deps.onTrackPlay?.(track, this.albumNotePath, this.albumTitle);
+        // 归属按曲目自己的专辑算：多专辑队列里，这一段可能不是最后 loadAlbum 的那张
+        const album = this.albumOfCurrent();
+        this.deps.onTrackPlay?.(track, album.path, album.title || '');
       }
     } catch (e) {
       if (!stillCurrent()) return;

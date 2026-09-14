@@ -272,6 +272,8 @@ export default class VinylLifePlugin extends Plugin {
     // 音量与上次播放位置：脏数据一律回落（data.json 可能被手改或来自旧版本）
     this.settings.volume = normalizeVolume(data?.volume);
     this.settings.lastPlayback = normalizeLastPlayback(data?.lastPlayback);
+    // 专辑队列模式：同样只认布尔 true（脏数据一律当关）
+    this.settings.queueMode = data?.queueMode === true;
     // 调试命令开关：只认布尔 true（data.json 可能被手改成字符串，别让 "false" 也开启）
     this.settings.debugCommands = data?.debugCommands === true;
     // 外观项归一（data.json 可能来自旧版本或被手改）
