@@ -36,8 +36,7 @@ interface PlayerEls {
   queueBox: HTMLElement;
   /** 专辑队列模式开关（顶部，「选择专辑」左边） */
   queueModeBtn: HTMLButtonElement;
-  /** 队列折叠开关与「清空后面的专辑」（Vinyl order 行） */
-  foldBtn: HTMLButtonElement;
+  /** 「清空后面的专辑」（Vinyl order 行） */
   clearQueueBtn: HTMLButtonElement;
   qualityEl: HTMLElement;
 }
@@ -123,8 +122,6 @@ export class VinylPlayerView extends ItemView {
   private onVisibility = () => this.syncVisibility();
   // 队列拖拽态：dragging 抑制拖拽尾巴上的 click（见 endQueueDrag），dragFrom 是被拖行的下标
   private dragging = false;
-  /** 队列列表是否折叠（默认展开；不落盘，重开播放器回到展开） */
-  private queueCollapsed = false;
   /** 整段拖拽中的来源段（与行拖拽互斥，避免两套拖拽同时生效） */
   private dragSegment: { start: number; count: number } | null = null;
   /** 上一次渲染的段数：变多说明刚排入新专辑 → 闪一下作为反馈 */
@@ -251,10 +248,6 @@ export class VinylPlayerView extends ItemView {
     const els = this.els;
     if (els) {
       els.queueModeBtn.setAttribute('aria-label', t('player.queueMode'));
-      els.foldBtn.setAttribute(
-        'aria-label',
-        this.queueCollapsed ? t('player.queueExpand') : t('player.queueCollapse')
-      );
       els.clearQueueBtn.setAttribute('aria-label', t('player.queueClearOthers'));
     }
     for (const { el, seg } of this.segmentEls) {
@@ -269,11 +262,7 @@ export class VinylPlayerView extends ItemView {
       }
     }
     for (const row of this.queueRows) row.setAttribute('title', t('player.dragToReorder'));
-    if (this.emptyQueueEl) {
-      this.emptyQueueEl.textContent = this.queueCollapsed
-        ? tf('player.queueCollapsed', { n: this.renderedSegmentCount })
-        : t('player.emptyQueue');
-    }
+    if (this.emptyQueueEl) this.emptyQueueEl.textContent = t('player.emptyQueue');
     // 来源角标走 trackSourceLabel（随语言变）：行不重建，按当前队列就地重写文本
     const queue = this.renderedQueue;
     if (!queue) return;
@@ -382,15 +371,6 @@ export class VinylPlayerView extends ItemView {
     // Vinyl order 行：标题 + ✎ 追加感想 + ↺ 恢复原有顺序
     const orderRow = c.createDiv({ cls: 'vinyl-order-row' });
     const queueTitle = orderRow.createDiv({ cls: 'vinyl-queue-title' });
-    // 折叠 / 展开队列（默认展开；不落盘）
-    const foldBtn = orderRow.createEl('button', { cls: 'vinyl-btn vinyl-btn-small' });
-    setIcon(foldBtn, 'chevron-down');
-    foldBtn.addEventListener('click', () => {
-      this.queueCollapsed = !this.queueCollapsed;
-      this.syncQueueControls(this.renderedSegmentCount);
-      this.applyQueueLabels();
-      this.renderQueue(this.plugin.engine.snapshot());
-    });
     // 清空后面的专辑（保留当前这张）：只在队列里不止一张专辑时有意义
     const clearQueueBtn = orderRow.createEl('button', { cls: 'vinyl-btn vinyl-btn-small' });
     setIcon(clearQueueBtn, 'list-x');
@@ -469,7 +449,6 @@ export class VinylPlayerView extends ItemView {
       volSlider,
       queueTitle,
       queueBox,
-      foldBtn,
       clearQueueBtn,
       qualityEl,
     };
@@ -530,7 +509,7 @@ export class VinylPlayerView extends ItemView {
 
     // 队列（引用变化才重建；当前高亮走 class 切换）
     if (s.queue !== this.renderedQueue) this.rebuildQueue(els, s);
-    // 队列模式开关 / 折叠按钮 / 清空按钮的可见性（设置改了、段数变了都要跟着走）
+    // 队列模式开关 / 清空按钮的可见性（设置改了、段数变了都要跟着走）
     this.syncQueueControls(s.segments.length);
     this.queueRows.forEach((row, i) => row.classList.toggle('is-current', i === s.index));
 
@@ -656,15 +635,6 @@ export class VinylPlayerView extends ItemView {
       this.applyQueueLabels();
       return;
     }
-    if (this.queueCollapsed) {
-      this.emptyQueueEl = box.createDiv({
-        text: tf('player.queueCollapsed', { n: s.segments.length }),
-        cls: 'vinyl-muted',
-      });
-      this.applyQueueLabels();
-      return;
-    }
-
     const multi = s.segments.length > 1;
     for (const seg of s.segments) {
       const segEl = box.createDiv({ cls: 'vinyl-queue-segment' });
@@ -758,14 +728,13 @@ export class VinylPlayerView extends ItemView {
     target.addClass(after ? 'is-drop-after' : 'is-drop-before');
   }
 
-  /** 队列相关的三个按钮的当前状态（开关高亮 / 折叠图标 / 清空按钮可见性）。
+  /** 队列模式开关与「清空后面的专辑」的当前状态。
    *  update() 与主动改设置的路径都要调 —— 只在 update() 里写的话，刚点完开关会看到状态滞后。 */
   private syncQueueControls(segmentCount: number) {
     const els = this.els;
     if (!els) return;
     els.queueModeBtn.toggleClass('is-active', this.plugin.settings.queueMode);
     els.clearQueueBtn.toggleClass('vinyl-hidden', segmentCount <= 1);
-    setIcon(els.foldBtn, this.queueCollapsed ? 'chevron-right' : 'chevron-down');
   }
 
   /** 专辑队列模式开关：改设置 + 提示；关掉时把队列收缩回当前专辑（用户定的语义） */

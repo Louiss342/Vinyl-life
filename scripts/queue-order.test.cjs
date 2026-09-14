@@ -380,7 +380,7 @@ test('resolveSegmentDropIndex：整段拖拽落点（块先摘掉，下标按摘
   assert.equal(resolveSegmentDropIndex(2, 1, 0, 2, true), 2);
 });
 
-test('专辑队列模式接线：顶部开关在「选择专辑」左边 / 分段渲染 / 折叠 / 整段操作都在', () => {
+test('专辑队列模式接线：顶部开关在「选择专辑」左边 / 分段渲染 / 整段操作都在', () => {
   const src = require('fs').readFileSync(require('path').join(__dirname, '../src/views/player-view.ts'), 'utf8');
   const headerBlock = src.slice(src.indexOf('const header = '), src.indexOf('const swapBtn'));
   assert.match(headerBlock, /queueModeBtn/, '队列模式开关要建在「选择专辑」之前（顶部那一行的顺序就是创建顺序）');
@@ -391,7 +391,7 @@ test('专辑队列模式接线：顶部开关在「选择专辑」左边 / 分�
   assert.match(src, /engine\.moveRange\(/, '跨专辑排序走 moveRange');
   assert.match(src, /engine\.keepCurrentAlbum\(\)/, '关开关 / 清空走 keepCurrentAlbum');
   assert.match(src, /resolveSegmentDropIndex\(/, '整段落点用纯函数换算');
-  assert.match(src, /queueCollapsed/, '折叠状态在视图里');
+
 });
 
 test('settings：音量与「上次播放位置」默认值 + 脏数据回落', () => {

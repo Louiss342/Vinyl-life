@@ -518,6 +518,9 @@
   height: 100%;
   min-height: 0;
   overflow-y: auto;
+  /* 预留滚动条槽位：队列长度跨过视口高度时，滚动条出现/消失不再挤动内容宽度
+     （否则面板与唱机会随「高度刚刚够」的时刻横向跳一下） */
+  scrollbar-gutter: stable;
   box-sizing: border-box;
 }
 

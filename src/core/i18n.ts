@@ -705,15 +705,12 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     zh: '专辑队列模式已关闭：点专辑会立即换碟',
     en: 'Album queue mode is off: clicking an album switches to it immediately',
   },
-  'player.queueCollapse': { zh: '折叠队列', en: 'Collapse the queue' },
-  'player.queueExpand': { zh: '展开队列', en: 'Expand the queue' },
   'player.queueRemoveAlbum': { zh: '从队列移除「{name}」', en: 'Remove “{name}” from the queue' },
   'player.queueDragAlbum': { zh: '拖拽调整专辑顺序', en: 'Drag to reorder albums' },
   'player.queueClearOthers': {
     zh: '清空后面的专辑（保留当前这张）',
     en: 'Clear the queued albums (keep the current one)',
   },
-  'player.queueCollapsed': { zh: '队列已折叠（{n} 张专辑）', en: 'Queue collapsed ({n} albums)' },
   'notice.queuedAlbum': { zh: '已加入队列：{name}', en: 'Queued: {name}' },
 
   // —— 登录 / 凭据 / 网关错误（core/auth, qq-auth, credential-file, netease, server-client, qq, web-client）——
