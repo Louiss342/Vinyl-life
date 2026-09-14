@@ -236,6 +236,26 @@ test('只留当前专辑：队列收缩成当前段，下标重算', async () =>
   assert.equal(s.status, 'playing', '音频不动，继续播');
 });
 
+test('只留当前专辑（打乱之后）：按专辑路径保留全部曲目，不是按「段」', async () => {
+  const { engine } = makeEngine({ random: () => 0 });
+  engine.setQueue([tr(1, A), tr(2, A)], A, 'A 专辑', 'netease');
+  await engine.appendAlbum([tr(3, B), tr(4, B)], B, 'B 专辑', 'netease');
+  await engine.playIndex(1); // 当前在 A 段
+  engine.cyclePlayMode();
+  engine.cyclePlayMode(); // → shuffle：A/B 交错，段会碎成好几截
+
+  assert.ok(engine.segments().length > 2, '前提：打乱后确实碎成多段');
+  engine.keepCurrentAlbum(); // 关开关 / 清空后面的专辑走的都是它
+  const s = engine.snapshot();
+  assert.equal(s.queue.length, 2, 'A 的两首都要留下（不是只留碎出来的那一截）');
+  assert.deepEqual(
+    [...new Set(s.queue.map((x) => x.albumNotePath))],
+    [A],
+    '只剩当前专辑'
+  );
+  assert.equal(s.current.title, 'T2', '当前曲目仍是同一首');
+});
+
 test('整段重排：跨专辑拖动整段，当前曲目仍然是同一首', async () => {
   const { engine } = makeEngine();
   engine.setQueue([tr(1, A), tr(2, A)], A, 'A 专辑', 'netease');
@@ -292,22 +312,24 @@ test('随机（单专辑）：打乱曲目顺序，当前曲目仍是同一首',
   assert.equal(engine.snapshot().current.title, 'T2', '当前曲目没被换掉');
 });
 
-test('随机（队列模式）：打乱的是「专辑段」，段内曲目顺序不动', async () => {
+test('随机（列表模式）：整条列表的曲目一起打乱（各专辑的曲子会混在一起）', async () => {
   const { engine } = makeEngine({ random: () => 0 });
   engine.setQueue([tr(1, A), tr(2, A)], A, 'A 专辑', 'netease');
   await engine.appendAlbum([tr(3, B), tr(4, B)], B, 'B 专辑', 'netease');
   await engine.playIndex(1); // A 段第二首
+  const before = [...engine.snapshot().queue].map((x) => trackKey(x));
 
   engine.cyclePlayMode();
   engine.cyclePlayMode(); // → shuffle
-  const segs = engine.segments();
-  assert.equal(segs.length, 2, '还是两段');
-  assert.deepEqual(
-    [...segs.map((x) => x.albumPath)].sort(),
-    [A, B].sort(),
-    '两段都在（只是顺序可能变）'
-  );
-  assert.equal(segs[0].count, 2, '段内曲目数不变');
+  const after = [...engine.snapshot().queue].map((x) => trackKey(x));
+  assert.notDeepEqual(after, before, '顺序确实变了');
+  assert.deepEqual([...after].sort(), [...before].sort(), '曲目一首不多一首不少');
+  // 打乱是「曲目级」的：两张专辑的曲子会交错，不再各自成块（tr(1)/tr(2) 属 A，tr(3)/tr(4) 属 B）
+  const albumOf = (key) => Math.floor((Number(key.slice(3)) - 1) / 2);
+  const runs = after.map(albumOf);
+  let blocks = 1;
+  for (let i = 1; i < runs.length; i++) if (runs[i] !== runs[i - 1]) blocks++;
+  assert.ok(blocks > 2, '不再按专辑分段排列（交错成块数应多于 2）');
   assert.equal(engine.snapshot().current.title, 'T2', '当前曲目仍是同一首');
 });
 

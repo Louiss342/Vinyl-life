@@ -615,7 +615,9 @@ export class VinylPlayerView extends ItemView {
       this.applyQueueLabels();
       return;
     }
-    const multi = s.segments.length > 1;
+    // 打乱模式下列表已被混排：按「段」分组失去意义（同一张专辑会碎成十几小段，
+    // 每段挂一个重复标题与一个 ✕ 只会误导），所以只画平铺的行
+    const multi = s.segments.length > 1 && s.playMode !== 'shuffle';
     for (const seg of s.segments) {
       const segEl = box.createDiv({ cls: 'vinyl-queue-segment' });
       segEl.dataset.start = String(seg.start);

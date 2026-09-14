@@ -697,10 +697,10 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   // 播放模式（播放器顶部按钮）：队列模式下作用于整条列表，否则作用于当前专辑
   'player.modeOnceAlbum': { zh: '单次播放整张专辑', en: 'Play the album once' },
   'player.modeLoopAlbum': { zh: '循环播放整张专辑', en: 'Repeat the album' },
-  'player.modeShuffleAlbum': { zh: '随机播放专辑曲目', en: 'Shuffle the album' },
+  'player.modeShuffleAlbum': { zh: '随机播放整张专辑的曲目', en: 'Shuffle the album’s tracks' },
   'player.modeOnceList': { zh: '单次播放整个列表', en: 'Play the list once' },
   'player.modeLoopList': { zh: '循环播放整个列表', en: 'Repeat the list' },
-  'player.modeShuffleList': { zh: '随机播放列表中的专辑', en: 'Shuffle the albums in the list' },
+  'player.modeShuffleList': { zh: '随机播放列表中的曲目', en: 'Shuffle the tracks in the list' },
   'player.modeHint': { zh: '{mode}（点击切换）', en: '{mode} (click to switch)' },
   'player.queueMode': { zh: '专辑队列模式', en: 'Album queue mode' },
   'player.queueModeOn': {

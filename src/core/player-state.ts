@@ -14,7 +14,7 @@ import { t, tf } from './i18n';
 export type PlayerStatus = 'idle' | 'loading' | 'playing' | 'paused' | 'error';
 
 /** 播放模式：单次（播完停）/ 循环（播完回到开头）/ 随机（打乱后一直放）。
- *  队列模式下作用于整条列表（打乱的是「专辑段」），否则作用于当前专辑（打乱曲目）。 */
+ *  作用对象是当前队列：单专辑时就是这张专辑的曲目，队列模式下是整条列表的曲目。 */
 export type PlayMode = 'once' | 'loop' | 'shuffle';
 
 /** 队列里的一段 = 同一张专辑连续的一段曲目。专辑队列模式下可以有多个段（同一张专辑也可以出现多次）。 */
@@ -343,19 +343,24 @@ export class PlaybackEngine {
     this.emit();
   }
 
-  /** 只保留当前曲目所在的那张专辑（关掉专辑队列模式时收缩队列用）。 */
+  /** 只保留当前曲目所属的那张专辑（关掉专辑队列模式、或点「清空后面的专辑」时用）。
+   *  按专辑路径筛，不按「段」—— 打乱后的队列里同一张专辑的曲目是散开的，
+   *  按段筛只会留下一小截。保留下来的相对顺序不变（想回原顺序有「恢复原有顺序」）。 */
   keepCurrentAlbum() {
-    const segs = this.segments();
-    const seg = segs.find((x) => x.current) || segs[0];
-    if (!seg) return;
-    if (this.queue.length === seg.count) return; // 本来就只有一段
-    const keep = this.queue.slice(seg.start, seg.start + seg.count);
+    const albumPath = this.albumOfCurrent().path;
+    if (!albumPath) return;
+    const keep = this.queue.filter((tr) => (tr.albumNotePath || '') === albumPath);
+    if (!keep.length || keep.length === this.queue.length) return; // 只有这一张：不动
     const keepKeys = new Set(keep.map((tr) => trackKey(tr)));
     const removed = this.queue.filter((tr) => !keepKeys.has(trackKey(tr)));
     this.deps.local.clearBlobs(this.deps.local.keysOf(removed));
+    const currentKey = this.index >= 0 ? trackKey(this.queue[this.index]) : '';
     this.queue = keep;
     this.originalOrder = this.originalOrder.filter((k) => keepKeys.has(k));
-    if (this.index >= 0) this.index -= seg.start;
+    if (currentKey) {
+      const i = this.queue.findIndex((tr) => trackKey(tr) === currentKey);
+      if (i >= 0) this.index = i;
+    }
     this.emit();
   }
 
@@ -637,7 +642,8 @@ export class PlaybackEngine {
     this.emit();
   }
 
-  /** 单次 → 循环 → 随机 循环切换（播放器顶部那个模式按钮）。切到随机时立刻打乱一次。 */
+  /** 单次 → 循环 → 随机 循环切换（播放器顶部那个模式按钮）。切到随机时立刻打乱一次；
+   *  打乱的对象是「队列里的曲目」—— 队列模式下即整条列表的曲目。 */
   cyclePlayMode(): PlayMode {
     const order: PlayMode[] = ['once', 'loop', 'shuffle'];
     const next = order[(order.indexOf(this.playMode) + 1) % order.length];
@@ -647,19 +653,12 @@ export class PlaybackEngine {
     return next;
   }
 
-  /** 打乱队列。多段时打乱「段」（专辑顺序变、段内曲目顺序不变）—— 用户要的是
-   *  「随机播放列表中的专辑」，不是把各专辑的曲子混在一起；单段时打乱曲目。
-   *  当前播放的那首仍是当前曲目（下标跟着它走，不打断播放）。 */
+  /** 打乱队列：整条队列的曲目一起打乱（队列模式下就是「随机播放列表中的曲目」，
+   *  各专辑的曲子会混在一起）。当前播放的那首仍是当前曲目 —— 下标跟着它走，不打断播放。 */
   shuffleQueue() {
     if (this.queue.length < 2) return;
     const currentKey = this.index >= 0 ? trackKey(this.queue[this.index]) : '';
-    const segs = this.segments();
-    if (segs.length > 1) {
-      const blocks = this.shuffle(segs.map((x) => this.queue.slice(x.start, x.start + x.count)));
-      this.queue = blocks.flat();
-    } else {
-      this.queue = this.shuffle(this.queue);
-    }
+    this.queue = this.shuffle(this.queue);
     if (currentKey) {
       const i = this.queue.findIndex((tr) => trackKey(tr) === currentKey);
       if (i >= 0) this.index = i;
