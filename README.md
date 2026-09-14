@@ -18,7 +18,7 @@ Music and notes may have a natural affinity for each other.
 
 Vinyl Life 把专辑笔记展示成一张张唱片，配有黑胶唱机样式的播放器。可以听电脑里的音乐，也可以接入自己的网易云音乐或 QQ 音乐账号。每张唱片对应一篇普通的 Markdown 笔记，用来记专辑资料、评分，或某次听歌时想到的事。
 
-支持 Obsidian 1.4.0 及以上版本，仅限桌面端。界面可切换中文和 English。
+支持 Obsidian 1.7.2 及以上版本，仅限桌面端。界面可切换中文和 English。
 
 ## 专辑墙
 
@@ -187,7 +187,7 @@ npm test
 
 Vinyl Life presents album notes as records on a shelf, with a turntable-style player. You can listen to music on your computer, or connect your own NetEase Cloud Music or QQ Music account. Each record is an ordinary Markdown note, for album details, ratings, or whatever you happened to think about while listening.
 
-Requires Obsidian 1.4.0 or later, desktop only. The interface can be switched between Chinese and English.
+Requires Obsidian 1.7.2 or later, desktop only. The interface can be switched between Chinese and English.
 
 ## Album shelf
 

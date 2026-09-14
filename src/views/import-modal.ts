@@ -137,12 +137,12 @@ export class LocalImportModal extends Modal {
     const pickDirBtn = pickRow.createEl('button', { text: t('import.pickFolder') });
     const fileInput = pickRow.createEl('input', {
       attr: { type: 'file', accept: 'audio/*', multiple: '' },
+      cls: 'vinyl-hidden',
     });
     const dirInput = pickRow.createEl('input', {
       attr: { type: 'file', webkitdirectory: '', multiple: '' },
+      cls: 'vinyl-hidden',
     });
-    fileInput.style.display = 'none';
-    dirInput.style.display = 'none';
     this.fileInput = fileInput;
     this.dirInput = dirInput;
     const fileSummary = fileSec.createDiv({
@@ -250,7 +250,7 @@ export class LocalImportModal extends Modal {
       }
       // 音乐库根目录 → 逐张专辑勾选（而不是禁止导入）
       const isLib = this.scan?.verdict === 'library';
-      for (const el of targetFormEls) el.style.display = isLib ? 'none' : '';
+      for (const el of targetFormEls) el.toggleClass('vinyl-hidden', isLib);
       batchHost.empty();
       this.batchRows = [];
       if (isLib && this.scan) {

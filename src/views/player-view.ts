@@ -249,8 +249,7 @@ export class VinylPlayerView extends ItemView {
     const discOuter = turntable.createDiv({ cls: 'vinyl-turntable-disc' });
     const vinyl = discOuter.createDiv({ cls: 'vinyl-turntable-vinyl is-empty' });
     const label = vinyl.createDiv({ cls: 'vinyl-turntable-label' });
-    const labelImg = label.createEl('img', { attr: { alt: '' } });
-    labelImg.style.display = 'none';
+    const labelImg = label.createEl('img', { attr: { alt: '' }, cls: 'vinyl-hidden' });
     const labelEmpty = label.createDiv({ cls: 'vinyl-turntable-label-empty', text: '♪' });
     // 唱臂：配重 + 枢轴 + 唱头（直线臂）+ 唱臂支架（不播放时唱头落在这个卡口上）
     const arm = turntable.createDiv({ cls: 'vinyl-turntable-arm' });
@@ -452,11 +451,11 @@ export class VinylPlayerView extends ItemView {
       this.currentCoverSrc = coverSrc;
       if (coverSrc) {
         els.labelImg.src = coverSrc;
-        els.labelImg.style.display = 'block';
-        els.labelEmpty.style.display = 'none';
+        els.labelImg.removeClass('vinyl-hidden');
+        els.labelEmpty.addClass('vinyl-hidden');
       } else {
-        els.labelImg.style.display = 'none';
-        els.labelEmpty.style.display = 'flex';
+        els.labelImg.addClass('vinyl-hidden');
+        els.labelEmpty.removeClass('vinyl-hidden');
       }
     }
 

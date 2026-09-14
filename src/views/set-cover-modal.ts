@@ -57,8 +57,10 @@ export class SetCoverModal extends Modal {
     const vaultBtn = row.createEl('button', { text: t('cover.fromVault'), cls: 'mod-cta' });
     const fileBtn = row.createEl('button', { text: t('cover.fromLocal') });
     const removeBtn = row.createEl('button', { text: t('cover.remove') });
-    const fileInput = row.createEl('input', { attr: { type: 'file', accept: 'image/*' } });
-    fileInput.style.display = 'none';
+    const fileInput = row.createEl('input', {
+      attr: { type: 'file', accept: 'image/*' },
+      cls: 'vinyl-hidden',
+    });
     this.fileInput = fileInput;
 
     const status = c.createDiv({ cls: 'vinyl-muted' });

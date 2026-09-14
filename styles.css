@@ -407,7 +407,7 @@
 .vinyl-shelf-prop {
   display: grid;
   grid-template-columns: minmax(64px, 0.48fr) minmax(0, 1fr);
-  column-gap: 10px;
+  gap: 10px;
   align-items: baseline;
   margin-top: 6px;
   line-height: 1.25;
@@ -1136,6 +1136,10 @@
 }
 
 /* ============ 导入弹窗 / 统计弹窗 ============ */
+
+.vinyl-hidden.vinyl-hidden {
+  display: none;
+}
 
 .vinyl-import-input {
   width: 100%;
