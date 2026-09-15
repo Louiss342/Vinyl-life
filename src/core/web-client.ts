@@ -1,7 +1,8 @@
 // 渲染进程直连网易云：
-//   内嵌官方登录页（iframe）与 Obsidian 共享同一 Electron 会话——用户登录成功后，
-//   会话 Cookie（MUSIC_U）随 requestUrl 自动携带，无需向网关落盘任何 Cookie。
-//   未登录时由 NeteaseService 路由回退网关（网关 Cookie 通道）。
+//   走 requestUrl 发官方 weapi / eapi 请求，凭据是本机登录时落盘的 .cookie（MUSIC_U）。
+//   （0.6.0 起这里一度靠「内嵌登录页共享 Electron 会话」拿凭据，但登录早已只保留扫码 ——
+//   那条会话永远不会登录，网页通道一直是死的；现在改为直接读凭据文件，见 musicU()。）
+//   任何一步失败都由 NeteaseService 静默回退网关（网关 Cookie 通道）。
 // 加密：node:crypto 原生 weapi（双 AES-CBC + RSA_NO_PADDING）与 eapi（AES-ECB + MD5 签名），
 //   与网关 server.js 完全一致，无额外依赖。
 import { requestUrl } from 'obsidian';
@@ -12,6 +13,7 @@ import { t } from './i18n';
 import type {
   LoginResponse,
   NeteaseAlbumResponse,
+  NeteaseSearchResponse,
   SongUrlResponse,
 } from './api-types';
 
@@ -27,6 +29,12 @@ const UA_WEAPI =
 const UA_API = 'NeteaseMusic 9.0.90/5038 (iPhone; iOS 16.2; zh_CN)';
 
 const QUALITY_LADDER = ['standard', 'higher', 'exhigh', 'lossless'];
+
+// 两条 API 前缀（都带结尾斜杠，见 post() 里的拼接说明）
+const API_BASE = {
+  weapi: 'https://music.163.com/weapi/',
+  eapi: 'https://interface.music.163.com/eapi/',
+};
 
 function aesCbcBase64(text: string, key: string, iv: string): string {
   const c = crypto.createCipheriv('aes-128-cbc', Buffer.from(key, 'utf8'), Buffer.from(iv, 'utf8'));
@@ -111,10 +119,12 @@ export class WebClient {
   // 否则用 .device-id 持久化的值；新用户首次运行即生成并落盘。
   private deviceId = newDeviceId();
   private anonToken = '';
+  private cookieFile?: string;
   private probeCache: { at: number; state: WebLoginState } | null = null;
   private readonly PROBE_TTL = 60_000;
 
-  constructor(anonTokenFile: string, deviceIdFile?: string) {
+  constructor(anonTokenFile: string, deviceIdFile?: string, cookieFile?: string) {
+    this.cookieFile = cookieFile;
     let bound = '';
     try {
       const raw = fs.readFileSync(anonTokenFile, 'utf8').trim();
@@ -137,9 +147,28 @@ export class WebClient {
     }
   }
 
+  /** 本机登录凭据（网关扫码登录写下的 .cookie）。
+   *  每次读盘而不是缓存：登录 / 退出账号都会重写这个文件，缓存住会出现「刚扫码登录却说未登录」。 */
+  private musicU(): string {
+    if (!this.cookieFile) return '';
+    try {
+      for (const part of fs.readFileSync(this.cookieFile, 'utf8').split(/;\s*/)) {
+        const i = part.indexOf('=');
+        if (i > 0 && part.slice(0, i).trim() === 'MUSIC_U') return part.slice(i + 1).trim();
+      }
+    } catch {
+      // 没有凭据文件 = 未登录（首次使用、或已退出账号）
+    }
+    return '';
+  }
+
   private async post<T>(uri: string, data: Record<string, unknown>, mode: 'weapi' | 'eapi'): Promise<T> {
-    const base = mode === 'weapi' ? 'https://music.163.com/weapi' : 'https://interface.music.163.com/eapi';
-    if (mode === 'eapi') data.header = this.fingerprint();
+    // 前缀必须以斜杠结尾：uri 形如 '/api/v1/album/1'，slice(5) 去掉 '/api/' 后直接拼在后面。
+    // 少这个斜杠时上游回「HTTP 200 + {"code":404,"接口未找到！"}」—— 既不抛错也不报错，
+    // 于是整条「网页会话优先」悄悄失效、全部落回网关（0.6.0 起一直如此，见 netease-search 测试）。
+    const base = mode === 'weapi' ? API_BASE.weapi : API_BASE.eapi;
+    const musicU = this.musicU();
+    if (mode === 'eapi') data.header = this.fingerprint(musicU);
     const body =
       mode === 'weapi'
         ? new URLSearchParams(weapi(data)).toString()
@@ -151,15 +180,21 @@ export class WebClient {
       headers: {
         'User-Agent': mode === 'weapi' ? UA_WEAPI : UA_API,
         Referer: 'https://music.163.com',
+        ...(musicU ? { Cookie: `MUSIC_U=${musicU}` } : {}),
       },
       body,
     });
-    const json: unknown = r.json;
+    const json = r.json as { code?: number | string } | null;
+    // 上游用「200 + body.code」表达失败（接口未找到 / 参数错 / 未登录…）。不在这里抛，
+    // 调用方的 catch 就永远不触发 —— 兜底通道形同虚设，坏响应还会被当成正常数据往下传。
+    if (json && json.code != null && Number(json.code) !== 200) {
+      throw new Error(`NetEase API ${uri} returned code ${json.code}`);
+    }
     return json as T;
   }
 
-  // eapi 指纹头（对齐网关 buildFingerprintCookie；MUSIC_A 在未登录会话时提供匿名身份）
-  private fingerprint(): Record<string, string> {
+  // eapi 指纹头（对齐网关 buildFingerprintCookie：有登录凭据用 MUSIC_U，否则用 MUSIC_A 匿名身份）
+  private fingerprint(musicU: string): Record<string, string> {
     const header: Record<string, string> = {
       osver: 'Microsoft-Windows-10-Professional-build-19045-64bit',
       deviceId: this.deviceId,
@@ -179,7 +214,8 @@ export class WebClient {
       ntes_kaola_ad: '1',
       NMTID: crypto.randomBytes(8).toString('hex'),
     };
-    if (this.anonToken) header.MUSIC_A = this.anonToken;
+    if (musicU) header.MUSIC_U = musicU;
+    else if (this.anonToken) header.MUSIC_A = this.anonToken;
     return header;
   }
 
@@ -213,6 +249,24 @@ export class WebClient {
   // 专辑详情（weapi v1/album/{id}，与网关同源响应结构）
   async album(id: number): Promise<NeteaseAlbumResponse> {
     return this.post<NeteaseAlbumResponse>(`/api/v1/album/${id}`, {}, 'weapi');
+  }
+
+  // 搜索（网页版同款 weapi cloudsearch/get/web；会话 Cookie 由 requestUrl 自动携带）。
+  // 不用旧的 /api/search/get：那条端点在带 MUSIC_U 时会稳定返回 405「操作频繁」（实测）。
+  async searchAlbums(keywords: string): Promise<NeteaseSearchResponse> {
+    return this.search(keywords, 10);
+  }
+
+  async searchSongs(keywords: string): Promise<NeteaseSearchResponse> {
+    return this.search(keywords, 1);
+  }
+
+  private search(keywords: string, type: number): Promise<NeteaseSearchResponse> {
+    return this.post<NeteaseSearchResponse>(
+      '/api/cloudsearch/get/web',
+      { s: keywords, type, limit: 10, offset: 0, total: true, csrf_token: '' },
+      'weapi'
+    );
   }
 
   // 音源地址（eapi song/enhance/player/url/v1，与网关同款降级阶梯）

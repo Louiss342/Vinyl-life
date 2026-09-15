@@ -174,6 +174,12 @@ function gateway(opts = {}) {
       }
       return json({});
     }
+    if (u.includes('client_search_cp')) {
+      // 经典搜索端点（匿名兜底通道）：t=8 专辑 / t=0 单曲
+      const t = new URL(u).searchParams.get('t');
+      if (opts.classic) return opts.classic(t);
+      return json({ code: 0, data: { album: { list: [] }, song: { list: [] } } });
+    }
     if (u.includes('fcg_v8_album_info_cp')) {
       return opts.album ? opts.album() : json(ALBUM_FIXTURE);
     }
@@ -290,11 +296,60 @@ test('QQ 搜索：同时请求专辑与歌曲，网关返回稳定的归一化�
   assert.equal(result.requiresLogin, false);
 });
 
-test('QQ 搜索：未登录且上游返空时显式标记需要插件内登录', async () => {
-  const g = gateway({ search: () => json({
-    req_album: { code: 0, data: { body: { album: { list: [] } } } },
-    req_song: { code: 0, data: { body: { song: { list: [] } } } },
-  }) });
+// musicu 在未登录时不报错、只回空列表（风控语义：没身份就没结果）—— 三个用例覆盖它的分支
+const EMPTY_MUSICU = () => json({
+  req_album: { code: 0, data: { body: { album: { list: [] } } } },
+  req_song: { code: 0, data: { body: { song: { list: [] } } } },
+});
+
+test('QQ 搜索：musicu 匿名返空 → 经典端点兜底，搜得到就不再要求登录', async () => {
+  const g = gateway({
+    search: EMPTY_MUSICU,
+    classic: (t) => t === '8'
+      ? json({ code: 0, data: { album: { list: [{
+          albumMID: ALBUM_MID,
+          albumName: '叶惠美',
+          singerName: '周杰伦',
+          publicTime: '2003-07-31',
+          song_count: 11,
+          albumPic: 'http://pic.example/cover.jpg',
+        }] } } })
+      : json({ code: 0, data: { song: { list: [{
+          mid: MID,
+          title: '晴天',
+          singer: [{ name: '周杰伦' }],
+          interval: 269,
+          album: { mid: ALBUM_MID, name: '叶惠美' },
+        }] } } }),
+  });
+  const result = await g.call('GET', '/api/qq/search?keywords=叶惠美');
+  assert.equal(result.requiresLogin, false, '匿名也能搜，不该再拦着要登录');
+  assert.equal(result.data.albums[0].mid, ALBUM_MID);
+  assert.equal(result.data.albums[0].artist, '周杰伦');
+  assert.equal(result.data.albums[0].trackCount, 11);
+  assert.equal(result.data.albums[0].publishTime, '2003-07-31');
+  assert.equal(result.data.songs[0].name, '晴天');
+  assert.equal(result.data.songs[0].albumMid, ALBUM_MID);
+  assert.ok(
+    g.requests.some((r) => r.url.includes('client_search_cp')),
+    'musicu 空结果时必须补打经典端点'
+  );
+});
+
+test('QQ 搜索：经典端点答了话但没匹配到 → 是「无结果」，不是「要登录」', async () => {
+  const g = gateway({ search: EMPTY_MUSICU });
+  const result = await g.call('GET', '/api/qq/search?keywords=没有这首歌');
+  assert.equal(result.requiresLogin, false, '两个端点都答过话，只是没匹配到');
+  assert.equal(result.data.albums.length, 0);
+});
+
+test('QQ 搜索：两个端点都没答话且未登录 → 才提示插件内登录', async () => {
+  const g = gateway({
+    search: EMPTY_MUSICU,
+    classic: () => {
+      throw new Error('classic endpoint down');
+    },
+  });
   const result = await g.call('GET', '/api/qq/search?keywords=test');
   assert.equal(result.requiresLogin, true);
 });

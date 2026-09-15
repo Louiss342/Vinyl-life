@@ -159,6 +159,15 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     zh: '{sources} 暂时不可用：{reason}。已显示其他来源的结果。',
     en: '{sources} is unavailable: {reason}. Results from other sources are shown.',
   },
+  'import.searchNoResultsWithReason': {
+    zh: '没有找到专辑（{sources} 暂时不可用：{reason}）。',
+    en: 'No albums found ({sources} unavailable: {reason}).',
+  },
+  // 被上游限流时这一来源会冷却一会儿，这一轮根本不发请求 —— 得如实说，不然会被当成「没结果」
+  'import.sourceCoolingDown': {
+    zh: '触发接口限流，{n} 秒内暂停搜索该来源',
+    en: 'rate-limited — this source is paused for {n}s',
+  },
   'import.qqSearchLoginRequired': {
     zh: '请先在 Vinyl Life 内登录 QQ 音乐（无需打开浏览器）',
     en: 'Sign in to QQ Music inside Vinyl Life first (no browser required)',

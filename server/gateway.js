@@ -17,7 +17,11 @@ const login_status = require('NeteaseCloudMusicApi/module/login_status');
 const album = require('NeteaseCloudMusicApi/module/album');
 const song_url_v1 = require('NeteaseCloudMusicApi/module/song_url_v1');
 const lyric = require('NeteaseCloudMusicApi/module/lyric');
-const search = require('NeteaseCloudMusicApi/module/search');
+// 搜索刻意用 cloudsearch（/api/cloudsearch/pc）而不是 module/search（/api/search/get）：
+// 后者在「本机已登录、请求带 MUSIC_U」时会稳定返回 405「操作频繁，请稍候再试」——
+// 也就是登录之后搜索栏必挂（eapi / weapi 两条通道都一样，实测可复现）。
+// cloudsearch 是网页版在用的搜索端点，登录、匿名身份两种状态下都正常。
+const search = require('NeteaseCloudMusicApi/module/cloudsearch');
 
 // ==================== 文案 ====================
 // 网关是独立进程，拿不到渲染进程的词典，所以自带一份小表：错误文案会一路冒到导入弹窗 /
@@ -67,6 +71,17 @@ const MSG = {
     zh: '网易云请求失败，请检查网络后重试',
     en: 'NetEase request failed — check your network and try again',
   },
+  // 上游明确说的「操作频繁」不是网络故障：以前被并进上面那条，用户只会去查网络
+  'gw.neteaseRateLimited': {
+    zh: '网易云接口限流（操作频繁），请等几秒再搜',
+    en: 'NetEase is rate-limiting requests (too frequent) — wait a few seconds and search again',
+  },
+  // 其它上游拒绝：把 code 和上游原话透出来，别让排查卡在「网络问题」上
+  'gw.upstreamRejected': {
+    zh: '网易云返回 {code}：{message}',
+    en: 'NetEase returned {code}: {message}',
+  },
+  'gw.upstreamNoDetail': { zh: '上游未给出原因', en: 'upstream gave no reason' },
   // —— QQ 音乐（server/qq.js 用注入进来的 msg）——
   'gw.qqQrNoQrsig': {
     zh: '获取 QQ 登录二维码失败（未返回 qrsig），请重试',
@@ -137,6 +152,35 @@ function msg(key, params) {
     for (const [k, v] of Object.entries(params)) text = text.split('{' + k + '}').join(String(v));
   }
   return text;
+}
+
+/** 把 handler 抛出的东西转成能给人看的文案。
+ *  createRequest 是以「普通对象」{status, body, cookie} reject 的，不是 Error ——
+ *  以前只判断 instanceof Error，于是上游所有拒绝（限流 405、接口 404…）都被压成
+ *  「请检查网络后重试」，界面和 gateway.log 一起指向错误方向。 */
+function failureText(e) {
+  if (e instanceof Error) return e.message;
+  const body = e && typeof e === 'object' ? e.body : null;
+  const code = body && body.code != null ? Number(body.code) : 0;
+  if (code === 405 || code === 429) return msg('gw.neteaseRateLimited');
+  const upstream = body ? String(body.message || body.msg || '').trim() : '';
+  // 有的端点（如不存在的专辑）只回 {"code":404}，没有 message —— 只透 code 也比谎报网络故障强
+  if (code || upstream) {
+    return msg('gw.upstreamRejected', {
+      code: code || '?',
+      message: upstream || msg('gw.upstreamNoDetail'),
+    });
+  }
+  return msg('gw.neteaseRequestFailed');
+}
+
+/** 拒绝对应哪个 HTTP 状态：限流给 429，客户端据此让该来源冷却（见 src/core/request-error.ts）。
+ *  其它一律 500 —— 客户端只区分「限流」与「出错了」，不靠文案匹配（文案有中英两套）。 */
+function failureStatus(e) {
+  if (e instanceof Error) return 500;
+  const body = e && typeof e === 'object' ? e.body : null;
+  const code = body && body.code != null ? Number(body.code) : 0;
+  return code === 405 || code === 429 ? 429 : 500;
 }
 
 // ==================== 鉴权 ====================
@@ -750,6 +794,8 @@ route('GET', '/api/search', async ({ query, cookie }) => {
       keywords: query.keywords,
       type,
       limit: 10,
+      // 显式 weapi：模块自身不带默认值时会落到 eapi（设备指纹通道），而网页版走的是 weapi
+      crypto: 'weapi',
       cookie: cookie || readCookie(),
     },
     request
@@ -830,10 +876,10 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify(result));
   } catch (e) {
-    const message = e instanceof Error ? e.message : msg('gw.neteaseRequestFailed');
+    const message = failureText(e);
     // 走 serverLog 落盘：只进 stderr 的话，gateway.log 里查不到这类失败（排查时抓瞎）
     serverLog('[vinyl-server] route error:', req.method, url.pathname, message);
-    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.writeHead(failureStatus(e), { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: message }));
   }
 });

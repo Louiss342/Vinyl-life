@@ -237,3 +237,39 @@ test('封面代理：连接失败 / 超时 → 中文可达性文案（不透出
   });
   await assert.rejects(g.call('GET', '/api/cover', {}, { url: COVER_URL }), /连接失败或超时/);
 });
+
+// ============ 错误契约：上游拒绝 → 状态码 + 真实原因 ============
+// 客户端按 429 判断「被限流，该来源冷却一会儿」（见 src/core/request-error.ts）；
+// 文案只做展示，绝不能靠它分流（中英两套，改一个字就断）。
+const searchUpstream = (body) => ({
+  status: 200,
+  text: async () => JSON.stringify(body),
+  headers: { getSetCookie: () => [] },
+});
+
+test('上游限流（405）→ HTTP 429，客户端据此冷却来源而不是当网络故障', async () => {
+  const g = gateway(200, [], true, {
+    fetch: (url) => (url.includes('cloudsearch')
+      ? searchUpstream({ code: 405, message: '操作频繁，请稍候再试' })
+      : null),
+  });
+  const res = await g.request('GET', '/api/search?keywords=x&type=album', {
+    'x-vinyl-token': 'fixture-token',
+  });
+  assert.equal(res.status, 429);
+  assert.match(res.body, /限流/, '限流要有自己的说法，不能并进「请检查网络」');
+});
+
+test('其它上游拒绝 → HTTP 500 且透出真实 code，不再一律谎报网络', async () => {
+  const g = gateway(200, [], true, {
+    fetch: (url) => (url.includes('cloudsearch')
+      ? searchUpstream({ code: 404, message: '接口未找到！' })
+      : null),
+  });
+  const res = await g.request('GET', '/api/search?keywords=x&type=album', {
+    'x-vinyl-token': 'fixture-token',
+  });
+  assert.equal(res.status, 500);
+  assert.match(res.body, /404/);
+  assert.match(res.body, /接口未找到/);
+});

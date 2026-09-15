@@ -2,6 +2,7 @@
 import { requestUrl } from 'obsidian';
 import { Track } from './track';
 import { restrictionText } from '../util';
+import { GatewayError } from './request-error';
 import { getLanguage, t, tf } from './i18n';
 import type {
   ApiErrorResponse,
@@ -53,7 +54,10 @@ export class ServerClient {
     const body: unknown = res.json;
     if (res.status < 200 || res.status >= 300) {
       const error = (body as ApiErrorResponse | null)?.error;
-      throw new Error(error || tf('auth.gatewayHttp', { status: res.status, path: pathname }));
+      throw new GatewayError(
+        error || tf('auth.gatewayHttp', { status: res.status, path: pathname }),
+        res.status
+      );
     }
     return body as T;
   }

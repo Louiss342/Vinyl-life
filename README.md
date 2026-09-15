@@ -71,6 +71,8 @@ Vinyl Life 把专辑笔记展示成一张张唱片，配有黑胶唱机样式的
 
 在设置的「源」页面用手机扫码登录自己的账号（目前只保留扫码这一条登录路径）。QQ 的二维码是 QQ 互联二维码，需要用手机 QQ 扫描，QQ 音乐 App 的「扫一扫」识别不了。
 
+搜索和导入专辑不需要登录：两个平台都能在没有账号时查到专辑资料并建笔记（QQ 侧另有一条匿名搜索通道兜底）。登录决定的是播放——没登录时导入的笔记一样完整，到播放那一步才需要账号。
+
 在线音源不需要安装 Node.js：首次使用时插件会用 Obsidian 自带的 Node 在应用内启动本机网关；只听本地文件则完全不会启动网关。
 
 ## 专辑笔记与听歌记录
@@ -155,6 +157,8 @@ Vinyl Life/
 网易云和 QQ 音乐通过非官方接口接入，插件与网易、腾讯没有关联。播放范围和音质受账号权限及平台接口状态限制，不绕过付费或会员限制；使用这些接口可能涉及平台的服务条款。
 
 插件不收集遥测或上传播放统计。在线功能会连接所选音乐平台的登录、音乐与图片服务，本机网关只监听 `127.0.0.1`。网关请求外网时跟随系统的代理设置（与浏览器一致）；需要手动指定时，可用 `VINYL_PROXY` 环境变量覆盖。笔记中使用网络封面时，也会访问对应的图片地址。
+
+网易云的请求有两条通道：插件界面直连与本地网关，其中一条不可用时自动切换到另一条。搜索带节流保护——同一个关键词短时间内复用上次的结果，连续搜索之间保持最小间隔；平台明确限流时（网易云会回「操作频繁」），暂停该来源十几秒并在结果上方写明原因，而不是拿「网络失败」搪塞过去。
 
 登录凭据、设置和播放统计保存在本机插件目录中。可以在设置里退出账号、清除统计；分享插件文件时，不要附带自己的 Cookie 和登录数据。
 
@@ -276,6 +280,8 @@ You can also search by album or song name. Each result shows its cover, artists,
 
 Sign in by scanning a QR code on the Sources settings page (for now this is the only sign-in path). The QQ code is a QQ Connect QR code — scan it with mobile QQ; the QQ Music app's own scanner cannot read it.
 
+Searching and importing albums need no account: both platforms can be searched and imported while signed out (QQ has an anonymous fallback channel). What signing in unlocks is playback — notes imported without an account are complete, and the account is only needed when you press play.
+
 Online sources do not require Node.js: on first use the plugin starts a local gateway in-app, on the Node bundled with Obsidian. If you only listen to local files, no gateway is started at all.
 
 ## Album notes and listening log
@@ -360,6 +366,8 @@ To use NetEase Cloud Music or QQ Music, just scan the QR code on the plugin's So
 NetEase Cloud Music and QQ Music are reached through unofficial APIs, and the plugin is not affiliated with NetEase or Tencent. What you can play and at what quality is limited by your account's permissions and by the state of the platforms' APIs; paid or membership restrictions are not bypassed. Using these APIs may fall under the platforms' terms of service.
 
 The plugin collects no telemetry and uploads no playback statistics. Online features connect to the login, music, and image services of the music platform you choose, and the local gateway only listens on `127.0.0.1`. Requests the gateway makes to the outside world follow your system proxy settings (the same ones your browser uses); set the `VINYL_PROXY` environment variable to override them. When a note uses a remote cover, the corresponding image URL is fetched as well.
+
+NetEase requests have two channels — a direct connection from the plugin window and the local gateway — and switch to the other automatically when one is unavailable. Search is throttled: the same keyword reuses its recent result, consecutive searches keep a minimum interval, and when a platform explicitly rate-limits a request (NetEase answers "too frequent"), that source is paused for a short while and the reason is shown above the results instead of being passed off as a network failure.
 
 Login credentials, settings, and playback statistics are stored in the plugin folder on your own machine. You can sign out and clear the statistics in the settings; when you share plugin files, do not include your own cookies and login data.
 

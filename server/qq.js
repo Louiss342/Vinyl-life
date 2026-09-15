@@ -29,6 +29,8 @@ const PTLOGIN_DAID = '383';
 const PT_3RD_AID = '100497308';
 const MUSICU_URL = 'https://u.y.qq.com/cgi-bin/musicu.fcg';
 const ALBUM_URL = 'https://c.y.qq.com/v8/fcg-bin/fcg_v8_album_info_cp.fcg';
+// 经典网页搜索（t=0 单曲 / t=8 专辑）：匿名可用，做 musicu 的兜底（见 classicSearch）
+const CLASSIC_SEARCH_URL = 'https://c.y.qq.com/soso/fcgi-bin/client_search_cp';
 const LYRIC_URL = 'https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg';
 const OAUTH_URL = 'https://graph.qq.com/oauth2.0/authorize';
 const LOGIN_JUMP_URL = 'https://graph.qq.com/oauth2.0/login_jump';
@@ -741,34 +743,11 @@ function registerQqRoutes(deps) {
       .join(' / ');
   }
 
-  route('GET', '/api/qq/search', async ({ query }) => {
-    const keywords = String((query && query.keywords) || '').trim().slice(0, 100);
-    if (!keywords) return { code: 0, data: { albums: [], songs: [] } };
-    const common = {
-      remoteplace: 'txt.yqq.center',
-      searchid: String(Date.now()),
-      query: keywords,
-      page_num: 1,
-      num_per_page: 10,
-      highlight: 0,
-    };
-    const jar = readJar();
-    const { body } = await musicuPost({
-      comm: { ct: 24, cv: 0, format: 'json', uin: uinOf(jar) },
-      req_album: {
-        module: 'music.search.SearchCgiService',
-        method: 'DoSearchForQQMusicDesktop',
-        param: { ...common, search_type: 2 },
-      },
-      req_song: {
-        module: 'music.search.SearchCgiService',
-        method: 'DoSearchForQQMusicDesktop',
-        param: { ...common, search_type: 0 },
-      },
-    }, jar);
-    const rawAlbums = searchList(body, 'req_album', 'album');
-    const rawSongs = searchList(body, 'req_song', 'song');
-    const albums = rawAlbums.map((raw) => {
+  // 两个搜索端点的载荷字段高度重合（albumMID/albumName/singerName/albumPic/publicTime/song_count、
+  // 歌曲的 mid/title/singer/album{mid,name}），差别只在包装层级 —— 所以映射共用一份，
+  // 靠多套命名的「或」把两边的差异吃掉。
+  function mapAlbums(rawList) {
+    return rawList.map((raw) => {
       const a = (raw && (raw.albumInfo || raw.album)) || raw || {};
       const mid = String(a.albumMID || a.albumMid || a.mid || '');
       return {
@@ -781,7 +760,10 @@ function registerQqRoutes(deps) {
         available: Number(a.song_count || a.songCount || a.total || 0) > 0,
       };
     }).filter((a) => MID_RE.test(a.mid) && a.name);
-    const songs = rawSongs.map((raw) => {
+  }
+
+  function mapSongs(rawList) {
+    return rawList.map((raw) => {
       const s = (raw && (raw.songInfo || raw.song)) || raw || {};
       const album = s.album || {};
       const albumMid = String(album.mid || s.albumMID || s.albumMid || s.albummid || '');
@@ -797,8 +779,105 @@ function registerQqRoutes(deps) {
           (!s.action || s.action.switch == null || (Number(s.action.switch) & 1) === 1),
       };
     }).filter((s) => MID_RE.test(s.albumMid) && s.albumName);
+  }
+
+  // 经典网页搜索端点（y.qq.com 网页版在用）。与 musicu 的关键差别：**匿名可用** ——
+  // musicu 在未登录（或登录态失效）时不报错、只静默返回空列表，用户看到的是「请先登录 QQ 音乐」，
+  // 而导入专辑其实只需要元信息。参数分组照端点实测结果给，别混用（new_json 会改列表字段）。
+  async function classicSearch(keywords, jar) {
+    const fetchKind = async (t, kind, extra) => {
+      const qs = new URLSearchParams({
+        w: keywords,
+        format: 'json',
+        p: '1',
+        n: '10',
+        t: String(t),
+        platform: 'yqq.json',
+        needNewCode: '0',
+        ...extra,
+      });
+      const headers = { 'User-Agent': UA_QQ, Referer: 'https://y.qq.com/' };
+      const cookie = cookieHeader(jar || {});
+      if (cookie) headers.Cookie = cookie;
+      const res = await fetch(`${CLASSIC_SEARCH_URL}?${qs}`, {
+        headers,
+        signal: timeout(15000),
+      });
+      let body = {};
+      try {
+        body = JSON.parse(await res.text());
+      } catch (_) {}
+      const block = body && body.data && body.data[kind];
+      return {
+        ok: Number(body && body.code) === 0,
+        list: Array.isArray(block && block.list) ? block.list : [],
+      };
+    };
+    const [albums, songs] = await Promise.all([
+      fetchKind(8, 'album', {}),
+      fetchKind(0, 'song', { new_json: '1', aggr: '1', cr: '1', lossless: '0' }),
+    ]);
+    return {
+      ok: albums.ok && songs.ok,
+      albums: mapAlbums(albums.list),
+      songs: mapSongs(songs.list),
+    };
+  }
+
+  route('GET', '/api/qq/search', async ({ query }) => {
+    const keywords = String((query && query.keywords) || '').trim().slice(0, 100);
+    if (!keywords) return { code: 0, data: { albums: [], songs: [] } };
+    const common = {
+      remoteplace: 'txt.yqq.center',
+      searchid: String(Date.now()),
+      query: keywords,
+      page_num: 1,
+      num_per_page: 10,
+      highlight: 0,
+    };
+    const jar = readJar();
     const loggedIn = !!(jar.qm_keyst || jar.qqmusic_key);
-    return { code: 0, requiresLogin: !loggedIn && !albums.length && !songs.length, data: { albums, songs } };
+    let rawAlbums = [];
+    let rawSongs = [];
+    try {
+      const { body } = await musicuPost({
+        comm: { ct: 24, cv: 0, format: 'json', uin: uinOf(jar) },
+        req_album: {
+          module: 'music.search.SearchCgiService',
+          method: 'DoSearchForQQMusicDesktop',
+          param: { ...common, search_type: 2 },
+        },
+        req_song: {
+          module: 'music.search.SearchCgiService',
+          method: 'DoSearchForQQMusicDesktop',
+          param: { ...common, search_type: 0 },
+        },
+      }, jar);
+      rawAlbums = searchList(body, 'req_album', 'album');
+      rawSongs = searchList(body, 'req_song', 'song');
+    } catch (e) {
+      log('[vinyl-server] qq musicu 搜索失败，转经典端点:', (e && e.message) || String(e));
+    }
+    let albums = mapAlbums(rawAlbums);
+    let songs = mapSongs(rawSongs);
+    // musicu 没给出任何结果（未登录 / 登录态失效 / 抽风）→ 走匿名可用的经典端点。
+    // searched 记录「经典端点确实答了话」：答了话但没匹配到，是「无结果」而不是「要登录」。
+    let searched = albums.length > 0 || songs.length > 0;
+    if (!searched) {
+      try {
+        const classic = await classicSearch(keywords, jar);
+        albums = classic.albums;
+        songs = classic.songs;
+        searched = classic.ok;
+      } catch (e) {
+        log('[vinyl-server] qq 经典搜索兜底失败:', (e && e.message) || String(e));
+      }
+    }
+    return {
+      code: 0,
+      requiresLogin: !loggedIn && !albums.length && !songs.length && !searched,
+      data: { albums, songs },
+    };
   });
 
   route('GET', '/api/qq/album', async ({ query }) => {

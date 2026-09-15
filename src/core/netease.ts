@@ -43,11 +43,25 @@ export class NeteaseService {
   }
 
   async searchAlbums(keywords: string): Promise<NeteaseSearchResponse> {
+    if (await this.web.isLoggedIn()) {
+      try {
+        return await this.web.searchAlbums(keywords);
+      } catch {
+        // 网页会话通道失败 → 落到下面的网关兜底
+      }
+    }
     await this.ensureGatewayReady();
     return this.gateway.searchAlbums(keywords);
   }
 
   async searchSongs(keywords: string): Promise<NeteaseSearchResponse> {
+    if (await this.web.isLoggedIn()) {
+      try {
+        return await this.web.searchSongs(keywords);
+      } catch {
+        // 网页会话通道失败 → 落到下面的网关兜底
+      }
+    }
     await this.ensureGatewayReady();
     return this.gateway.searchSongs(keywords);
   }

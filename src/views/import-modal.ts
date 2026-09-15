@@ -184,17 +184,27 @@ export class AlbumImportModal extends Modal {
         const result = await discoverAlbums(this.ctx, query);
         if (requestId !== this.latestRequestId) return;
         renderResults(result.items);
+        // 警告折成「来源」「原因」两串，两个状态行共用
+        const warned = result.warnings.length > 0;
+        const sources = result.warnings
+          .map((warning) => (warning.source === 'qq' ? t('import.sourceQq') : t('import.sourceNetease')))
+          .join(t('common.listSep'));
+        const reasons = result.warnings
+          .map((warning) => warning.message)
+          .filter(Boolean)
+          .join(t('common.listSep'));
         if (!result.items.length) {
-          const failed = result.warnings.length === 2;
-          setStatus(failed ? t('import.searchFailed') : t('import.searchNoResults'), failed);
-        } else if (result.warnings.length) {
-          const names = result.warnings.map((warning) =>
-            warning.source === 'qq' ? t('import.sourceQq') : t('import.sourceNetease'));
-          const reasons = result.warnings.map((warning) => warning.message).filter(Boolean);
-          setStatus(tf('import.searchPartial', {
-            sources: names.join(t('common.listSep')),
-            reason: reasons.join(t('common.listSep')),
-          }));
+          // 有警告就把原因说出来：上游限流、接口拒绝这些真相不该被笼统的「检查网络」盖掉
+          if (warned) {
+            setStatus(
+              tf('import.searchNoResultsWithReason', { sources, reason: reasons }),
+              result.warnings.length === 2
+            );
+          } else {
+            setStatus(t('import.searchNoResults'));
+          }
+        } else if (warned) {
+          setStatus(tf('import.searchPartial', { sources, reason: reasons }));
         } else {
           setStatus(tf('import.searchFound', { n: result.items.length }));
         }

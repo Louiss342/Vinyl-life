@@ -101,15 +101,18 @@ export default class VinylLifePlugin extends Plugin {
     // 新装用户装完即用；已有目录不动，失败不阻塞加载（导入流程里还会再兜一次）
     await this.ensureDataFolders();
 
-    // 服务层：网关（Cookie 通道）+ 网页直连（官方登录页会话）统一路由
+    // 服务层：网关（Cookie 通道）+ 网页直连（渲染进程 requestUrl）统一路由
     this.server = new ServerManager(this);
     this.client = new ServerClient(
       () => this.server.base,
       () => this.server.token
     );
+    // 第三个参数是登录凭据文件：网页直连通道用它带 MUSIC_U（网关扫码登录写的同一份），
+    // 不接的话渲染进程永远处于「未登录」，网页通道形同虚设
     this.web = new WebClient(
       pluginAbsPath(this, '.anon-token'),
-      pluginAbsPath(this, '.device-id')
+      pluginAbsPath(this, '.device-id'),
+      pluginAbsPath(this, '.cookie')
     );
     this.netease = new NeteaseService(this.web, this.client, () => this.server.ensure(), () => this.server.lastError);
     this.auth = new Auth(this, this.server, this.client);

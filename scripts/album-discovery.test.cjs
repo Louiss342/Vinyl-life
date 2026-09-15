@@ -4,8 +4,15 @@ const path = require('node:path');
 const vm = require('node:vm');
 const esbuild = require('esbuild');
 
+// 与被测模块打进同一个 bundle 才能拿到同一个类身份（跨 bundle 的 instanceof 恒为 false）：
+// 冷却用例要造「上游限流 429」这个输入，必须用同一份 GatewayError。
 const source = esbuild.buildSync({
-  entryPoints: [path.join(__dirname, '../src/core/album-discovery.ts')],
+  stdin: {
+    contents:
+      `export * from '../src/core/album-discovery';\n` +
+      `export { GatewayError } from '../src/core/request-error';\n`,
+    resolveDir: __dirname,
+  },
   bundle: true,
   write: false,
   format: 'cjs',
@@ -21,6 +28,7 @@ vm.runInNewContext(source, {
     ? { App: class {}, TFile: class {}, TFolder: class {}, normalizePath: (p) => p }
     : require(name),
   console,
+  window: { setTimeout, clearTimeout },
 });
 const discovery = moduleBox.exports;
 
@@ -83,4 +91,55 @@ test('聚合搜索：单源失败仍返回另一源，并标记已导入', async
   assert.equal(result.items[0].importedFilePath, file.path);
   assert.equal(result.warnings.length, 1);
   assert.equal(result.warnings[0].source, 'qq');
+});
+
+// 下面两个用例会改动模块级的节流状态（缓存 / 冷却），必须放在文件末尾，
+// 否则同一文件里前面的用例会被「冷却中不发请求」影响。
+
+test('搜索节流：同一个词第二次搜索走缓存，不再打网络', async () => {
+  const app = { vault: { getMarkdownFiles: () => [] }, metadataCache: { getFileCache: () => null } };
+  let neteaseCalls = 0;
+  let qqCalls = 0;
+  const ctx = {
+    app,
+    client: {
+      searchAlbums: async () => { neteaseCalls++; return { result: { albums: [{ id: 77, name: '缓存专辑' }] } }; },
+      searchSongs: async () => { neteaseCalls++; return { result: { songs: [] } }; },
+    },
+    qq: { search: async () => { qqCalls++; return { data: { albums: [], songs: [] } }; } },
+  };
+  const first = await discovery.discoverAlbums(ctx, '缓存用词');
+  assert.equal(first.items.length, 1);
+  assert.equal(neteaseCalls, 2, '首搜 = 专辑 + 单曲两次请求');
+  assert.equal(qqCalls, 1);
+  const second = await discovery.discoverAlbums(ctx, '缓存用词');
+  assert.equal(second.items.length, 1);
+  assert.equal(second.warnings.length, 0, '缓存命中的结果不该再带警告');
+  assert.equal(neteaseCalls, 2, '第二次命中缓存，请求数不得增长');
+  assert.equal(qqCalls, 1);
+});
+
+test('搜索节流：上游 429 后该来源进入冷却，这一轮不发请求也不谎报「没结果」', async () => {
+  const app = { vault: { getMarkdownFiles: () => [] }, metadataCache: { getFileCache: () => null } };
+  let neteaseCalls = 0;
+  const ctx = {
+    app,
+    client: {
+      searchAlbums: async () => { neteaseCalls++; throw new discovery.GatewayError('网易云接口限流（操作频繁），请等几秒再搜', 429); },
+      searchSongs: async () => { neteaseCalls++; throw new discovery.GatewayError('网易云接口限流（操作频繁），请等几秒再搜', 429); },
+    },
+    qq: { search: async () => ({ data: { albums: [{ mid: 'ALBUM001', name: 'QQ 专辑' }], songs: [] } }) },
+  };
+  const first = await discovery.discoverAlbums(ctx, '限流用词');
+  assert.equal(first.items.length, 1, '网易云挂了不影响 QQ 的结果');
+  const neteaseWarning = first.warnings.find((w) => w.source === 'netease');
+  assert.match(neteaseWarning.message, /限流/);
+  assert.equal(neteaseCalls, 2);
+  // 冷却期内换一个词再搜：网易云侧一个请求都不该发出去
+  const second = await discovery.discoverAlbums(ctx, '限流用词二');
+  assert.equal(neteaseCalls, 2, '冷却期内不得再打网易云');
+  assert.equal(second.items.length, 1);
+  const cooling = second.warnings.find((w) => w.source === 'netease');
+  assert.ok(cooling, '冷却中的来源要给出解释，否则会被当成「没有结果」');
+  assert.match(cooling.message, /限流/);
 });
