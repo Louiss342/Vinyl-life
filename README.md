@@ -22,6 +22,8 @@ Vinyl Life 把专辑笔记展示成一张张唱片，配有黑胶唱机样式的
 
 ## 专辑墙
 
+![专辑墙：封面卡片排列，正在播放的专辑在墙上高亮，右侧是黑胶播放器](assets/screenshots/album-shelf.webp)
+
 专辑以封面卡片排列。鼠标移上去，唱片会从封套里露出来；点击有音源的专辑，会出现唱片从墙上移到唱机的动画。正在播放的专辑会在墙上高亮。
 
 顶部工具栏可以：
@@ -142,6 +144,10 @@ Vinyl Life/
 3. 重新加载 Obsidian，在「设置 → 第三方插件」中启用 Vinyl Life。
 4. 在命令面板中搜索 Vinyl Life，打开专辑墙，导入一张专辑。
 
+![空态专辑墙上的手绘教程](assets/screenshots/empty-shelf.webp)
+
+第一次打开时，空态教程会圈出两个导入按钮，并指出播放器的位置。
+
 如果准备使用网易云或 QQ 音乐，直接在插件的「源」设置页扫码登录即可，无需安装 Node.js。
 
 ## 在线音源与数据
@@ -220,6 +226,8 @@ Vinyl Life presents album notes as records on a shelf, with a turntable-style pl
 Requires Obsidian 1.13.0 or later, desktop only. The interface can be switched between Chinese and English.
 
 ## Album shelf
+
+![The album shelf: cover cards, the playing album highlighted, and the turntable player in the sidebar](assets/screenshots/album-shelf.webp)
 
 Albums are laid out as cover cards. Hover over one and the record slides out of its sleeve; click an album that has audio and the record animates from the shelf to the turntable. The album that is playing is highlighted on the shelf.
 
@@ -340,6 +348,10 @@ Vinyl Life/
 2. Put them into your vault's `.obsidian/plugins/vinyl-life/` folder.
 3. Reload Obsidian and enable Vinyl Life under Settings → Community plugins.
 4. Search for Vinyl Life in the command palette, open the album shelf, and import an album.
+
+![The hand-drawn tutorial on an empty album shelf](assets/screenshots/empty-shelf.webp)
+
+The first time you open it, the empty-shelf tutorial rings the two import buttons and points out where the player lives.
 
 To use NetEase Cloud Music or QQ Music, just scan the QR code on the plugin's Sources settings page — no Node.js installation is required.
 

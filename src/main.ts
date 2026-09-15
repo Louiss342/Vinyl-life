@@ -26,7 +26,6 @@ import { syncMediaSession } from './core/media-session';
 import { VinylPlayerView, PLAYER_VIEW_TYPE } from './views/player-view';
 import { VinylShelfView, SHELF_VIEW_TYPE } from './views/shelf-view';
 import { HandoffController } from './animation/handoff';
-import { QrLoginModal, qqQrProvider } from './views/qr-login-modal';
 import {
   AlbumInfo,
   getAlbumInfo,
@@ -159,9 +158,8 @@ export default class VinylLifePlugin extends Plugin {
     this.registerView(SHELF_VIEW_TYPE, (leaf) => new VinylShelfView(leaf, this));
     // 图标与播放器视图一致（disc-3），方便一眼认出是 Vinyl Life
     this.addRibbonIcon('disc-3', t('cmd.ribbonShelf'), () => this.openShelf());
-    // 命令面板：日常 5 条常驻（open-shelf / open-player / import-netease / import-local /
-    // insert-now-playing）；登录 / 退出这类维护命令收进 registerDebugCommands()，
-    // 仅当「设置 → 通用 → 调试命令」打开时注册（改开关后需重载插件生效）。
+    // 命令面板：视图、导入、插入正在播放与三条播放控制，共 8 条常驻命令。
+    // 登录 / 退出统一从「设置 → 源」操作，不再额外占用命令面板。
     // 命令 id 不得改动（改了会让已绑定的快捷键失效）
     this.addCommand({
       id: 'open-shelf',
@@ -204,36 +202,11 @@ export default class VinylLifePlugin extends Plugin {
       name: t('player.prev'),
       callback: () => void this.engine.prev(),
     });
-    if (this.settings.debugCommands) this.registerDebugCommands();
     this.addSettingTab(new VinylSettingTab(this.app, this));
 
     // 恢复上次的队列位置（不自动播放）：放在最后，失败也不影响插件可用
     void this.restoreLastPlayback();
 
-  }
-
-  /** 维护类命令（默认不注册）：登录 / 退出。触发条件见 onload 里的 settings.debugCommands。 */
-  registerDebugCommands() {
-    this.addCommand({
-      id: 'netease-login',
-      name: t('cmd.neteaseLogin'),
-      callback: () => this.openLogin(),
-    });
-    this.addCommand({
-      id: 'qq-login',
-      name: t('cmd.qqLogin'),
-      callback: () => this.openQqLogin(),
-    });
-    this.addCommand({
-      id: 'qq-logout',
-      name: t('cmd.qqLogout'),
-      callback: () => this.logoutQq(),
-    });
-    this.addCommand({
-      id: 'netease-logout',
-      name: t('cmd.neteaseLogout'),
-      callback: () => this.logout(),
-    });
   }
 
   onunload() {
@@ -248,6 +221,8 @@ export default class VinylLifePlugin extends Plugin {
     const loaded: unknown = await this.loadData();
     const data: Partial<VinylSettings> = loaded && typeof loaded === 'object' ? loaded : {};
     this.settings = { ...DEFAULT_SETTINGS, ...data };
+    // 1.0.10 之前的调试命令开关已移除；清掉旧 data.json 残留，避免下次保存继续带回。
+    delete (this.settings as VinylSettings & { debugCommands?: unknown }).debugCommands;
     this.settings.stats = ensureStats(data?.stats);
     // 卡片属性：数组结构必须显式归一化——Object.assign 对数组会产出 {0:…,length:…} 类数组怪物，
     // 且浅拷贝会让设置与 DEFAULT_SETTINGS 共享引用（push 即污染默认值）；归一化同时完成旧 boolean 结构迁移
@@ -261,8 +236,6 @@ export default class VinylLifePlugin extends Plugin {
     // 专辑队列模式：同样只认布尔 true（脏数据一律当关）
     this.settings.queueMode = data?.queueMode === true;
     this.settings.playMode = normalizePlayMode(data?.playMode);
-    // 调试命令开关：只认布尔 true（data.json 可能被手改成字符串，别让 "false" 也开启）
-    this.settings.debugCommands = data?.debugCommands === true;
     // 外观项归一（data.json 可能来自旧版本或被手改）
     if (!DISC_DIRECTIONS.includes(this.settings.discDirection)) {
       this.settings.discDirection = DEFAULT_SETTINGS.discDirection;
@@ -634,25 +607,4 @@ export default class VinylLifePlugin extends Plugin {
     await workspace.revealLeaf(leaf);
   }
 
-  openLogin() {
-    new QrLoginModal(this.app, { server: this.server, auth: this.auth }).open();
-  }
-
-  async logout() {
-    await this.auth.clear();
-    notice(t('notice.neteaseLoggedOut'));
-  }
-
-  openQqLogin() {
-    new QrLoginModal(
-      this.app,
-      { server: this.server, auth: this.qqAuth },
-      { provider: qqQrProvider() }
-    ).open();
-  }
-
-  async logoutQq() {
-    await this.qqAuth.clear();
-    notice(t('notice.qqLoggedOut'));
-  }
 }

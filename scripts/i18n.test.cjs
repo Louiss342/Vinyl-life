@@ -750,7 +750,7 @@ function makePlugin({ view = null, data = {}, snapshot = null } = {}) {
   return plugin;
 }
 
-// 日常常驻的 5 条（id 不能改：改了已绑定的快捷键就失效）
+// 日常常驻的 8 条（id 不能改：改了已绑定的快捷键就失效）
 const KEPT_COMMANDS = [
   'open-shelf',
   'open-player',
@@ -762,14 +762,8 @@ const KEPT_COMMANDS = [
   'player-next',
   'player-prev',
 ];
-// 只应出现在调试门后的那批（登录 / 退出 —— 设置面板按钮没覆盖到的维护命令）
-const DEBUG_COMMANDS = [
-  'netease-login', 'qq-login',
-  'qq-logout', 'netease-logout',
-];
-
 test('main：命令面板 — 默认恰好注册那 8 条日常命令（一条不多一条不少）', async () => {
-  const plugin = makePlugin(); // loadData → {}：走 DEFAULT_SETTINGS.debugCommands = false
+  const plugin = makePlugin();
   await plugin.onload();
   assert.deepEqual(
     plugin.commands.map((c) => c.id),
@@ -778,21 +772,11 @@ test('main：命令面板 — 默认恰好注册那 8 条日常命令（一条�
   );
 });
 
-test('main：打开「调试命令」后补齐登录 / 退出（id 与回调都在）', async () => {
+test('main：旧数据里的 debugCommands 已废弃，不再注册登录 / 退出命令', async () => {
   const plugin = makePlugin({ data: { debugCommands: true } });
   await plugin.onload();
-  const ids = plugin.commands.map((c) => c.id);
-  assert.deepEqual(ids.slice(0, KEPT_COMMANDS.length), KEPT_COMMANDS, '常用 5 条照旧');
-  for (const id of DEBUG_COMMANDS) assert.ok(ids.includes(id), `调试模式下应注册 ${id}`);
-  assert.equal(
-    ids.length,
-    KEPT_COMMANDS.length + DEBUG_COMMANDS.length,
-    '调试模式下命令数 = 8 + 4（别重复注册）'
-  );
-  for (const c of plugin.commands) {
-    assert.equal(typeof c.callback, 'function', `${c.id} 缺回调`);
-    assert.ok(String(c.name || '').trim().length > 0, `${c.id} 缺显示名`);
-  }
+  assert.deepEqual(plugin.commands.map((c) => c.id), KEPT_COMMANDS);
+  assert.equal('debugCommands' in plugin.settings, false, '废弃字段不应进入归一化后的设置');
 });
 
 test('main：专辑队列模式同样只认布尔 true（脏 data.json 一律当关）', async () => {
@@ -801,16 +785,6 @@ test('main：专辑队列模式同样只认布尔 true（脏 data.json 一律当
     await plugin.onload();
     assert.equal(plugin.settings.queueMode, want, `queueMode=${String(raw)} → ${want}`);
   }
-});
-
-test('main：调试开关只认布尔 true（data.json 被手改成字符串不生效）', async () => {
-  const plugin = makePlugin({ data: { debugCommands: 'true' } });
-  await plugin.onload();
-  assert.deepEqual(
-    plugin.commands.map((c) => c.id),
-    KEPT_COMMANDS,
-    '字符串 "true" 不该被当成开启'
-  );
 });
 
 // —— 插入此刻正在听：假编辑器收集插入内容 + 假 engine.snapshot（含 albumNotePath）——
@@ -1109,12 +1083,15 @@ test('设置面板：标签条四个按钮，点一下就换内容、高亮跟�
 
   const has = (text) => collect(tab.containerEl).some((e) => String(e.textContent).includes(text));
   assert.ok(has('语言 / Language'), '默认停在「通用」：看得到语言这一行');
+  assert.equal(has('调试命令'), false, '已移除的调试命令不应继续出现在通用页');
+  assert.equal(has('默认位置'), false, '播放器默认位置已移出通用页');
   assert.equal(has('每行专辑数量'), false, '「外观」页的行还没渲染（切标签是重建，不是预建四份）');
 
   buttons()[1].onclick();
   assert.ok(buttons()[1].classes.has('is-active'), '切到「外观」后高亮跟过去');
   assert.equal(buttons()[0].getAttribute('aria-current'), 'false', '上一个标签不再报当前页');
   assert.ok(has('每行专辑数量'), '内容换成「外观」页的设置行');
+  assert.ok(has('默认位置'), '播放器默认位置已移动到「外观」页');
   assert.equal(has('语言 / Language'), false, '「通用」页的行已经清掉');
 });
 

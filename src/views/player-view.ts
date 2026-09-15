@@ -1,5 +1,6 @@
 // 播放器视图：转盘 + 旋转唱片 + 直线唱臂（不播放归位支架 / 播放落针并随进度内移）；
 //   设备面板（.vinyl-deck，胡桃木 / 贝壳白 / 哑光黑三套配色）：金属圆钮控制、红色填充进度轨、丝印品牌行；
+//   音量 = 阶梯电平表（点哪一格，那格（含）之前全亮），进度条点即定位、拖动跟手（见 bindPointerScrub）；
 //   换碟 = 头部圆钮弹 Menu。
 // 增量渲染：壳只建一次，状态更新只改目标节点——旋转动画不被打断。
 import { ItemView, WorkspaceLeaf, setIcon } from 'obsidian';
@@ -30,11 +31,13 @@ interface PlayerEls {
   labelEmpty: HTMLElement;
   arm: HTMLElement;
   progressSlider: HTMLInputElement;
+  progressRail: HTMLElement;
   timeEl: HTMLElement;
   prevBtn: HTMLButtonElement;
   playBtn: HTMLButtonElement;
   nextBtn: HTMLButtonElement;
   volSlider: HTMLInputElement;
+  volSegments: HTMLElement[];
   queueTitle: HTMLElement;
   queueBox: HTMLElement;
   /** 专辑队列模式开关（顶部，「选择专辑」左边） */
@@ -65,21 +68,119 @@ export function modeLabelKey(mode: PlayMode, queueMode: boolean): string {
   return `player.mode${name}${scope}`;
 }
 
-function setVal(el: HTMLInputElement, v: string) {
-  if (el.dataset.dragging !== '1') el.value = v;
+const VOLUME_SEGMENT_COUNT = 24;
+const VOLUME_SEGMENT_MIN_HEIGHT = 7;
+const VOLUME_SEGMENT_HEIGHT_RANGE = 7;
+/** 抬手 seek 之后压住进度轨的时长：引擎把目标位置报回来之前不许回写（timeupdate 节流 400ms） */
+const SEEK_HOLD_MS = 900;
+/** 保持期的「引擎已到位」容差（占全长比例）：够了就把轨道交还给引擎 */
+const SEEK_HOLD_TOLERANCE = 0.01;
+
+function clampRatio(ratio: number): number {
+  return Math.min(1, Math.max(0, ratio));
 }
 
-// 进度轨填充（唱片品牌红 / 音量中性银）：经 CSS 变量喂给 ::-webkit-slider-runnable-track
-function fillRange(el: HTMLInputElement, ratio: number, color: string) {
-  const pct = Math.round(Math.min(1, Math.max(0, ratio)) * 100);
-  el.style.setProperty(
-    '--track-fill',
-    `linear-gradient(90deg, ${color} ${pct}%, #1c1c21 ${pct}%)`
-  );
+/** 指针落点 → 比例（左端 0、右端 1，越界 clamp）。进度条与电平表共用这一处换算。 */
+export function pointerRatio(clientX: number, rect: { left: number; width: number }): number {
+  if (!(rect.width > 0)) return 0; // 宽度为 0（还没布局 / 视图藏着）不除零
+  return clampRatio((clientX - rect.left) / rect.width);
 }
 
-const FILL_RED = '#ff4757';
-const FILL_SILVER = '#c8c8d0';
+/** 音量表的亮格数：指针落在第 k 格，就亮 k + 1 格（含被点的那一格）—— 用户要的正是这个语义。
+ *  为什么不用 round：round 把「点在第 k 格左半边」算成 k 格，被点的那格反而不亮；
+ *  ceil 下指针永远在亮区里，且拖到最左格外（clientX 越过左边界）即 0 = 静音。 */
+export function activeVolumeSegments(ratio: number, total: number): number {
+  return Math.min(total, Math.ceil(clampRatio(ratio) * total));
+}
+
+function setSeekPosition(rail: HTMLElement, ratio: number): void {
+  rail.style.setProperty('--seek-position', `${(clampRatio(ratio) * 100).toFixed(2)}%`);
+}
+
+function setVolumeSegments(segments: HTMLElement[], ratio: number): void {
+  const active = activeVolumeSegments(ratio, segments.length);
+  segments.forEach((segment, i) => segment.classList.toggle('is-active', i < active));
+}
+
+/** 自绘滑块 / 电平表的指针接管：按下即定位、按住拖动跟手、抬手交结果。
+ *  为什么不让原生 range 干这活：它的行程是「宽度 − 滑块宽」（两端各让出半个滑块），与自绘几何
+ *  对不齐 —— 进度条上让出 7px（点哪都得偏一点），电平表上则是点第 k 格亮的格数总差半格、
+ *  最左边一格永远够不到 0。range 只留键盘（Tab + 方向键），故 CSS 给它 pointer-events: none。
+ *  用 pointer capture 而不是「容器上监听」：拖出控件（甚至拖出窗口）也不丢事件，抬手一定收得到。 */
+export function bindPointerScrub(
+  hit: HTMLElement,
+  input: HTMLInputElement,
+  handlers: {
+    /** 按下与拖动中的每一帧：给比例（已 clamp） */
+    onScrub: (ratio: number) => void;
+    /** 抬手（指针离开）：进度条在这里才真正 seek；音量表用不着 */
+    onCommit?: (ratio: number) => void;
+    onStart?: () => void;
+    /** 真的拖起来了（按下后第一次移动）——「按一下」与「按住拖」要分开对待 */
+    onDragStart?: () => void;
+    /** 抬手或被系统收走，都会走到这里（收尾只做一次） */
+    onEnd?: () => void;
+    /** 命中几何，缺省用 hit 自己：进度条要按内缩 7px 的轨道算，点哪滑块中心就落在哪 */
+    geometry?: () => { left: number; width: number };
+  }
+): void {
+  let last = 0;
+  let dragging = false; // 按下之后真的移动过（「点一下」与「按住拖」要分开对待）
+  let activeId: number | null = null; // 本次手势的 pointerId（null = 没按着）
+  const apply = (ev: PointerEvent) => {
+    const rect = handlers.geometry ? handlers.geometry() : hit.getBoundingClientRect();
+    last = pointerRatio(ev.clientX, rect);
+    handlers.onScrub(last);
+  };
+  const finish = () => {
+    activeId = null;
+    dragging = false;
+    handlers.onEnd?.();
+  };
+  hit.addEventListener('pointerdown', (ev) => {
+    if (ev.pointerType === 'mouse' && ev.button !== 0) return; // 右键 / 中键不当拖动
+    ev.preventDefault(); // 别开始选字与原生拖拽
+    // 捕获是「锦上添花」（拖出控件 / 拖出窗口也收得到抬手），失败也不许拖垮这条交互：
+    // 指针不活跃时 setPointerCapture 会抛，下面的 buttons 判定照样收得住手势
+    try {
+      hit.setPointerCapture(ev.pointerId);
+    } catch {
+      /* 捕获不到就靠 pointermove 的 buttons 判定兜底 */
+    }
+    // 键盘可达：点完接着就能用方向键微调（range 只是不接指针，仍可编程聚焦）
+    input.focus({ preventScroll: true });
+    activeId = ev.pointerId;
+    dragging = false;
+    handlers.onStart?.();
+    apply(ev);
+  });
+  hit.addEventListener('pointermove', (ev) => {
+    if (activeId === null || ev.pointerId !== activeId) return; // 不是本次手势（或只是路过）
+    // 已经松手了（抬手落在控件之外又没捕获住）：当收尾，别把悬停当成拖动
+    if (ev.buttons === 0) {
+      finish();
+      return;
+    }
+    if (!dragging) {
+      dragging = true;
+      handlers.onDragStart?.();
+    }
+    apply(ev);
+  });
+  hit.addEventListener('pointerup', (ev) => {
+    if (activeId === null || ev.pointerId !== activeId) return;
+    finish();
+    handlers.onCommit?.(last);
+  });
+  // 拖动被系统收走（多指手势等）：不提交，交还给引擎的位置（下一次 update 就位）
+  hit.addEventListener('pointercancel', (ev) => {
+    if (activeId === null || ev.pointerId !== activeId) return;
+    finish();
+  });
+  hit.addEventListener('lostpointercapture', () => {
+    if (activeId !== null) finish(); // 捕获意外丢失（元素被摘等）：别把拖动状态挂在半路
+  });
+}
 
 /** 拖拽落点 → 结果下标：drop 落在第 target 行的前 / 后（与 shelf-props 的 resolveDropIndex 同构）。
  *  被拖行先移除、其后的行左移一位，故落点在它之后时要减一；落到自己身上返回原位（无副作用）。 */
@@ -137,6 +238,10 @@ export class VinylPlayerView extends ItemView {
   private lastTimeText = '';
   private lastHeaderText = '';
   private lastVol = -1;
+  /** 进度条被按住拖动中：手指说了算，快照不许回写轨道与读数（见 update 的 seekOwned） */
+  private seeking = false;
+  /** 抬手 seek 之后的目标值 + 保持期限：等引擎到位再交还控制权（见 SEEK_HOLD_MS） */
+  private seekHold: { ratio: number; index: number; until: number } | null = null;
   private onVisibility = () => this.syncVisibility();
   // 队列拖拽态：dragging 抑制拖拽尾巴上的 click（见 endQueueDrag），dragFrom 是被拖行的下标
   private dragging = false;
@@ -312,18 +417,37 @@ export class VinylPlayerView extends ItemView {
     turntable.createDiv({ cls: 'vinyl-arm-rest' });
     turntable.createDiv({ cls: 'vinyl-turntable-spindle' });
 
-    // 进度轨（红色填充）
-    const progress = deck.createDiv({ cls: 'vinyl-progress' });
-    const progressSlider = progress.createEl('input', {
-      attr: { type: 'range', min: '0', max: '1000' },
-      cls: 'vinyl-slider',
+    // 音量表：参考手绘稿的阶梯矩形，增加格数并收敛高度变化。
+    // 它就当一根长得不一样的调节条用：点到哪一格，那一格（含）之前全亮。
+    const volRow = deck.createDiv({ cls: 'vinyl-vol-row' });
+    const volMeter = volRow.createDiv({ cls: 'vinyl-volume-meter' });
+    const volBars = volMeter.createDiv({ cls: 'vinyl-volume-bars' });
+    const volSegments = Array.from({ length: VOLUME_SEGMENT_COUNT }, (_, i) => {
+      const segment = volBars.createSpan({ cls: 'vinyl-volume-segment' });
+      const level = Math.round((i / (VOLUME_SEGMENT_COUNT - 1)) * VOLUME_SEGMENT_HEIGHT_RANGE);
+      segment.style.setProperty('--segment-height', `${VOLUME_SEGMENT_MIN_HEIGHT + level}px`);
+      segment.style.setProperty('--segment-i', String(i)); // 阶梯波浪的次序（见 styles.css）
+      return segment;
     });
-    progressSlider.addEventListener('pointerdown', () => (progressSlider.dataset.dragging = '1'));
-    progressSlider.addEventListener('pointerup', () => delete progressSlider.dataset.dragging);
-    progressSlider.addEventListener('input', () =>
-      this.plugin.engine.seek(Number(progressSlider.value) / 1000)
-    );
-    const timeEl = progress.createSpan({ text: '–:– / –:–', cls: 'vinyl-readout' });
+    const volSlider = volMeter.createEl('input', {
+      attr: { type: 'range', min: '0', max: '100' },
+      cls: 'vinyl-range-input vinyl-volume-input',
+    });
+    this.bindLabel(() => volSlider.setAttribute('aria-label', t('player.volume')));
+    const applyVolume = (ratio: number) => {
+      const r = clampRatio(ratio);
+      setVolumeSegments(volSegments, r);
+      volSlider.value = String(Math.round(r * 100));
+      this.plugin.engine.setVolume(r);
+    };
+    bindPointerScrub(volMeter, volSlider, {
+      onScrub: applyVolume,
+      // 拖起来才摘掉阶梯波浪的延迟：点一下（跳格）要那串波浪，拖动则一格都不许滞后
+      onDragStart: () => volMeter.addClass('is-scrubbing'),
+      onEnd: () => volMeter.removeClass('is-scrubbing'),
+    });
+    // 键盘（Tab + 方向键）仍走原生 range 的 input —— 指针已经被 pointer-events: none 让开
+    volSlider.addEventListener('input', () => applyVolume(Number(volSlider.value) / 100));
 
     // 控制圆钮组
     const controls = deck.createDiv({ cls: 'vinyl-controls' });
@@ -346,19 +470,66 @@ export class VinylPlayerView extends ItemView {
       void this.plugin.engine.next();
     });
 
-    // 音量行：旋钮图标 + 银色填充轨
-    const volRow = deck.createDiv({ cls: 'vinyl-vol-row' });
-    const volIcon = volRow.createSpan({ cls: 'vinyl-vol-icon' });
-    setIcon(volIcon, 'volume-2');
-    const volSlider = volRow.createEl('input', {
-      attr: { type: 'range', min: '0', max: '100' },
-      cls: 'vinyl-slider vinyl-vol',
+    // 歌曲进度：原生 range 只负责键盘，自绘轨道的填充与滑块共用同一坐标系（点即定位）。
+    const progress = deck.createDiv({ cls: 'vinyl-progress' });
+    const progressControl = progress.createDiv({ cls: 'vinyl-seek-control' });
+    const progressRail = progressControl.createDiv({ cls: 'vinyl-seek-rail' });
+    progressRail.createDiv({ cls: 'vinyl-seek-fill' });
+    progressRail.createDiv({ cls: 'vinyl-seek-thumb' });
+    const progressSlider = progressControl.createEl('input', {
+      attr: { type: 'range', min: '0', max: '1000' },
+      cls: 'vinyl-range-input vinyl-seek-input',
     });
-    volSlider.addEventListener('pointerdown', () => (volSlider.dataset.dragging = '1'));
-    volSlider.addEventListener('pointerup', () => delete volSlider.dataset.dragging);
-    volSlider.addEventListener('input', () =>
-      this.plugin.engine.setVolume(Number(volSlider.value) / 100)
-    );
+    const timeEl = progress.createSpan({ text: '–:– / –:–', cls: 'vinyl-readout' });
+    this.bindLabel(() => progressSlider.setAttribute('aria-label', t('player.seek')));
+    const seekable = () => (this.lastSnapshot?.duration || 0) > 0;
+    // 拖动只挪画面与读数（点 / 填充 / 时间立刻跟手），抬手才真正 seek：拖动中反复 seek 会让
+    // 音频抽搐、在线源反复取流。拖动期间每个快照都被挡在门外（见 update 的 seekOwned），
+    // 否则引擎回声会把点拽回播放位置 —— 那才是「拖了没反应」的根。
+    const previewSeek = (ratio: number) => {
+      const dur = this.lastSnapshot?.duration || 0;
+      if (!(dur > 0)) return; // 没在放歌：别把点画到假位置上
+      const r = clampRatio(ratio);
+      progressSlider.value = String(Math.round(r * 1000)); // 接得住随后的方向键微调
+      setSeekPosition(progressRail, r);
+      // 读数跟着预览（抬手前也能看清要跳到哪），并写进缓存：保持期结束时不会被旧文案回写
+      const text = `${fmtTime(r * dur)} / ${fmtTime(dur)}`;
+      if (text !== this.lastTimeText) {
+        this.lastTimeText = text;
+        timeEl.textContent = text;
+      }
+    };
+    const commitSeek = (ratio: number) => {
+      if (!seekable()) return;
+      const r = clampRatio(ratio);
+      // 抬手后短暂压住轨道：在线源 seek 有往返，引擎报回目标位置前不许回写
+      this.seekHold = {
+        ratio: r,
+        index: this.lastSnapshot?.index ?? -1,
+        until: Date.now() + SEEK_HOLD_MS,
+      };
+      this.plugin.engine.seek(r);
+    };
+    bindPointerScrub(progressControl, progressSlider, {
+      geometry: () => progressRail.getBoundingClientRect(), // 按轨道（内缩 7px）算：点哪都不偏
+      onScrub: previewSeek,
+      onStart: () => {
+        this.seeking = true;
+      },
+      // 拖起来才关掉缓动：点一下跳转仍走那 220ms 的平滑推移，拖动则直接跟手
+      onDragStart: () => progressControl.addClass('is-scrubbing'),
+      onEnd: () => {
+        this.seeking = false;
+        progressControl.removeClass('is-scrubbing');
+      },
+      onCommit: commitSeek,
+    });
+    // 键盘：方向键步进（原生 range 的 input）也压一下轨道，否则 400ms 后才有回声时会跳回去
+    progressSlider.addEventListener('input', () => {
+      const ratio = Number(progressSlider.value) / 1000;
+      previewSeek(ratio);
+      commitSeek(ratio);
+    });
 
     // 丝印品牌行 + 实际音质读数（源 · 档位，如「网易云 · 较高」；本地音轨只显示来源）
     const brandRow = deck.createDiv({ cls: 'vinyl-deck-brand-row' });
@@ -439,11 +610,13 @@ export class VinylPlayerView extends ItemView {
       labelEmpty,
       arm,
       progressSlider,
+      progressRail,
       timeEl,
       prevBtn,
       playBtn,
       nextBtn,
       volSlider,
+      volSegments,
       queueTitle,
       queueBox,
       clearQueueBtn,
@@ -539,17 +712,26 @@ export class VinylPlayerView extends ItemView {
       this.showCover(els, 0);
     }
 
-    // 进度 / 计数器（值不变不写 DOM）
+    // 进度 / 计数器（值不变不写 DOM）。
+    // 拖动中与抬手后的保持期内，轨道与读数由本地目标值说了算：引擎的每一次回声（播放推进、
+    // seek 往返）都不许回写，否则手指和回声会互相拽，看着就是「drag 了没反应」。
     const dur = Math.max(s.duration, s.currentTime);
     const ratioRaw = dur > 0 ? Math.min(1, s.currentTime / dur) : 0;
     const ratio = Math.round(ratioRaw * 1000);
-    if (ratio !== this.lastRatio) {
+    if (this.seekHold) {
+      // 保持期的三种收尾：引擎到位 → 交还；换曲了（seek 到结尾会连着切歌）→ 立刻交还；超时 → 如实显示
+      const arrived = Math.abs(ratioRaw - this.seekHold.ratio) < SEEK_HOLD_TOLERANCE;
+      const switched = s.index !== this.seekHold.index;
+      if (arrived || switched || Date.now() > this.seekHold.until) this.seekHold = null;
+    }
+    const seekOwned = this.seeking || this.seekHold !== null;
+    if (!seekOwned && ratio !== this.lastRatio) {
       this.lastRatio = ratio;
-      setVal(els.progressSlider, String(ratio));
-      fillRange(els.progressSlider, ratioRaw, FILL_RED);
+      els.progressSlider.value = String(ratio);
+      setSeekPosition(els.progressRail, ratioRaw);
     }
     const timeText = `${fmtTime(s.currentTime)} / ${fmtTime(s.duration)}`;
-    if (timeText !== this.lastTimeText) {
+    if (!seekOwned && timeText !== this.lastTimeText) {
       this.lastTimeText = timeText;
       els.timeEl.textContent = timeText;
     }
@@ -576,12 +758,12 @@ export class VinylPlayerView extends ItemView {
       setIcon(els.playBtn, wantIcon);
     }
 
-    // 音量（银色填充；值不变不写）
+    // 音量（分段电平表；值不变不写。拖动中的本地写入与这里算出的格子一致，回写是幂等的）
     const vol = Math.round(s.volume * 100);
     if (vol !== this.lastVol) {
       this.lastVol = vol;
-      setVal(els.volSlider, String(vol));
-      fillRange(els.volSlider, s.volume, FILL_SILVER);
+      els.volSlider.value = String(vol);
+      setVolumeSegments(els.volSegments, s.volume);
     }
   }
 

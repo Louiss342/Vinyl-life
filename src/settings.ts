@@ -92,10 +92,6 @@ export interface VinylSettings {
   /** 每张专辑记住自己的自定义队列顺序（专辑笔记路径 → trackKey 顺序）。
    *  只影响「下次播这张专辑时的排列」，不是「重启后恢复整条队列」 */
   queueOrder: Record<string, string[]>;
-  /** 调试命令（通用页）：打开后命令面板才注册登录 / 退出这类维护命令
-   *  （设置页里的按钮已覆盖其余日常操作）。默认关闭 —— 日常只需要那几条常用命令；
-   *  改开关后需重载插件生效 */
-  debugCommands: boolean;
 }
 
 export const DEFAULT_SETTINGS: VinylSettings = {
@@ -121,7 +117,6 @@ export const DEFAULT_SETTINGS: VinylSettings = {
   shelfPropLabels: {},
   stats: EMPTY_STATS,
   queueOrder: {},
-  debugCommands: false,
 };
 
 /** data.json → queueOrder。脏数据一律丢弃：非对象容器 / 非数组值 / 数组里的非字符串项；
@@ -166,9 +161,37 @@ const row = (parent: HTMLElement, name: string, desc: string, build: (s: Setting
   build(s);
 };
 
-/** 分组小标题：走 Setting.setHeading（Obsidian 审核要求，别自己建 h2/h3） */
-const heading = (parent: HTMLElement, text: string): void => {
-  new Setting(parent).setName(text).setHeading();
+/** 设置分区：只负责视觉分组，不改变 Setting 的原生结构与行为。 */
+const SECTION_ICONS: Record<string, string> = {
+  'sliders-horizontal': '⌁',
+  'folder-tree': '⌂',
+  'notebook-pen': '✎',
+  'audio-lines': '≋',
+  'panel-right-open': '▣',
+  'chart-no-axes-column': '▥',
+  'layout-grid': '⊞',
+  'disc-3': '◉',
+  'radio-tower': '⌁',
+  cloud: '☁',
+  'message-circle-more': '◌',
+  'hard-drive': '▱',
+};
+
+const section = (
+  parent: HTMLElement,
+  text: string,
+  kind: string,
+  icon: string,
+  build: (el: HTMLElement) => void
+): void => {
+  const el = parent.createDiv({ cls: `vinyl-settings-section is-${kind}` });
+  const title = new Setting(el).setName(text).setHeading();
+  title.settingEl.addClass('vinyl-settings-section-heading');
+  title.settingEl.createSpan({
+    cls: 'vinyl-settings-section-icon',
+    text: SECTION_ICONS[icon] ?? '·',
+  });
+  build(el);
 };
 
 const columnOptions = (): [number, string][] => [
@@ -235,7 +258,9 @@ export class VinylSettingTab extends PluginSettingTab {
     this.stopAboutInk();
     containerEl.empty();
     this.buildTabStrip(containerEl);
-    const body = containerEl.createDiv({ cls: 'vinyl-settings-body' });
+    const body = containerEl.createDiv({
+      cls: `vinyl-settings-body is-${this.activeTab}`,
+    });
     switch (this.activeTab) {
       case 'appearance':
         this.renderAppearanceTab(body);
@@ -280,311 +305,308 @@ export class VinylSettingTab extends PluginSettingTab {
     this.aboutInkStop = null;
   }
 
-  // ============ 通用：语言 / 维护 / 路径 / 模板 / 播放 / 播放器 / 统计 ============
+  // ============ 通用：语言 / 路径 / 模板 / 播放 / 统计 ============
 
   private renderGeneralTab(el: HTMLElement): void {
     const p = this.plugin;
-    row(el, t('settings.language'), t('settings.languageDesc'), (s) =>
-      s.addDropdown((d) => {
-        for (const l of LANGUAGES) d.addOption(l.value, l.label);
-        d.setValue(p.settings.language);
-        d.onChange(async (v) => {
-          p.settings.language = v === 'en' ? 'en' : 'zh';
-          await p.saveSettings();
-          p.refreshLanguage();
-          // 改完语言整面板重绘（否则要重开设置才变）
-          this.render();
-        });
-      })
-    );
-    // 维护类命令（登录 / 退出）默认不注册。
-    // 注册发生在 onload → 改完开关重载插件（或重开 Obsidian）才生效，描述里已写明。
-    row(el, t('settings.debugCommands'), t('settings.debugCommandsDesc'), (s) =>
-      s.addToggle((tg) =>
-        tg.setValue(p.settings.debugCommands).onChange(async (v) => {
-          p.settings.debugCommands = v;
-          await p.saveSettings();
+    section(el, t('settings.section.basics'), 'basics', 'sliders-horizontal', (group) => {
+      row(group, t('settings.language'), t('settings.languageDesc'), (s) =>
+        s.addDropdown((d) => {
+          for (const l of LANGUAGES) d.addOption(l.value, l.label);
+          d.setValue(p.settings.language);
+          d.onChange(async (v) => {
+            p.settings.language = v === 'en' ? 'en' : 'zh';
+            await p.saveSettings();
+            p.refreshLanguage();
+            this.render();
+          });
         })
-      )
-    );
+      );
+    });
 
-    heading(el, t('settings.path'));
-    row(el, t('settings.albumFolder'), t('settings.albumFolderDesc'), (s) =>
-      s.addText((txt) =>
-        txt
-          .setPlaceholder(DEFAULT_SETTINGS.albumFolder)
-          .setValue(p.settings.albumFolder)
-          .onChange(async (v) => {
-            p.settings.albumFolder = v.trim() || DEFAULT_SETTINGS.albumFolder;
-            await p.saveSettings();
-          })
-      )
-    );
-    row(el, t('settings.coverFolder'), t('settings.coverFolderDesc'), (s) =>
-      s.addText((txt) =>
-        txt
-          .setPlaceholder(DEFAULT_SETTINGS.coverFolder)
-          .setValue(p.settings.coverFolder)
-          .onChange(async (v) => {
-            p.settings.coverFolder = v.trim() || DEFAULT_SETTINGS.coverFolder;
-            await p.saveSettings();
-          })
-      )
-    );
-
-    heading(el, t('settings.template'));
-    row(el, t('settings.albumTemplate'), t('settings.albumTemplateDesc'), (s) =>
-      s
-        .addText((txt) =>
+    section(el, t('settings.path'), 'paths', 'folder-tree', (group) => {
+      row(group, t('settings.albumFolder'), t('settings.albumFolderDesc'), (s) =>
+        s.addText((txt) =>
           txt
-            .setPlaceholder(t('settings.albumTemplatePlaceholder'))
-            .setValue(p.settings.albumNoteTemplate)
+            .setPlaceholder(DEFAULT_SETTINGS.albumFolder)
+            .setValue(p.settings.albumFolder)
             .onChange(async (v) => {
-              p.settings.albumNoteTemplate = v.trim();
+              p.settings.albumFolder = v.trim() || DEFAULT_SETTINGS.albumFolder;
               await p.saveSettings();
             })
         )
-        // 原「创建专辑模板文件」命令的落点：写一份可编辑模板并回填上面的路径
-        .addButton((b) =>
-          b.setButtonText(t('settings.generateTemplate')).onClick(async () => {
-            await p.createAlbumTemplate();
-            this.render(); // 路径已被回填，重绘让输入框显示新值
-          })
-        )
-    );
-
-    heading(el, t('settings.section.playback'));
-    row(el, t('settings.defaultSource'), t('settings.defaultSourceDesc'), (s) =>
-      s.addDropdown((d) =>
-        d
-          .addOption('auto', t('settings.sourceAuto'))
-          .addOption('local', t('settings.sourceLocal'))
-          .addOption('netease', t('settings.sourceNetease'))
-          .addOption('qq', t('settings.sourceQq'))
-          .setValue(p.settings.defaultSource)
-          .onChange(async (v) => {
-            p.settings.defaultSource = v as VinylSettings['defaultSource'];
-            await p.saveSettings();
-          })
-      )
-    );
-    row(el, t('settings.quality'), t('settings.qualityDesc'), (s) =>
-      s.addDropdown((d) =>
-        d
-          .addOption('standard', t('settings.qualityStandard'))
-          .addOption('higher', t('settings.qualityHigher'))
-          .addOption('exhigh', t('settings.qualityExhigh'))
-          .addOption('lossless', t('settings.qualityLossless'))
-          .setValue(p.settings.quality)
-          .onChange(async (v) => {
-            p.settings.quality = v as VinylSettings['quality'];
-            await p.saveSettings();
-          })
-      )
-    );
-    row(el, t('settings.autoPlay'), t('settings.autoPlayDesc'), (s) =>
-      s.addToggle((tg) =>
-        tg.setValue(p.settings.autoPlay).onChange(async (v) => {
-          p.settings.autoPlay = v;
-          await p.saveSettings();
-        })
-      )
-    );
-
-    heading(el, t('settings.section.player'));
-    row(el, t('settings.playerLocation'), t('settings.playerLocationDesc'), (s) =>
-      s.addDropdown((d) =>
-        d
-          .addOption('sidebar', t('settings.locSidebar'))
-          .addOption('tab', t('settings.locTab'))
-          .addOption('window', t('settings.locWindow'))
-          .setValue(p.settings.playerLocation)
-          .onChange(async (v) => {
-            p.settings.playerLocation = v as VinylSettings['playerLocation'];
-            await p.saveSettings();
-          })
-      )
-    );
-
-    heading(el, t('settings.section.stats'));
-    row(
-      el,
-      t('settings.statsTotal'),
-      tf('settings.statsDesc', {
-        plays: p.settings.stats.totalPlays,
-        albums: Object.keys(p.settings.stats.albums).length,
-        tracks: Object.keys(p.settings.stats.tracks).length,
-      }),
-      (s) =>
-        s
-          // 原「显示播放统计」命令的落点：弹窗查看每张专辑 / 每首曲目的明细
-          .addButton((b) =>
-            b.setButtonText(t('settings.viewStats')).onClick(() => {
-              new StatsModal(this.app, p.settings.stats).open();
+      );
+      row(group, t('settings.coverFolder'), t('settings.coverFolderDesc'), (s) =>
+        s.addText((txt) =>
+          txt
+            .setPlaceholder(DEFAULT_SETTINGS.coverFolder)
+            .setValue(p.settings.coverFolder)
+            .onChange(async (v) => {
+              p.settings.coverFolder = v.trim() || DEFAULT_SETTINGS.coverFolder;
+              await p.saveSettings();
             })
-          )
-          .addButton((b) =>
-            b
-              .setButtonText(t('settings.clearStats'))
-              .setDestructive()
-              .onClick(async () => {
-                p.settings.stats = ensureStats(null);
+        )
+      );
+    });
+
+    section(el, t('settings.template'), 'template', 'notebook-pen', (group) => {
+      row(group, t('settings.albumTemplate'), t('settings.albumTemplateDesc'), (s) =>
+        s
+          .addText((txt) =>
+            txt
+              .setPlaceholder(t('settings.albumTemplatePlaceholder'))
+              .setValue(p.settings.albumNoteTemplate)
+              .onChange(async (v) => {
+                p.settings.albumNoteTemplate = v.trim();
                 await p.saveSettings();
-                this.render();
               })
           )
-    );
+          .addButton((b) =>
+            b.setButtonText(t('settings.generateTemplate')).onClick(async () => {
+              await p.createAlbumTemplate();
+              this.render();
+            })
+          )
+      );
+    });
+
+    section(el, t('settings.section.playback'), 'playback', 'audio-lines', (group) => {
+      row(group, t('settings.defaultSource'), t('settings.defaultSourceDesc'), (s) =>
+        s.addDropdown((d) =>
+          d
+            .addOption('auto', t('settings.sourceAuto'))
+            .addOption('local', t('settings.sourceLocal'))
+            .addOption('netease', t('settings.sourceNetease'))
+            .addOption('qq', t('settings.sourceQq'))
+            .setValue(p.settings.defaultSource)
+            .onChange(async (v) => {
+              p.settings.defaultSource = v as VinylSettings['defaultSource'];
+              await p.saveSettings();
+            })
+        )
+      );
+      row(group, t('settings.quality'), t('settings.qualityDesc'), (s) =>
+        s.addDropdown((d) =>
+          d
+            .addOption('standard', t('settings.qualityStandard'))
+            .addOption('higher', t('settings.qualityHigher'))
+            .addOption('exhigh', t('settings.qualityExhigh'))
+            .addOption('lossless', t('settings.qualityLossless'))
+            .setValue(p.settings.quality)
+            .onChange(async (v) => {
+              p.settings.quality = v as VinylSettings['quality'];
+              await p.saveSettings();
+            })
+        )
+      );
+      row(group, t('settings.autoPlay'), t('settings.autoPlayDesc'), (s) =>
+        s.addToggle((tg) =>
+          tg.setValue(p.settings.autoPlay).onChange(async (v) => {
+            p.settings.autoPlay = v;
+            await p.saveSettings();
+          })
+        )
+      );
+    });
+
+    section(el, t('settings.section.stats'), 'stats', 'chart-no-axes-column', (group) => {
+      row(
+        group,
+        t('settings.statsTotal'),
+        tf('settings.statsDesc', {
+          plays: p.settings.stats.totalPlays,
+          albums: Object.keys(p.settings.stats.albums).length,
+          tracks: Object.keys(p.settings.stats.tracks).length,
+        }),
+        (s) =>
+          s
+            .addButton((b) =>
+              b.setButtonText(t('settings.viewStats')).onClick(() => {
+                new StatsModal(this.app, p.settings.stats).open();
+              })
+            )
+            .addButton((b) =>
+              b
+                .setButtonText(t('settings.clearStats'))
+                .setDestructive()
+                .onClick(async () => {
+                  p.settings.stats = ensureStats(null);
+                  await p.saveSettings();
+                  this.render();
+                })
+            )
+      );
+    });
   }
 
   // ============ 外观：专辑墙 / 黑胶唱片 / 播放器 ============
 
   private renderAppearanceTab(el: HTMLElement): void {
     const p = this.plugin;
-    heading(el, t('settings.section.shelf'));
-    row(el, t('settings.columns'), t('settings.columnsDesc'), (s) =>
-      s.addDropdown((d) => {
-        d.addOption('auto', t('settings.columnsAuto'));
-        for (const [n, label] of columnOptions()) d.addOption(String(n), label);
-        d.setValue(String(p.settings.shelfColumns)).onChange(async (v) => {
-          p.settings.shelfColumns =
-            v === 'auto' ? 'auto' : Number(v) || DEFAULT_SETTINGS.shelfColumns;
-          await p.saveSettings();
-          p.refreshAppearance();
-        });
-      })
-    );
-    row(el, t('settings.discDirection'), t('settings.discDirectionDesc'), (s) =>
-      s.addDropdown((d) => {
-        for (const [key, label] of discOptions()) d.addOption(key, label);
-        d.setValue(p.settings.discDirection).onChange(async (v) => {
-          const dir = DISC_DIRECTIONS.includes(v as DiscDirection)
-            ? (v as DiscDirection)
-            : DEFAULT_SETTINGS.discDirection;
-          p.settings.discDirection = dir;
-          await p.saveSettings();
-          p.refreshAppearance();
-        });
-      })
-    );
+    section(el, t('settings.section.shelf'), 'shelf', 'layout-grid', (group) => {
+      row(group, t('settings.columns'), t('settings.columnsDesc'), (s) =>
+        s.addDropdown((d) => {
+          d.addOption('auto', t('settings.columnsAuto'));
+          for (const [n, label] of columnOptions()) d.addOption(String(n), label);
+          d.setValue(String(p.settings.shelfColumns)).onChange(async (v) => {
+            p.settings.shelfColumns =
+              v === 'auto' ? 'auto' : Number(v) || DEFAULT_SETTINGS.shelfColumns;
+            await p.saveSettings();
+            p.refreshAppearance();
+          });
+        })
+      );
+      row(group, t('settings.discDirection'), t('settings.discDirectionDesc'), (s) =>
+        s.addDropdown((d) => {
+          for (const [key, label] of discOptions()) d.addOption(key, label);
+          d.setValue(p.settings.discDirection).onChange(async (v) => {
+            const dir = DISC_DIRECTIONS.includes(v as DiscDirection)
+              ? (v as DiscDirection)
+              : DEFAULT_SETTINGS.discDirection;
+            p.settings.discDirection = dir;
+            await p.saveSettings();
+            p.refreshAppearance();
+          });
+        })
+      );
+    });
 
-    heading(el, t('settings.section.vinyl'));
-    row(el, t('settings.recordColor'), t('settings.recordColorDesc'), (s) =>
-      s.addDropdown((d) => {
-        for (const key of RECORD_COLORS) d.addOption(key, t(RECORD_LABEL_KEYS[key]));
-        d.setValue(p.settings.recordColor).onChange(async (v) => {
-          p.settings.recordColor = normalizeRecordColor(v);
-          await p.saveSettings();
-          p.refreshAppearance();
-        });
-      })
-    );
+    section(el, t('settings.section.vinyl'), 'vinyl', 'disc-3', (group) => {
+      row(group, t('settings.recordColor'), t('settings.recordColorDesc'), (s) =>
+        s.addDropdown((d) => {
+          for (const key of RECORD_COLORS) d.addOption(key, t(RECORD_LABEL_KEYS[key]));
+          d.setValue(p.settings.recordColor).onChange(async (v) => {
+            p.settings.recordColor = normalizeRecordColor(v);
+            await p.saveSettings();
+            p.refreshAppearance();
+          });
+        })
+      );
+    });
 
-    heading(el, t('settings.section.player'));
-    row(el, t('settings.deck'), t('settings.deckDesc'), (s) =>
-      s.addDropdown((d) => {
-        for (const key of DECK_STYLES) d.addOption(key, t(DECK_LABEL_KEYS[key]));
-        d.setValue(p.settings.playerDeck).onChange(async (v) => {
-          p.settings.playerDeck = normalizeDeckStyle(v);
-          await p.saveSettings();
-          p.refreshAppearance();
-        });
-      })
-    );
-    row(el, t('settings.spinSpeed'), t('settings.spinSpeedDesc'), (s) =>
-      s.addDropdown((d) => {
-        d.addOption('slow', t('settings.spinSlow'));
-        d.addOption('normal', t('settings.spinNormal'));
-        d.addOption('fast', t('settings.spinFast'));
-        d.setValue(p.settings.turntableSpeed).onChange(async (v) => {
-          const speed = Object.keys(SPIN_SPEEDS).includes(v) ? (v as SpinSpeed) : 'normal';
-          p.settings.turntableSpeed = speed;
-          await p.saveSettings();
-          p.refreshAppearance();
-        });
-      })
-    );
+    section(el, t('settings.section.player'), 'deck', 'radio-tower', (group) => {
+      row(group, t('settings.playerLocation'), t('settings.playerLocationDesc'), (s) =>
+        s.addDropdown((d) =>
+          d
+            .addOption('sidebar', t('settings.locSidebar'))
+            .addOption('tab', t('settings.locTab'))
+            .addOption('window', t('settings.locWindow'))
+            .setValue(p.settings.playerLocation)
+            .onChange(async (v) => {
+              p.settings.playerLocation = v as VinylSettings['playerLocation'];
+              await p.saveSettings();
+            })
+        )
+      );
+      row(group, t('settings.deck'), t('settings.deckDesc'), (s) =>
+        s.addDropdown((d) => {
+          for (const key of DECK_STYLES) d.addOption(key, t(DECK_LABEL_KEYS[key]));
+          d.setValue(p.settings.playerDeck).onChange(async (v) => {
+            p.settings.playerDeck = normalizeDeckStyle(v);
+            await p.saveSettings();
+            p.refreshAppearance();
+          });
+        })
+      );
+      row(group, t('settings.spinSpeed'), t('settings.spinSpeedDesc'), (s) =>
+        s.addDropdown((d) => {
+          d.addOption('slow', t('settings.spinSlow'));
+          d.addOption('normal', t('settings.spinNormal'));
+          d.addOption('fast', t('settings.spinFast'));
+          d.setValue(p.settings.turntableSpeed).onChange(async (v) => {
+            const speed = Object.keys(SPIN_SPEEDS).includes(v) ? (v as SpinSpeed) : 'normal';
+            p.settings.turntableSpeed = speed;
+            await p.saveSettings();
+            p.refreshAppearance();
+          });
+        })
+      );
+    });
   }
 
   // ============ 源：网易云 / QQ 音乐 / 本地源 ============
 
   private renderSourceTab(el: HTMLElement): void {
     const p = this.plugin;
-    heading(el, t('settings.sub.netease'));
-    this.statusRow(el, 'netease');
-    row(el, t('settings.qrLogin'), t('settings.qrLoginDescNetease'), (s) =>
-      s.addButton((b) =>
-        b.setButtonText(t('settings.qrLogin')).onClick(() => {
-          new QrLoginModal(
-            this.app,
-            { server: p.server, auth: p.auth },
-            { onLogin: () => void this.refreshNetease() }
-          ).open();
-        })
-      )
-    );
-    row(el, t('settings.logout'), t('settings.logoutDescNetease'), (s) =>
-      s.addButton((b) =>
-        b
-          .setButtonText(t('settings.logoutAction'))
-          .setDestructive()
-          .onClick(async () => {
-            await p.auth.clear();
-            notice(t('notice.neteaseLoggedOut'));
-            await this.refreshNetease();
+    section(el, t('settings.sub.netease'), 'netease', 'cloud', (group) => {
+      this.statusRow(group, 'netease');
+      row(group, t('settings.qrLogin'), t('settings.qrLoginDescNetease'), (s) =>
+        s.addButton((b) =>
+          b.setButtonText(t('settings.qrLogin')).onClick(() => {
+            new QrLoginModal(
+              this.app,
+              { server: p.server, auth: p.auth },
+              { onLogin: () => void this.refreshNetease() }
+            ).open();
           })
-      )
-    );
+        )
+      );
+      row(group, t('settings.logout'), t('settings.logoutDescNetease'), (s) =>
+        s.addButton((b) =>
+          b
+            .setButtonText(t('settings.logoutAction'))
+            .setDestructive()
+            .onClick(async () => {
+              await p.auth.clear();
+              notice(t('notice.neteaseLoggedOut'));
+              await this.refreshNetease();
+            })
+        )
+      );
+    });
 
-    heading(el, t('settings.sub.qq'));
-    this.statusRow(el, 'qq');
-    row(el, t('settings.qrLogin'), t('settings.qrLoginDescQq'), (s) =>
-      s.addButton((b) =>
-        b.setButtonText(t('settings.qrLogin')).onClick(() => {
-          new QrLoginModal(
-            this.app,
-            { server: p.server, auth: p.qqAuth },
-            { provider: qqQrProvider(), onLogin: () => void this.refreshQq() }
-          ).open();
-        })
-      )
-    );
-    row(el, t('settings.logout'), t('settings.logoutDescQq'), (s) =>
-      s.addButton((b) =>
-        b
-          .setButtonText(t('settings.logoutAction'))
-          .setDestructive()
-          .onClick(async () => {
-            await p.qqAuth.clear();
-            notice(t('notice.qqLoggedOut'));
-            await this.refreshQq();
+    section(el, t('settings.sub.qq'), 'qq', 'message-circle-more', (group) => {
+      this.statusRow(group, 'qq');
+      row(group, t('settings.qrLogin'), t('settings.qrLoginDescQq'), (s) =>
+        s.addButton((b) =>
+          b.setButtonText(t('settings.qrLogin')).onClick(() => {
+            new QrLoginModal(
+              this.app,
+              { server: p.server, auth: p.qqAuth },
+              { provider: qqQrProvider(), onLogin: () => void this.refreshQq() }
+            ).open();
           })
-      )
-    );
+        )
+      );
+      row(group, t('settings.logout'), t('settings.logoutDescQq'), (s) =>
+        s.addButton((b) =>
+          b
+            .setButtonText(t('settings.logoutAction'))
+            .setDestructive()
+            .onClick(async () => {
+              await p.qqAuth.clear();
+              notice(t('notice.qqLoggedOut'));
+              await this.refreshQq();
+            })
+        )
+      );
+    });
 
-    heading(el, t('settings.section.local'));
-    row(el, t('settings.audioFolder'), t('settings.audioFolderDesc'), (s) =>
-      s.addText((txt) =>
-        txt
-          .setPlaceholder(DEFAULT_SETTINGS.audioFolder)
-          .setValue(p.settings.audioFolder)
-          .onChange(async (v) => {
-            p.settings.audioFolder = v.trim() || DEFAULT_SETTINGS.audioFolder;
-            await p.saveSettings();
-          })
-      )
-    );
-    row(el, t('settings.importMode'), t('settings.importModeDesc'), (s) =>
-      s.addDropdown((d) =>
-        d
-          .addOption('copy', t('settings.importCopy'))
-          .addOption('link', t('settings.importLink'))
-          .setValue(p.settings.importMode)
-          .onChange(async (v) => {
-            p.settings.importMode = v as VinylSettings['importMode'];
-            await p.saveSettings();
-          })
-      )
-    );
+    section(el, t('settings.section.local'), 'local', 'hard-drive', (group) => {
+      row(group, t('settings.audioFolder'), t('settings.audioFolderDesc'), (s) =>
+        s.addText((txt) =>
+          txt
+            .setPlaceholder(DEFAULT_SETTINGS.audioFolder)
+            .setValue(p.settings.audioFolder)
+            .onChange(async (v) => {
+              p.settings.audioFolder = v.trim() || DEFAULT_SETTINGS.audioFolder;
+              await p.saveSettings();
+            })
+        )
+      );
+      row(group, t('settings.importMode'), t('settings.importModeDesc'), (s) =>
+        s.addDropdown((d) =>
+          d
+            .addOption('copy', t('settings.importCopy'))
+            .addOption('link', t('settings.importLink'))
+            .setValue(p.settings.importMode)
+            .onChange(async (v) => {
+              p.settings.importMode = v as VinylSettings['importMode'];
+              await p.saveSettings();
+            })
+        )
+      );
+    });
   }
 
   // ============ 关于：整页手绘（版本 / 作者手记 / 许可） ============
@@ -600,6 +622,7 @@ export class VinylSettingTab extends PluginSettingTab {
    *  两个平台并行检测，避免一个慢源阻塞另一个。 */
   private statusRow(parent: HTMLElement, platform: 'netease' | 'qq'): void {
     row(parent, t('settings.loginStatus'), t('settings.loginStatusDesc'), (s) => {
+      s.settingEl.addClass('vinyl-auth-setting');
       const el = s.controlEl.createDiv({ cls: 'vinyl-auth-status' });
       if (platform === 'netease') {
         this.neteaseStatusEl = el;
@@ -619,21 +642,24 @@ export class VinylSettingTab extends PluginSettingTab {
     if (!el) return;
     const request = ++this.neteaseRefresh;
     el.empty();
-    el.createSpan({ text: t('settings.checkingLogin'), cls: 'vinyl-muted' });
+    this.setAuthState(el, 'loading');
+    el.createSpan({ text: t('settings.checkingLogin'), cls: 'vinyl-auth-primary' });
     let st: LoginState;
     try {
       st = await this.plugin.auth.getStatus();
     } catch (e) {
       if (request !== this.neteaseRefresh) return;
       el.empty();
+      this.setAuthState(el, 'error');
       el.createSpan({
         text: tf('settings.checkFailed', { msg: (e as Error).message }),
-        cls: 'vinyl-muted',
+        cls: 'vinyl-auth-primary',
       });
       return;
     }
     if (request !== this.neteaseRefresh) return;
     el.empty();
+    this.setAuthState(el, st.loggedIn ? 'online' : st.cookieBytes > 0 ? 'warning' : 'offline');
     el.createSpan({
       text: st.loggedIn
         ? tf('settings.statusLoggedIn', { name: st.nick || t('settings.loggedIn'), id: st.userId ?? '' }) +
@@ -641,6 +667,7 @@ export class VinylSettingTab extends PluginSettingTab {
         : st.cookieBytes > 0
           ? t('settings.cookieInvalid')
           : t('settings.notLoggedIn'),
+      cls: 'vinyl-auth-primary',
     });
     el.createSpan({
       text: st.loggedIn
@@ -648,7 +675,7 @@ export class VinylSettingTab extends PluginSettingTab {
         : st.serverOk
           ? t('settings.gatewayOk')
           : t('settings.gatewayDown'),
-      cls: 'vinyl-muted',
+      cls: 'vinyl-auth-meta',
     });
   }
 
@@ -658,27 +685,31 @@ export class VinylSettingTab extends PluginSettingTab {
     if (!el) return;
     const request = ++this.qqRefresh;
     el.empty();
-    el.createSpan({ text: t('settings.checkingLogin'), cls: 'vinyl-muted' });
+    this.setAuthState(el, 'loading');
+    el.createSpan({ text: t('settings.checkingLogin'), cls: 'vinyl-auth-primary' });
     let st: LoginState;
     try {
       st = await this.plugin.qqAuth.getStatus();
     } catch (e) {
       if (request !== this.qqRefresh) return;
       el.empty();
+      this.setAuthState(el, 'error');
       el.createSpan({
         text: tf('settings.checkFailed', { msg: (e as Error).message }),
-        cls: 'vinyl-muted',
+        cls: 'vinyl-auth-primary',
       });
       return;
     }
     if (request !== this.qqRefresh) return;
     el.empty();
+    this.setAuthState(el, st.loggedIn ? 'online' : st.cookieBytes > 0 ? 'warning' : 'offline');
     el.createSpan({
       text: st.loggedIn
         ? tf('settings.statusLoggedInQq', { name: st.nick || t('settings.loggedIn'), id: st.userId ?? '' })
         : st.cookieBytes > 0
           ? t('settings.cookieInvalid')
           : t('settings.notLoggedIn'),
+      cls: 'vinyl-auth-primary',
     });
     el.createSpan({
       text: st.loggedIn
@@ -686,7 +717,16 @@ export class VinylSettingTab extends PluginSettingTab {
         : st.serverOk
           ? t('settings.gatewayOk')
           : t('settings.gatewayDown'),
-      cls: 'vinyl-muted',
+      cls: 'vinyl-auth-meta',
     });
+  }
+
+  /** 登录状态只用结构化类表达，不把对号 / 叉号写进可见文案。 */
+  private setAuthState(
+    el: HTMLElement,
+    state: 'loading' | 'online' | 'offline' | 'warning' | 'error'
+  ): void {
+    el.removeClass('is-loading', 'is-online', 'is-offline', 'is-warning', 'is-error');
+    el.addClass(`is-${state}`);
   }
 }

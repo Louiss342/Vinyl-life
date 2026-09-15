@@ -543,7 +543,8 @@
 
 /* 标题 + 两个虚线框 + 页脚：图纸上是一列居中文本；框宽在图纸 475（按中文量）的基础上放宽到 600
    —— 同一句翻成英文宽出一大截（逐行实测最长 751px，475 时有 4 行折行），
-   600（净文本 556px）后只剩最长的两行折行，中文一行都不多折。 */
+   600（净文本 556px）后只剩最长的两行折行，中文一行都不多折。
+   上面这组实测是在图纸的 20px 正文下量的；正文收到 18px 后每行同比变窄约一成，折行只会更少，600 继续留用。 */
 .vinyl-tutorial-main {
   position: absolute;
   left: 26px; /* 与工具栏左右内边距对齐 */
@@ -561,8 +562,9 @@
   max-width: calc(100% - 52px);
 }
 
-/* 字号 / 行距 / 内边距全部取图纸的绝对 px（图纸 1 单位 = 1px），不再随主题字号缩放：
-   标题 36px（元素高 45 = 36×1.25）；正文 20px、行距 40px；虚线框只是留白容器，边框由 roughjs 画 */
+/* 字号 / 行距 / 内边距取图纸的绝对 px（图纸 1 单位 = 1px），不随主题字号缩放：
+   标题 36px（元素高 45 = 36×1.25）；正文在图纸的 20px / 行距 40px 上整体收一号 —— 18px / 行距 36px
+   （20px × 5 行的教程正文观感偏大，标题不动）；虚线框只是留白容器，边框由 roughjs 画 */
 .vinyl-tutorial-title {
   font-size: 36px;
   font-weight: 400; /* 手写体只有一档字重，别做合成加粗（图纸标题也只是更大不加粗） */
@@ -572,27 +574,27 @@
 .vinyl-tutorial-box {
   width: 100%;
   margin-top: 20px; /* 与标题的间距，layoutTutorial() 里按它倒推整块位置 */
-  padding: 16px 22px; /* 5 行正文时框高 = 5×40 + 32 = 232，与图纸一致 */
-  font-size: 20px;
-  line-height: 40px;
+  padding: 16px 22px; /* 5 行正文时框高 = 5×36 + 32 = 212（图纸是 5×40 + 32 = 232，跟着正文一起收） */
+  font-size: 18px;
+  line-height: 36px;
 }
 
 .vinyl-tutorial-box.is-small {
   margin-top: 29px;
-  padding: 6px 22px; /* 2 行时框高 = 2×40 + 12 = 92，与图纸一致 */
+  padding: 6px 22px; /* 2 行时框高 = 2×36 + 12 = 84（图纸是 2×40 + 12 = 92） */
 }
 
 .vinyl-tutorial-foot {
   margin-top: 18px;
-  font-size: 20px;
-  line-height: 25px; /* 页脚是单行文本元素，图纸里高 25 */
+  font-size: 18px;
+  line-height: 23px; /* 页脚是单行文本元素，图纸里高 25，按字号同比例收到 23 */
 }
 
 .vinyl-tutorial-here {
   position: absolute;
   transform: translate(-50%, -100%);
-  font-size: 20px;
-  line-height: 25px;
+  font-size: 18px;
+  line-height: 23px;
   white-space: nowrap;
 }
 
@@ -669,6 +671,14 @@
   --vinyl-deck-brand-ink: rgba(255, 255, 255, 0.32);
   --vinyl-deck-quality-ink: rgba(255, 255, 255, 0.55);
   --vinyl-deck-quality-hq: #ff8a95;
+  --vinyl-meter-min-height: 7px;
+  --vinyl-meter-height-range: 7px;
+  --vinyl-meter-off: #17171b;
+  --vinyl-meter-on: #f2f2f4;
+  --vinyl-meter-edge: rgba(255, 255, 255, 0.14);
+  /* 亮起格子的外发光与「点火」闪色（浅底面板整组覆写成深墨低透明） */
+  --vinyl-meter-glow: rgba(255, 255, 255, 0.3);
+  --vinyl-meter-flash: #ff6977;
   background-image:
     /* 缎面漆受光（上缘亮、向下收敛；用近白而非米黄，避免整体发黄） */
     radial-gradient(140% 80% at 50% -5%, rgba(255, 244, 228, 0.1), transparent 60%),
@@ -693,6 +703,10 @@
 
 /* 「播放器配色」之二：哑光黑 = 无高光的炭黑面板（.vinyl-deck 本体 = 胡桃木） */
 .vinyl-player.is-deck-black .vinyl-deck {
+  --vinyl-meter-off: #3b3b42;
+  --vinyl-meter-on: #f4f4f6;
+  --vinyl-meter-edge: rgba(255, 255, 255, 0.2);
+  --vinyl-meter-glow: rgba(255, 255, 255, 0.36);
   background-image: linear-gradient(180deg, #232327, #1b1b1f 60%, #18181b);
   background-blend-mode: normal;
   border: 1px solid rgba(255, 255, 255, 0.07);
@@ -713,6 +727,12 @@
   --vinyl-deck-brand-ink: rgba(72, 82, 94, 0.5);
   --vinyl-deck-quality-ink: rgba(48, 58, 70, 0.78);
   --vinyl-deck-quality-hq: #cf2d3f;
+  --vinyl-meter-off: rgba(45, 54, 65, 0.2);
+  --vinyl-meter-on: #303944;
+  --vinyl-meter-edge: rgba(48, 58, 70, 0.28);
+  /* 白面板上是深墨格子：发光改成一圈墨晕，闪色也压深一档（亮红在白底上会化开） */
+  --vinyl-meter-glow: rgba(48, 58, 70, 0.3);
+  --vinyl-meter-flash: #e2404f;
   background-image:
     radial-gradient(130% 100% at 50% -12%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0) 60%),
     url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='900' height='600'><defs><filter id='a' x='0' y='0' width='100%' height='100%'><feTurbulence type='fractalNoise' baseFrequency='0.008 0.12' numOctaves='3' seed='17'/><feColorMatrix type='matrix' values='0 0 0 0 0.8 0 0 0 0 0.84 0 0 0 0 0.88 0.22 0 0 0 0'/></filter></defs><rect width='900' height='600' filter='url(%23a)'/></svg>"),
@@ -931,11 +951,85 @@
   box-shadow: 0 0 3px rgba(0, 0, 0, 0.6);
 }
 
-/* 进度行：金属轨 + 计数器 */
+/* 歌曲进度：自绘填充与滑块同住 .vinyl-seek-rail，百分比坐标完全一致。 */
 .vinyl-progress {
   display: flex;
   gap: 10px;
   align-items: center;
+}
+
+.vinyl-seek-control {
+  position: relative;
+  height: 24px;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+  /* 触摸：拖着调进度时别把视图一起滚走 */
+  touch-action: none;
+}
+
+.vinyl-seek-rail {
+  --seek-position: 0%;
+  position: absolute;
+  top: 50%;
+  right: 7px;
+  left: 7px;
+  height: 7px;
+  border: 1px solid rgba(0, 0, 0, 0.42);
+  border-radius: 999px;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 11px, rgba(255, 255, 255, 0.045) 11px 12px),
+    #1c1c21;
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.72),
+    0 1px 0 rgba(255, 255, 255, 0.08);
+  transform: translateY(-50%);
+}
+
+.vinyl-seek-fill {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  left: -1px;
+  width: var(--seek-position, 0%);
+  border-radius: inherit;
+  background: linear-gradient(180deg, #ff6977, #e83d4e 58%, #b92737);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    0 0 7px rgba(255, 71, 87, 0.22);
+  transition: width 220ms linear;
+}
+
+.vinyl-seek-thumb {
+  position: absolute;
+  top: 50%;
+  left: var(--seek-position, 0%);
+  width: 14px;
+  height: 14px;
+  border: 1px solid rgba(0, 0, 0, 0.58);
+  border-radius: 50%;
+  background: radial-gradient(circle at 36% 30%, #f8f8fa, #b9bac2 54%, #73747c);
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.48),
+    inset 0 1px 1px rgba(255, 255, 255, 0.62);
+  transform: translate(-50%, -50%);
+  transition:
+    left 220ms linear,
+    box-shadow 130ms ease;
+}
+
+.vinyl-seek-control:hover .vinyl-seek-thumb,
+.vinyl-seek-control:focus-within .vinyl-seek-thumb {
+  box-shadow:
+    0 0 0 3px rgba(255, 255, 255, 0.12),
+    0 2px 5px rgba(0, 0, 0, 0.56),
+    inset 0 1px 1px rgba(255, 255, 255, 0.62);
+}
+
+/* 拖动中：填充与滑块直接跟手（那 220ms 缓动是给「播放途中」的平滑推进用的，拖动时只会添乱） */
+.vinyl-seek-control.is-scrubbing .vinyl-seek-fill,
+.vinyl-seek-control.is-scrubbing .vinyl-seek-thumb {
+  transition: none;
 }
 
 .vinyl-readout {
@@ -950,48 +1044,28 @@
   text-align: right;
 }
 
-/* 金属滑轨（进度红 / 音量银，经 --track-fill 由 JS 填充） */
-.vinyl-slider {
+/* 原生 range 只承接键盘（Tab + 方向键）；指针全交给自绘控件与 player-view 的 bindPointerScrub
+   —— 它的行程是「宽度 − 滑块宽」（两端各让出半个滑块），与自绘几何对不齐：进度条偏 7px，
+   音量表则点第 k 格亮的格数总差半格、最左边一格永远够不到 0。 */
+.vinyl-range-input {
   -webkit-appearance: none;
   appearance: none;
-  flex: 1;
-  height: 15px;
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   background: transparent;
-  cursor: pointer;
   margin: 0;
-  min-width: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
-.vinyl-slider::-webkit-slider-runnable-track {
-  height: 6px;
-  border-radius: 3px;
-  background: var(--track-fill, #1c1c21);
-  box-shadow:
-    inset 0 1px 2px rgba(0, 0, 0, 0.7),
-    inset 0 -1px 0 rgba(255, 255, 255, 0.05);
-}
-
-.vinyl-slider::-webkit-slider-thumb {
+.vinyl-range-input::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 12px;
-  height: 12px;
-  margin-top: -3px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, #f0f0f4, #a8a8b2 55%, #707078);
-  border: 1px solid rgba(0, 0, 0, 0.55);
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.5),
-    inset 0 1px 1px rgba(255, 255, 255, 0.45);
-  transition: transform 0.12s;
-}
-
-.vinyl-slider:hover::-webkit-slider-thumb {
-  transform: scale(1.15);
-}
-
-.vinyl-slider:active::-webkit-slider-thumb {
-  transform: scale(1.35);
+  width: 14px;
+  height: 24px;
 }
 
 /* 控制圆钮组（索尼式金属圆钮） */
@@ -1067,23 +1141,83 @@
   height: 14px;
 }
 
-/* 音量行 */
+/* 音量电平表：24 个短阶梯格，黑 → 白表示音量；高度差刻意收敛在 7px。
+   它当一根调节条用：点到哪一格，那一格（含）之前全亮（指针接管见 player-view）。 */
 .vinyl-vol-row {
   display: flex;
-  gap: 8px;
   align-items: center;
+  min-height: 24px;
   padding: 0 2px;
 }
 
-.vinyl-vol-icon {
-  display: inline-flex;
-  flex: none;
+.vinyl-volume-meter {
+  position: relative;
+  height: 24px;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+  /* 触摸：拖着调音量时别把视图一起滚走 */
+  touch-action: none;
 }
 
-.vinyl-vol-icon .svg-icon {
-  width: 14px;
-  height: 14px;
-  color: var(--vinyl-deck-ink-soft);
+.vinyl-volume-bars {
+  display: flex;
+  position: absolute;
+  inset: 0;
+  align-items: flex-end;
+  gap: 3px;
+  padding: 4px 1px;
+  pointer-events: none;
+}
+
+.vinyl-volume-segment {
+  height: var(--segment-height, var(--vinyl-meter-min-height));
+  min-width: 2px;
+  flex: 1;
+  background: var(--vinyl-meter-off);
+  border: 1px solid var(--vinyl-meter-edge);
+  border-radius: 1px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  /* 颜色变化是这块表唯一的反馈，给足时长与缓动：亮 / 灭都看得见「在动」 */
+  transition:
+    background-color 140ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 140ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 140ms cubic-bezier(0.22, 1, 0.36, 1);
+  transform-origin: bottom;
+}
+
+/* 阶梯波浪：跳格（点一下跨好几格）与键盘步进时，亮起的格子按格序依次点亮 —— 一眼看见颜色
+   往右推移。拖动中会给电平表挂上 is-scrubbing 把延迟摘掉：手指走哪亮哪，一格都不许滞后。 */
+.vinyl-volume-meter:not(.is-scrubbing) .vinyl-volume-segment {
+  transition-delay: calc(var(--segment-i, 0) * 5ms);
+  animation-delay: calc(var(--segment-i, 0) * 5ms);
+}
+
+.vinyl-volume-meter.is-scrubbing .vinyl-volume-segment {
+  transition-duration: 90ms;
+}
+
+/* 亮起：实心 + 外发光 + 往上顶一点（像指针真被推上去）。
+   点火动画：刚亮起的格子先闪一下品牌红再落回中性色 —— 那一下「很明显」就来自这里 */
+.vinyl-volume-segment.is-active {
+  background: var(--vinyl-meter-on);
+  box-shadow:
+    0 0 6px var(--vinyl-meter-glow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  transform: scaleY(1.14);
+  animation: vinyl-meter-ignite 200ms ease-out;
+}
+
+@keyframes vinyl-meter-ignite {
+  from {
+    background-color: var(--vinyl-meter-flash);
+    box-shadow: 0 0 10px var(--vinyl-meter-flash);
+  }
+}
+
+.vinyl-volume-meter:hover .vinyl-volume-segment,
+.vinyl-volume-meter:focus-within .vinyl-volume-segment {
+  border-color: var(--vinyl-deck-ink);
 }
 
 /* 丝印品牌行 */
@@ -1206,20 +1340,25 @@
 }
 
 /* ============ 设置面板（通用 / 外观 / 源 / 关于，自绘标签页） ============ */
-/* 整块自绘（为什么不用原生分页写在 src/settings.ts 的文件头）：上面是标签条 + 产品名，
-   下面是承载当前标签页的面板。选中标签靠「底色与面板一致 + 压住面板上边框」连成一体，
-   边框全走主题变量，明暗主题都不用手动适配。 */
+/* 浏览器标签页骨架保持不变；内容区只使用 Obsidian 主题色建立层级。 */
+
+.vinyl-settings {
+  --vinyl-settings-card: var(--background-primary);
+  --vinyl-settings-line: var(--background-modifier-border);
+  container-type: inline-size;
+}
 
 .vinyl-settings-head {
   display: flex;
   align-items: flex-end;
   gap: 12px;
+  padding: 0 3px;
 }
 
 .vinyl-settings-tabs {
   display: flex;
   align-items: flex-end;
-  gap: 2px;
+  gap: 4px;
   padding-left: 12px; /* 照设计稿：标签条比面板左缘内缩一点 */
   margin-bottom: -1px; /* 压住面板上边框（1px），选中标签才和面板连成一体 */
   position: relative;
@@ -1233,13 +1372,17 @@
   background: transparent;
   border: 1px solid var(--background-modifier-border);
   border-bottom: none;
-  border-radius: 8px 8px 0 0;
+  border-radius: 10px 10px 0 0;
   box-shadow: none;
-  padding: 5px 16px;
+  padding: 7px 17px 8px;
   height: auto;
   font-size: var(--font-ui-small);
   color: var(--text-muted);
   cursor: pointer;
+  transition:
+    color 140ms ease,
+    background-color 140ms ease,
+    border-color 140ms ease;
 }
 
 .vinyl-settings-tabs .vinyl-settings-tab:hover {
@@ -1259,35 +1402,316 @@
   border-color: var(--background-modifier-border);
   border-bottom: 1px solid var(--background-secondary);
   color: var(--text-normal);
+  font-weight: var(--font-semibold);
+}
+
+.vinyl-settings-tabs .vinyl-settings-tab.is-active::after {
+  content: '';
+  position: absolute;
+  right: 12px;
+  bottom: 3px;
+  left: 12px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--interactive-accent);
+}
+
+.vinyl-settings-tabs .vinyl-settings-tab {
+  position: relative;
 }
 
 .vinyl-settings-title {
   margin-left: auto; /* 靠右（照设计稿） */
-  padding-bottom: 6px;
-  font-size: 1.35em;
+  padding: 0 8px 8px 0;
+  font-family: 'Vinyl Hand', 'Vinyl Hand CJK', var(--font-interface);
+  font-size: 1.55em;
   line-height: 1.2;
   color: var(--text-muted);
 }
 
 .vinyl-settings-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr));
+  gap: 14px;
+  position: relative;
+  overflow: hidden;
   background: var(--background-secondary);
   border: 1px solid var(--background-modifier-border);
-  border-radius: 10px;
-  padding: 4px 16px 12px;
+  border-radius: 13px;
+  padding: 20px;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.06);
 }
 
-/* 面板里的分组标题：原生 setHeading 会带一条上边框，首个小标题不需要 */
-.vinyl-settings-body .setting-item-heading:first-child {
+/* 通用页说明较长：固定单栏，避免双栏卡片把说明挤成窄长文字块。 */
+.vinyl-settings-body.is-general {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.vinyl-settings-body.is-about {
+  display: block;
+  padding: 12px 20px 18px;
+}
+
+.vinyl-settings-section {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--vinyl-settings-card);
+  border: 1px solid var(--vinyl-settings-line);
+  border-radius: 14px;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 10px 28px rgba(0, 0, 0, 0.035);
+  transition:
+    border-color 160ms ease,
+    transform 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.vinyl-settings-section:hover {
+  border-color: var(--background-modifier-border-hover);
+  transform: translateY(-1px);
+  box-shadow:
+    0 2px 3px rgba(0, 0, 0, 0.04),
+    0 14px 34px rgba(0, 0, 0, 0.055);
+}
+
+.vinyl-settings-section.is-paths,
+.vinyl-settings-section.is-template,
+.vinyl-settings-section.is-shelf,
+.vinyl-settings-section.is-local {
+  grid-column: 1 / -1;
+}
+
+.vinyl-settings-section .setting-item {
+  margin: 0;
+  padding: 13px 16px;
+  border-top: 1px solid var(--vinyl-settings-line);
+}
+
+.vinyl-settings-section .setting-item:not(.setting-item-heading) {
+  transition: background-color 140ms ease;
+}
+
+.vinyl-settings-section .setting-item:not(.setting-item-heading):hover {
+  background: var(--background-modifier-hover);
+}
+
+.vinyl-settings-section .vinyl-settings-section-heading {
+  position: relative;
+  min-height: 52px;
+  padding: 13px 16px;
+  background: var(--background-secondary);
   border-top: none;
 }
 
-/* 登录状态行的控件区：状态文案 + 网关/Cookie 附注，窄了自动折行 */
-.vinyl-auth-status {
+.vinyl-settings-section-heading .setting-item-name {
+  font-size: var(--font-ui-medium);
+  letter-spacing: 0.01em;
+}
+
+.vinyl-settings-section-heading .setting-item-info {
+  padding-left: 38px;
+}
+
+.vinyl-settings-section-icon {
   display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
+  position: absolute;
+  top: 12px;
+  left: 16px;
   align-items: center;
-  padding: 8px 0;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  color: var(--text-muted);
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 9px;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.vinyl-settings-section .setting-item-description {
+  max-width: 58em;
+  margin-top: 4px;
+  line-height: 1.6;
+}
+
+.vinyl-settings-body.is-general .setting-item-info {
+  flex: 1 1 60%;
+  min-width: 0;
+}
+
+.vinyl-settings-body.is-general .setting-item-control {
+  flex: 0 0 auto;
+  margin-left: 28px;
+}
+
+.vinyl-settings-section input[type='text'] {
+  width: min(310px, 34vw);
+}
+
+.vinyl-settings-section select,
+.vinyl-settings-section input[type='text'],
+.vinyl-settings-section button:not(.checkbox-container) {
+  border-color: var(--background-modifier-border);
+}
+
+.vinyl-settings-section .setting-item-control {
+  gap: 8px;
+}
+
+/* 登录状态：单色徽标 + 次级技术信息；状态不再靠 emoji 表达。 */
+.vinyl-settings-section .vinyl-auth-setting {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.vinyl-settings-section .vinyl-auth-setting .setting-item-control {
+  width: 100%;
+}
+
+.vinyl-auth-status {
+  display: grid;
+  justify-items: start;
+  gap: 5px;
+  width: 100%;
+  min-width: 0;
+}
+
+.vinyl-auth-primary {
+  display: inline-flex;
+  position: relative;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 10px 4px 27px;
+  color: var(--text-normal);
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  font-weight: var(--font-medium);
+  line-height: 1.35;
+}
+
+.vinyl-auth-primary::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 10px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  border: 1px solid transparent;
+  transform: translateY(-50%);
+}
+
+.vinyl-auth-status.is-online .vinyl-auth-primary::before {
+  background: var(--text-normal);
+  box-shadow: 0 0 0 3px var(--background-modifier-border);
+}
+
+.vinyl-auth-status.is-offline .vinyl-auth-primary::before {
+  background: transparent;
+  border-color: var(--text-faint);
+}
+
+.vinyl-auth-status.is-warning .vinyl-auth-primary {
+  border-style: dashed;
+}
+
+.vinyl-auth-status.is-warning .vinyl-auth-primary::before,
+.vinyl-auth-status.is-error .vinyl-auth-primary::before {
+  width: 6px;
+  height: 6px;
+  background: var(--text-muted);
+  box-shadow: 0 0 0 3px var(--background-modifier-border);
+}
+
+.vinyl-auth-status.is-loading .vinyl-auth-primary::before {
+  background: transparent;
+  border-color: var(--text-muted);
+  border-right-color: transparent;
+  animation: vinyl-auth-spin 800ms linear infinite;
+}
+
+.vinyl-auth-meta {
+  padding-right: 3px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  line-height: 1.35;
+}
+
+@keyframes vinyl-auth-spin {
+  to {
+    transform: translateY(-50%) rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vinyl-auth-status.is-loading .vinyl-auth-primary::before {
+    animation: none;
+  }
+}
+
+/* 设置弹窗可能只占窗口的一部分：按面板自身宽度换行，不能只看 viewport。 */
+@container (max-width: 700px) {
+  .vinyl-settings-body.is-general .setting-item:not(.setting-item-heading) {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .vinyl-settings-body.is-general .setting-item-control {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .vinyl-settings-body.is-general input[type='text'] {
+    width: 100%;
+  }
+}
+
+@media (max-width: 760px) {
+  .vinyl-settings-body {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 14px;
+  }
+
+  .vinyl-settings-section {
+    grid-column: 1;
+  }
+
+  .vinyl-settings-head {
+    align-items: stretch;
+    flex-direction: column-reverse;
+    gap: 4px;
+  }
+
+  .vinyl-settings-title {
+    padding: 0 0 2px 12px;
+  }
+
+  .vinyl-settings-tabs {
+    overflow-x: auto;
+  }
+
+  .vinyl-settings-section .setting-item:not(.setting-item-heading) {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .vinyl-settings-section .setting-item-control,
+  .vinyl-settings-section input[type='text'] {
+    width: 100%;
+  }
+
+  .vinyl-settings-body.is-general .setting-item-control {
+    margin-left: 0;
+  }
 }
 
 /* ============ 设置面板：「关于」页（整页手绘） ============ */
@@ -1807,6 +2231,13 @@
   .vinyl-queue-item,
   .vinyl-btn {
     transition: none;
+  }
+
+  /* 电平表的按格推移与点火闪是纯装饰：减少动效下直接跳到终态（颜色照样变，只是不过渡） */
+  .vinyl-volume-segment,
+  .vinyl-volume-segment.is-active {
+    transition: none;
+    animation: none;
   }
 }
 
