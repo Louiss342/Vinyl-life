@@ -31,6 +31,10 @@ import {
   toggleShelfProp,
 } from '../core/shelf-props';
 import { collectDroppedFiles, droppedRootName, isAudioFile, isImageFile, notice, prefersReducedMotion } from '../util';
+// 手绘笔触用 roughjs（Excalidraw 内部同款引擎）。只引 SVG 那一支：canvas 渲染器用不上，
+// 直接引包入口会把它一起打进来（实测多 2 KB）。线宽 / 虚线等公共参数见 hand-drawn.ts。
+import { RoughSVG } from 'roughjs/bin/svg';
+import { roughDashed, roughSolid, roundRectPath, SVG_NS } from './hand-drawn';
 import { t, tf } from '../core/i18n';
 import { SetCoverModal } from './set-cover-modal';
 import { onMarqueeOver, onMarqueeOut } from './marquee';
@@ -79,6 +83,51 @@ const filterOptions = (): [SourceFilter, string][] => [
   ['collect', t('filter.collect')],
 ];
 
+// 空态教程的图纸参数（Excalidraw 设计稿 Drawing 2026-09-15 14.14.52，1 图纸单位 = 1px）。
+// 笔触一律交给 roughjs（Excalidraw 用的同一套手绘引擎），线宽 / 虚线 / roughness 等公共参数
+// 在 views/hand-drawn.ts（与「关于」页共用），这里只留这张图纸自己的比例与种子 ——
+// 每个图形的 seed 都照搬图纸，抖动纹路才对得上。
+// 版面比例：框顶 = 线圈底 + 82（视图不够高时的下限）；箭尾贴框右缘（+6）且落在框的垂直中点；
+// 折点 = 尾 + (70.3%, 42.9%) 的「尾→尖」向量；箭尖压在圈底（+1px、圈心右偏 2px）。
+// 只有「两个按钮在哪」是从 DOM 现量的，其余比例照搬，窗口怎么变都指着按钮。
+const TUT = {
+  bendRatioX: 0.703,
+  bendRatioY: 0.429,
+  tailPad: 6,
+  boxTopFromRing: 82,
+  bottomPad: 48, // 整块离视图底部的余量：视觉重心压在左下；视图不够高时退回去贴线圈（见 layoutTutorial）
+  ringPadX: 16, // 虚线圈 = 两个按钮外扩（图纸 106×45 ≈ 按钮 74×23 + 2×16 / 2×11）
+  ringPadY: 11,
+  minRoomX: 120, // 拐弯箭头与文本框之间的净空：不足就整条藏掉（窄面板 / 手机）
+  minSideX: 60, // 直箭头同理：太短就不画
+  headLen: 23.5, // 箭头头部：图纸导出 SVG 实测（箭尖往后 23.5、两侧 ±8.55，两笔实线）
+  headHalf: 8.55,
+  seed: {
+    box1: 1563201844,
+    box2: 540552628,
+    arrowStraight: 283137332,
+    arrowBent: 582803468,
+    ring: 1170450060,
+  },
+} as const;
+
+/** 箭头头部两笔的端点：从箭尖沿 -dir 收 headLen，两侧各偏 headHalf（dir 为单位方向） */
+const arrowHeadPoints = (tip: { x: number; y: number }, dir: { x: number; y: number }) => {
+  const bx = tip.x - dir.x * TUT.headLen;
+  const by = tip.y - dir.y * TUT.headLen;
+  const px = -dir.y * TUT.headHalf;
+  const py = dir.x * TUT.headHalf;
+  return { tip, a: { x: bx + px, y: by + py }, b: { x: bx - px, y: by - py } };
+};
+
+/** 单位方向（箭头头部按箭尖处切线方向张开） */
+const unitVector = (from: { x: number; y: number }, to: { x: number; y: number }) => {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const m = Math.hypot(dx, dy) || 1;
+  return { x: dx / m, y: dy / m };
+};
+
 export class VinylShelfView extends ItemView {
   private plugin: VinylLifePlugin;
   private unsub: (() => void) | null = null;
@@ -88,11 +137,28 @@ export class VinylShelfView extends ItemView {
   private lastSnap: PlayerSnapshot | null = null;
   private state: ShelfViewState = { query: '', sort: 'title-asc', sourceFilter: 'all' };
   private toolbarTitle: HTMLElement | null = null;
+  private toolbarEl: HTMLElement | null = null;
   private gridHost: HTMLElement | null = null;
+  private importGroupEl: HTMLElement | null = null; // 工具栏最后两个按钮（导入专辑 / 导入本地音频）
   private propsPopover: HTMLElement | null = null;
   private onDocClick: ((ev: MouseEvent) => void) | null = null;
   private dragKey: string | null = null; // 卡片属性弹层：正在拖拽的属性键
   private dropAt: { key: string; after: boolean } | null = null; // 当前落点（在 key 行之前/之后）
+  // 空态教程（Excalidraw 设计稿移植）：root 是盖在视图上的纯装饰层，
+  // ink 里是 roughjs 现画的框 / 圈 / 箭头，几何在 layoutTutorial() 里算
+  private tutorial: {
+    root: HTMLElement;
+    main: HTMLElement;
+    title: HTMLElement;
+    box1: HTMLElement;
+    box2: HTMLElement;
+    svg: SVGSVGElement;
+    ink: SVGGElement;
+    here: HTMLElement;
+  } | null = null;
+  private tutorialRO: ResizeObserver | null = null;
+  private settleRaf = 0; // 教程布局的「定型补枪」（见 settleTutorial）
+  private settleTimers: number[] = [];
 
   constructor(leaf: WorkspaceLeaf, plugin: VinylLifePlugin) {
     super(leaf);
@@ -158,6 +224,12 @@ export class VinylShelfView extends ItemView {
     // 键盘等价操作：卡片上 Enter / 空格 = 点击
     this.registerDomEvent(this.contentEl, 'keydown', (ev) => this.onShelfKeydown(ev));
     this.unsub = this.plugin.engine.subscribe((s) => this.updatePlaying(s));
+    // 空态教程：视图尺寸一变（窗口 / 侧边栏开合）就重算线圈与箭头的位置；没有教程时空转
+    this.tutorialRO = new ResizeObserver(() => this.layoutTutorial());
+    this.tutorialRO.observe(this.contentEl);
+    this.registerDomEvent(this.contentEl, 'scroll', () => this.layoutTutorial());
+    // 工作区布局变化（分屏 / 标签移动 / 恢复布局）时容器尺寸可能几帧内还在变，补一次布局
+    this.registerEvent(this.app.workspace.on('layout-change', () => this.layoutTutorial()));
     this.render();
   }
 
@@ -170,6 +242,9 @@ export class VinylShelfView extends ItemView {
       window.clearTimeout(this.refreshTimer);
       this.refreshTimer = null;
     }
+    this.tutorialRO?.disconnect();
+    this.tutorialRO = null;
+    this.cancelTutorialSettle();
     this.closePropsPopover();
   }
 
@@ -258,6 +333,7 @@ export class VinylShelfView extends ItemView {
 
   private renderToolbar(c: HTMLElement) {
     const bar = c.createDiv({ cls: 'vinyl-shelf-toolbar' });
+    this.toolbarEl = bar; // 教程层要量它的高度（窄视图工具栏换行时别被压住）
     this.toolbarTitle = bar.createDiv({ cls: 'vinyl-shelf-toolbar-title' });
 
     // 搜索（防抖 200ms，只重建网格保持输入焦点）
@@ -275,9 +351,12 @@ export class VinylShelfView extends ItemView {
       }, 200);
     });
 
+    // 按钮都建在 host 里：前四个直接进工具栏，最后两个（导入）先进一个组 ——
+    // 空态教程的虚线圈要圈住这一组（见 buildTutorial / layoutTutorial）
+    let host: HTMLElement = bar;
     const mk = (icon: string, title: string, fn: (ev: MouseEvent) => void) => {
       // Obsidian 原生图标按钮（浅色底 + 黑色线形图标，随主题自适应，清晰易识别）
-      const b = bar.createEl('button', { cls: 'clickable-icon vinyl-toolbar-icon' });
+      const b = host.createEl('button', { cls: 'clickable-icon vinyl-toolbar-icon' });
       setIcon(b, icon);
       // 只设 aria-label：Obsidian 按它渲染样式化提示，再设 title 会多弹一个浏览器原生提示（两个气泡）
       b.setAttribute('aria-label', title);
@@ -288,6 +367,8 @@ export class VinylShelfView extends ItemView {
     mk('arrow-up-down', t('shelf.sort'), (ev) => this.showSortMenu(ev));
     mk('filter', t('shelf.filter'), (ev) => this.showFilterMenu(ev));
     mk('sliders-horizontal', t('shelf.props'), (ev) => this.showPropsPopover(ev));
+    host = bar.createDiv({ cls: 'vinyl-shelf-import-group' });
+    this.importGroupEl = host;
     mk('cloud-download', t('shelf.importAlbum'), () => this.plugin.openAlbumImport());
     mk('upload', t('shelf.importAudio'), () => this.plugin.openLocalImport());
   }
@@ -296,6 +377,7 @@ export class VinylShelfView extends ItemView {
     if (!this.gridHost) return;
     this.gridHost.empty();
     this.cardEls.clear();
+    this.clearTutorial(); // 教程层挂在视图上而不是网格里，要单独收
 
     const shown = this.applyViewFilters();
     const filtered = !!this.state.query || this.state.sourceFilter !== 'all';
@@ -306,12 +388,8 @@ export class VinylShelfView extends ItemView {
     }
 
     if (!this.entries.length) {
-      const empty = this.gridHost.createDiv({ cls: 'vinyl-shelf-empty' });
-      empty.createDiv({ text: t('shelf.empty.title'), cls: 'vinyl-shelf-empty-title' });
-      empty.createDiv({
-        text: t('shelf.empty.hint'),
-        cls: 'vinyl-muted',
-      });
+      // 一张专辑都没有（新装也是这样）：直接给图纸上那份「图文教程」
+      this.buildTutorial();
       return;
     }
     if (!shown.length) {
@@ -327,6 +405,196 @@ export class VinylShelfView extends ItemView {
     }
     this.wireGridDrop(grid);
     if (this.lastSnap) this.updatePlaying(this.lastSnap);
+  }
+
+  // ============ 空态教程 ============
+  // 版面照搬 Excalidraw 设计稿 Drawing 2026-09-15 14.14.52：标题 + 两个虚线框 + 页脚是一列居中文本，
+  // 右侧拐弯箭头指向工具栏最后两个按钮（虚线圈圈住它们），直箭头指着右边栏（播放器在那儿）。
+  // 整块靠左下摆（框宽按英文文案放宽到 600px，垂直方向压到视图底部，见 layoutTutorial），
+  // 整层 pointer-events: none，纯装饰：按钮、卡片、拖拽导入一概不受影响。
+
+  private clearTutorial() {
+    this.cancelTutorialSettle();
+    this.tutorial?.root.remove();
+    this.tutorial = null;
+  }
+
+  /** 教程层刚建好时容器未必定型：视图创建 / 工作区恢复的头几帧量到的是过渡尺寸
+   *  （实测：重载插件后首帧量到的是恢复前的窄尺寸，而 ResizeObserver 不会因为「已经定型」再报一次，
+   *  整块就停在过渡位置，直到用户手动缩放窗口）。所以头几帧连着补几次布局，另加两枪定时兜底；
+   *  布局是幂等的，尺寸稳了以后多跑的几次只是重画一遍，没有副作用，全部在下一次渲染 / 关视图时取消。 */
+  private settleTutorial() {
+    this.cancelTutorialSettle();
+    let frames = 0;
+    const tick = () => {
+      this.settleRaf = 0;
+      if (!this.tutorial) return;
+      this.layoutTutorial();
+      if (++frames < 8) this.settleRaf = window.requestAnimationFrame(tick);
+    };
+    this.settleRaf = window.requestAnimationFrame(tick);
+    for (const ms of [300, 1200]) {
+      this.settleTimers.push(window.setTimeout(() => this.layoutTutorial(), ms));
+    }
+  }
+
+  private cancelTutorialSettle() {
+    if (this.settleRaf) {
+      window.cancelAnimationFrame(this.settleRaf);
+      this.settleRaf = 0;
+    }
+    for (const id of this.settleTimers) window.clearTimeout(id);
+    this.settleTimers = [];
+  }
+
+  private buildTutorial() {
+    this.clearTutorial();
+    const root = this.contentEl.createDiv({ cls: 'vinyl-tutorial' });
+    const main = root.createDiv({ cls: 'vinyl-tutorial-main' });
+    const title = main.createDiv({ cls: 'vinyl-tutorial-title', text: t('shelf.tutorial.title') });
+    // 第一个虚线框：五句话照图纸顺序（一处一行，交给 CSS 居中 + 行距 2）
+    const box1 = main.createDiv({ cls: 'vinyl-tutorial-box' });
+    box1.createDiv({ text: t('shelf.tutorial.emptyTitle') });
+    box1.createDiv({ text: t('shelf.tutorial.importA') });
+    box1.createDiv({ text: t('shelf.tutorial.importB') });
+    box1.createDiv({ text: t('shelf.tutorial.onlineOnly') });
+    box1.createDiv({ text: t('shelf.tutorial.moreSoon') });
+    // 第二个虚线框：播放器在哪
+    const box2 = main.createDiv({ cls: 'vinyl-tutorial-box is-small' });
+    box2.createDiv({ text: t('shelf.tutorial.playerSidebar') });
+    box2.createDiv({ text: t('shelf.tutorial.playAfterImport') });
+    main.createDiv({ cls: 'vinyl-tutorial-foot', text: t('shelf.tutorial.loginNote') });
+
+    // SVG 用 createElementNS 建：createEl('svg') 出来的是 HTML 元素，path / ellipse 属性不生效。
+    // 走 ownerDocument：视图可能在弹出窗口里（跨文档 appendChild 会被收养，但要在对的文档里建）
+    const doc = this.contentEl.ownerDocument;
+    const svg = doc.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('class', 'vinyl-tutorial-svg');
+    const ink = doc.createElementNS(SVG_NS, 'g'); // 所有手绘图形都画在这一层里（每次布局重画）
+    ink.setAttribute('class', 'vinyl-tutorial-ink');
+    svg.appendChild(ink);
+    root.appendChild(svg);
+    const here = root.createDiv({ cls: 'vinyl-tutorial-here', text: t('shelf.tutorial.playerHere') });
+
+    this.tutorial = { root, main, title, box1, box2, svg, ink, here };
+    this.layoutTutorial();
+    this.settleTutorial();
+  }
+
+  /** 把图纸坐标落到当前视图上：虚线框套住文本、虚线圈圈住最后两个按钮、两条箭头连到各自目标。
+   *  图形全部用 roughjs 现场重画（尺寸一变位置就变，静态路径没法复用），参数与设计稿逐项对齐。 */
+  private layoutTutorial() {
+    const T = this.tutorial;
+    const group = this.importGroupEl;
+    if (!T || !T.root.isConnected || !group || !group.isConnected) return;
+    const base = T.root.getBoundingClientRect(); // 教程层铺满视图内容区，作为统一坐标原点
+    const btn = group.getBoundingClientRect();
+    if (!base.width || !btn.width) return;
+
+    const cx = btn.left + btn.width / 2 - base.left;
+    const cy = btn.top + btn.height / 2 - base.top;
+    const rx = btn.width / 2 + TUT.ringPadX;
+    const ry = btn.height / 2 + TUT.ringPadY;
+    const ringBottom = cy + ry;
+
+    // 文本块：图纸上第一个虚线框顶 = 线圈底 + 82；框顶往上 20 是标题，所以整块再上移标题高 + 20。
+    // 窄视图里工具栏会换行变高，这一条会把标题顶进工具栏 —— 加一道下限，最多贴到工具栏下方。
+    const bar = this.toolbarEl?.getBoundingClientRect();
+    const belowBar = bar ? bar.bottom - base.top + 24 : 0;
+    const minTop = Math.max(ringBottom + TUT.boxTopFromRing - T.title.offsetHeight - 20, belowBar);
+    // 视觉重心落在左下：整块默认压到视图底部（离底 bottomPad），视图不够高就退回 minTop（贴着线圈下方）。
+    // 两道下限合起来保证任何尺寸下既不压工具栏、也不冒到视图外 —— 箭头跟着整块一起变长，不用单独调。
+    const top = Math.max(minTop, base.height - T.main.offsetHeight - TUT.bottomPad);
+    T.main.style.top = `${Math.round(top)}px`;
+
+    const b1 = T.box1.getBoundingClientRect();
+    const b2 = T.box2.getBoundingClientRect();
+    const box1Mid = b1.top - base.top + b1.height / 2;
+    const box2Mid = b2.top - base.top + b2.height / 2;
+
+    // 拐弯箭头：箭尖压在圈底（图纸比圈底低 1px、比圈心右偏 2px）；尾巴锚在第一个虚线框右缘中点
+    // —— 图纸里箭头就是绑在这个位置的，所以不管视图多宽，箭头都长在文本框上，不会飘出去。
+    const tip = { x: cx + 2, y: ringBottom + 1 };
+    const box1Right = b1.right - base.left;
+    const roomX = tip.x - (box1Right + TUT.tailPad); // 文本框右缘到箭尖的净空
+    const tight = roomX < TUT.minRoomX;
+
+    // 直箭头：与第二个虚线框中线齐平，从框右缘一路指到视图右缘（侧边栏 = 播放器的落脚处）。
+    // 视图窄时这段净空本来就没有（CSS 用 is-narrow 藏掉），这里再兜一道：太短干脆不画。
+    const y2 = box2Mid;
+    const x1 = base.width - 2;
+    const x0 = Math.min(b2.right - base.left + TUT.tailPad, x1 - 40);
+    const drawSide = x1 - x0 >= TUT.minSideX;
+
+    // —— 手绘图形：清掉上一轮，按当下尺寸重画（种子 / roughness / 虚线都照设计稿）——
+    const rc = new RoughSVG(T.svg);
+    T.ink.replaceChildren();
+    const inkAdd = (nodes: ArrayLike<Element> | Element) => {
+      const list = nodes instanceof Element ? [nodes] : Array.from(nodes);
+      for (const n of list) T.ink.appendChild(n);
+    };
+    // roughjs 写的描边是 stroke="currentColor"，颜色由 .vinyl-tutorial-ink 的 CSS 变量给（主题切换自动跟随）
+
+    // 两个虚线框（图纸：roughness 2 的圆角矩形）
+    inkAdd(
+      rc.path(
+        roundRectPath({ x: b1.left - base.left, y: b1.top - base.top, w: b1.width, h: b1.height }),
+        roughDashed(TUT.seed.box1, 2)
+      )
+    );
+    inkAdd(
+      rc.path(
+        roundRectPath({ x: b2.left - base.left, y: b2.top - base.top, w: b2.width, h: b2.height }),
+        roughDashed(TUT.seed.box2, 2)
+      )
+    );
+
+    // 虚线圈（图纸：roughness 2 的椭圆，curveFitting 1）
+    inkAdd(rc.ellipse(cx, cy, rx * 2, ry * 2, { ...roughDashed(TUT.seed.ring, 2), curveFitting: 1 }));
+
+    // 拐弯箭头（图纸：roughness 2；杆是过三点的曲线，头是两笔实线）
+    if (!tight) {
+      const tail = { x: box1Right + TUT.tailPad, y: box1Mid };
+      const bend = {
+        x: tail.x + TUT.bendRatioX * (tip.x - tail.x),
+        y: tail.y + TUT.bendRatioY * (tip.y - tail.y),
+      };
+      inkAdd(
+        rc.curve(
+          [
+            [tail.x, tail.y],
+            [bend.x, bend.y],
+            [tip.x, tip.y],
+          ],
+          roughDashed(TUT.seed.arrowBent, 2)
+        )
+      );
+      const h = arrowHeadPoints(tip, unitVector(bend, tip));
+      inkAdd([rc.line(h.tip.x, h.tip.y, h.a.x, h.a.y, roughSolid(TUT.seed.arrowBent + 1)), rc.line(h.tip.x, h.tip.y, h.b.x, h.b.y, roughSolid(TUT.seed.arrowBent + 2))]);
+    }
+
+    // 直箭头（图纸：roughness 1，箭尖顶到视图右缘）
+    if (drawSide) {
+      const p0 = { x: x0, y: y2 };
+      const p1 = { x: x1, y: y2 };
+      inkAdd(
+        rc.curve(
+          [
+            [p0.x, p0.y],
+            [p1.x, p1.y],
+          ],
+          roughDashed(TUT.seed.arrowStraight, 1)
+        )
+      );
+      const h = arrowHeadPoints(p1, unitVector(p0, p1));
+      inkAdd([rc.line(h.tip.x, h.tip.y, h.a.x, h.a.y, roughSolid(TUT.seed.arrowStraight + 1)), rc.line(h.tip.x, h.tip.y, h.b.x, h.b.y, roughSolid(TUT.seed.arrowStraight + 2))]);
+      T.here.style.left = `${Math.round((x0 + x1) / 2)}px`;
+      T.here.style.top = `${Math.round(y2 - 4)}px`;
+    }
+
+    T.root.toggleClass('is-tight', tight);
+    // 太窄：直箭头和「大概是在这里」没有落脚处，只留线圈 / 拐弯箭头 / 文本（CSS 里藏）
+    T.root.toggleClass('is-narrow', base.width < 560);
   }
 
   // 搜索 / 筛选 / 排序
@@ -452,7 +720,6 @@ export class VinylShelfView extends ItemView {
     for (const key of selected) this.propsSelectedRow(pop, key, counts.get(key));
 
     pop.createDiv({ cls: 'vinyl-props-divider' });
-    pop.createDiv({ text: t('props.available'), cls: 'vinyl-props-section' });
     const rest = usage.filter((u) => !selected.includes(u.key));
     if (!this.entries.length) {
       pop.createDiv({ text: t('props.noAlbums'), cls: 'vinyl-props-hint' });

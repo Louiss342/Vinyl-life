@@ -131,7 +131,7 @@ export default class VinylLifePlugin extends Plugin {
       onTrackPlay: (track, albumPath, albumTitle) =>
         this.recordPlay(track, albumPath, albumTitle),
       // 队列自定义顺序：读设置（没存过 = undefined，按原顺序播）/ 拖拽后写入并防抖落盘 /
-      // 「恢复原有顺序」后删掉该专辑的条目（下一步再播这张专辑即回到自然顺序）
+      // 「恢复发行顺序」后删掉该专辑的条目（下一步再播这张专辑即回到自然顺序）
       savedOrder: (albumPath) => this.settings.queueOrder[albumPath],
       onQueueOrderChange: (albumPath, keys) => this.rememberQueueOrder(albumPath, keys),
       onQueueOrderClear: (albumPath) => this.forgetQueueOrder(albumPath),
@@ -579,7 +579,7 @@ export default class VinylLifePlugin extends Plugin {
     this.scheduleStatsSave(); // saveSettings 会落整份设置，不必另起定时器
   }
 
-  /** 「恢复原有顺序」后的持久化写入口：删掉该专辑存过的自定义顺序（与统计共用 5 秒防抖落盘）。
+  /** 「恢复发行顺序」后的持久化写入口：删掉该专辑存过的自定义顺序（与统计共用 5 秒防抖落盘）。
    *  没存过条目就直接返回（不白写盘）；本地专辑走不到这里（视图侧已按来源拦下）。 */
   forgetQueueOrder(albumPath: string) {
     if (!albumPath || !(albumPath in this.settings.queueOrder)) return;

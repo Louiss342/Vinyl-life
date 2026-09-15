@@ -9,7 +9,7 @@ import type {
   NeteaseAlbumResponse,
   NeteaseSong,
   QrKeyResponse,
-  SearchAlbumResponse,
+  NeteaseSearchResponse,
   SongUrlResponse,
 } from './api-types';
 
@@ -127,8 +127,12 @@ export class ServerClient {
     return { restriction: t('auth.sourceUnavailable') };
   }
 
-  async searchAlbum(keywords: string): Promise<SearchAlbumResponse> {
-    return this.getJson<SearchAlbumResponse>('/api/search', { keywords });
+  async searchAlbums(keywords: string): Promise<NeteaseSearchResponse> {
+    return this.getJson<NeteaseSearchResponse>('/api/search', { keywords, type: 'album' });
+  }
+
+  async searchSongs(keywords: string): Promise<NeteaseSearchResponse> {
+    return this.getJson<NeteaseSearchResponse>('/api/search', { keywords, type: 'song' });
   }
 
   // 封面代理下载（避开浏览器 CORS）。失败时透传网关给的原因（图床超时 / 404 / 被拦等），

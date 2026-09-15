@@ -93,3 +93,25 @@ test('可访问性：每个 WAAPI 动画都做了减少动效判断（防新增�
   assert.ok(animated >= 3, `只扫到 ${animated} 处 element.animate，像是扫描失效`);
   assert.deepEqual(offenders, [], '这些文件里有动画但没判断 prefersReducedMotion');
 });
+
+test('可访问性：设置面板标签条是键盘可操作的真按钮，当前页报给读屏软件', () => {
+  const src = read('src/settings.ts');
+  assert.match(src, /createEl\('button'/, '标签用 <button>：键盘可聚焦、回车 / 空格即切换（div 得自己补键盘处理）');
+  assert.match(
+    src,
+    /'aria-current': isActive \? 'true' : 'false'/,
+    '当前标签要标注出来，读屏软件才知道在哪一页'
+  );
+  // 焦点样式：标签清过底与阴影，默认焦点圈在这层不显眼，样式表里得自己给一圈
+  assert.match(
+    read('styles.css'),
+    /\.vinyl-settings-tabs \.vinyl-settings-tab:focus-visible/,
+    '标签要有焦点样式'
+  );
+  // 「关于」页的虚线框是纯装饰：不给 aria-hidden，读屏软件会念出一坨图形节点
+  assert.match(
+    read('src/views/about-page.ts'),
+    /svg\.setAttribute\('aria-hidden', 'true'\)/,
+    '手绘覆盖层要标成装饰'
+  );
+});

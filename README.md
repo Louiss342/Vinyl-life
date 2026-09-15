@@ -65,6 +65,8 @@ Vinyl Life 把专辑笔记展示成一张张唱片，配有黑胶唱机样式的
 
 粘贴专辑链接或 ID，插件会获取专辑资料、创建笔记并下载封面。之后可以从专辑墙打开播放。
 
+也可以直接输入专辑或歌曲名搜索：结果里带封面、艺人、发行日期和曲目数，按歌曲搜出来的会注明它出自哪张专辑，点「导入」即按那张专辑建笔记；已经在库里的专辑显示「打开已有专辑」，不会重复导入。
+
 在设置的「源」页面用手机扫码登录自己的账号（目前只保留扫码这一条登录路径）。QQ 的二维码是 QQ 互联二维码，需要用手机 QQ 扫描，QQ 音乐 App 的「扫一扫」识别不了。
 
 在线音源不需要安装 Node.js：首次使用时插件会用 Obsidian 自带的 Node 在应用内启动本机网关；只听本地文件则完全不会启动网关。
@@ -111,16 +113,18 @@ cover: "[[Vinyl Life/covers/专辑封面.jpg]]"
 
 ## 设置
 
-设置页分为四个板块：
+设置面板是四个标签页，点哪个就地换成哪一页：
 
-| 板块 | 可以调整的内容 |
+| 标签页 | 可以调整的内容 |
 | --- | --- |
 | 通用 | 界面语言、专辑和封面目录、本地笔记模板、默认音源、在线音质、自动播放、播放器位置，以及播放统计。 |
 | 外观 | 专辑墙每行数量、唱片弹出方向、唱片颜色、唱机配色和转盘动画速度。 |
 | 源 | 网易云与 QQ 音乐登录、本地音频目录、默认导入方式，以及在线音源运行状态。 |
-| 关于 | 版本、作者手记、项目地址和许可信息。 |
+| 关于 | 版本、作者手记（中英对照）、项目地址和许可信息。整页手绘：文案用手写体，便签外框是一圈手画的虚线。 |
 
-唱机有胡桃木和黑胶黑两种配色，唱片可选黑、黄、蓝、白。专辑墙可以按窗口宽度自动排版，也可以固定为每行 2—7 张；唱片弹出方向可选上、下、左、右。
+面板由插件自己绘制，所以这些设置在 Obsidian 的全局设置搜索里搜不到 —— 直接打开「设置 → Vinyl Life」看标签页。
+
+唱机有胡桃木、贝壳白和哑光黑三种配色，唱片可选黑、黄、蓝、白。专辑墙可以按窗口宽度自动排版，也可以固定为每行 2—7 张；唱片弹出方向可选上、下、左、右。
 
 默认文件位置如下，均可按自己的习惯修改：
 
@@ -174,7 +178,7 @@ npm test
 - `npm run typecheck`：类型检查。它依赖 build 先生成 `src/core/gateway-bundle.ts` 与 `src/core/style-bundle.ts`，两步顺序不能反。
 - `npm run lint`：ESLint（含官方审核规则集），提交前保持零报错。
 - `npm test`：跑测试，200 多项，纯 Node 环境，不需要 Obsidian。
-- `main.js` 有体积预算（260 KB，超出直接构建失败）：它是社区市场的下载主体，预算写在 `esbuild.config.mjs`。
+- `main.js` 有体积预算（348 KB，超出直接构建失败）：它是社区市场的下载主体，预算写在 `esbuild.config.mjs`。其中约 47 KB 是手写体（拉丁 Excalifont + 中文霞鹜文楷子集，空态教程与设置「关于」页共用，见 `assets/fonts/`）、约 26 KB 是手绘笔触引擎 roughjs。
 
 源码目录结构：
 
@@ -193,6 +197,19 @@ npm test
 [MIT](LICENSE) © 2026 Louiss342
 
 本地网关使用了 [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi) 的部分接口模块，原项目采用 MIT 许可。
+
+空态教程的手绘笔触（虚线框、虚线圈、箭头）用 [roughjs](https://github.com/rough-stuff/rough)，与 Excalidraw 内部同款引擎，MIT 许可。
+
+专辑墙空态教程的手写体是两个子集（内联在 `styles.css` 里，随样式表分发）：
+
+- 拉丁：[Excalidraw](https://github.com/excalidraw/excalidraw) 的 **Excalifont**，字体名 `Vinyl Hand`；
+  Excalifont © 2024 by Excalidraw，SIL Open Font License 1.1
+- 中文：[**霞鹜文楷 LXGW WenKai**](https://github.com/lxgw/LxgwWenKai)，字体名 `Vinyl Hand CJK`；
+  © 2021-2026 LXGW，SIL Open Font License 1.1
+
+两者都是按本插件教程文案裁出的子集（属 OFL 定义的修改版本，故不沿用原字体名），
+授权全文与再生成步骤见 [`assets/fonts/`](assets/fonts/)。Excalifont 是 Excalidraw 的商标、
+霞鹜文楷与 LXGW 是 LXGW 的保留名称，本项目与这两个项目均无从属关系。
 
 ---
 
@@ -247,6 +264,8 @@ The file extensions you can import are `mp3`, `flac`, `m4a`, `m4b`, `mp4`, `wav`
 
 Paste an album link or ID and the plugin fetches the album information, creates a note, and downloads the cover. After that you can open it from the album shelf and play it.
 
+You can also search by album or song name. Each result shows its cover, artists, release date, and track count; a song result tells you which album it comes from, and clicking Import creates that album's note. Albums already in your vault show an Open existing album button instead of being imported twice.
+
 Sign in by scanning a QR code on the Sources settings page (for now this is the only sign-in path). The QQ code is a QQ Connect QR code — scan it with mobile QQ; the QQ Music app's own scanner cannot read it.
 
 Online sources do not require Node.js: on first use the plugin starts a local gateway in-app, on the Node bundled with Obsidian. If you only listen to local files, no gateway is started at all.
@@ -293,16 +312,18 @@ Statistics are stored in the plugin's own data file; play records are never adde
 
 ## Settings
 
-The settings page is split into four tabs:
+The settings panel is four tabs; clicking a tab switches the content in place:
 
 | Tab | What you can adjust |
 | --- | --- |
 | General | Interface language, album and cover folders, the local note template, the default source, online audio quality, autoplay, player position, and playback statistics. |
 | Appearance | How many albums per row on the shelf, which way records slide out, record color, turntable color scheme, and platter animation speed. |
 | Sources | NetEase and QQ Music sign-in, the local audio folder, the default import method, and the status of the online source runtime. |
-| About | Version, the author's note, the project URL, and license information. |
+| About | Version, the author's note (Chinese and English side by side), the project URL, and license information. The whole page is hand-drawn: the text uses a handwriting font, and a dashed frame is sketched around the note. |
 
-The turntable comes in walnut and vinyl black, and records come in black, yellow, blue, and white. The shelf can lay itself out to fit the window width, or be pinned to 2–7 per row; records can slide out upwards, downwards, leftwards, or rightwards.
+The panel is drawn by the plugin itself, so these settings do not show up in Obsidian's global settings search — open Settings → Vinyl Life and use the tabs.
+
+The turntable comes in walnut, shell white, and matte black, and records come in black, yellow, blue, and white. The shelf can lay itself out to fit the window width, or be pinned to 2–7 per row; records can slide out upwards, downwards, leftwards, or rightwards.
 
 The default file locations are as follows, and all of them can be changed to suit your own habits:
 
@@ -356,7 +377,7 @@ npm test
 - `npm run typecheck`: type-check. It depends on `npm run build` having generated `src/core/gateway-bundle.ts` / `src/core/style-bundle.ts` first, so the order cannot be reversed.
 - `npm run lint`: ESLint with the official review rule set; keep it clean before committing.
 - `npm test`: run the tests — 200+ of them, in plain Node, with no Obsidian required.
-- `main.js` has a size budget (260 KB; exceeding it fails the build) because it is what the community store downloads — the budget lives in `esbuild.config.mjs`.
+- `main.js` has a size budget (348 KB; exceeding it fails the build) because it is what the community store downloads — the budget lives in `esbuild.config.mjs`. About 47 KB of it is the handwriting fonts (Latin Excalifont + Chinese LXGW WenKai subsets, shared by the empty-shelf tutorial and the About settings page; see `assets/fonts/`) and ~26 KB is roughjs, the hand-drawn stroke engine.
 
 Source layout:
 
@@ -375,3 +396,18 @@ To release, push a tag: GitHub Actions builds the plugin and creates a Release a
 [MIT](LICENSE) © 2026 Louiss342
 
 The local gateway uses some API modules from [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi), which is released under the MIT license.
+
+The hand-drawn strokes in the tutorial (dashed boxes, ring, arrows) use [roughjs](https://github.com/rough-stuff/rough), the same engine Excalidraw uses internally (MIT).
+
+The hand-drawn fonts in the empty-shelf tutorial are two subsets inlined in `styles.css`
+(they ship with the stylesheet):
+
+- Latin: **Excalifont** from [Excalidraw](https://github.com/excalidraw/excalidraw), family name `Vinyl Hand`;
+  Excalifont © 2024 by Excalidraw, SIL Open Font License 1.1
+- Chinese: [**LXGW WenKai**](https://github.com/lxgw/LxgwWenKai), family name `Vinyl Hand CJK`;
+  © 2021-2026 LXGW, SIL Open Font License 1.1
+
+Both are subsets cut to this plugin's tutorial text (modified versions under the OFL, hence
+the new family names) — see [`assets/fonts/`](assets/fonts/) for the full licenses and how to
+regenerate them. Excalifont is a trademark of Excalidraw and LXGW WenKai / LXGW are reserved
+names of their author; this project is not affiliated with either.

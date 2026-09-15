@@ -724,6 +724,83 @@ function registerQqRoutes(deps) {
     return normalizeAccount(info);
   });
 
+  // QQ 搜索的 musicu 响应字段在不同版本中有轻微差异，在网关内归一化，
+  // 渲染进程不需要理解 QQ 的 albumMID / albumMid / singer 等多套命名。
+  function searchList(body, requestKey, kind) {
+    const req = body && body[requestKey];
+    const data = req && req.data;
+    const block = data && data.body && data.body[kind];
+    return Array.isArray(block && block.list) ? block.list : [];
+  }
+
+  function singerText(value) {
+    const list = Array.isArray(value) ? value : [];
+    return list
+      .map((s) => String((s && (s.name || s.title)) || ''))
+      .filter(Boolean)
+      .join(' / ');
+  }
+
+  route('GET', '/api/qq/search', async ({ query }) => {
+    const keywords = String((query && query.keywords) || '').trim().slice(0, 100);
+    if (!keywords) return { code: 0, data: { albums: [], songs: [] } };
+    const common = {
+      remoteplace: 'txt.yqq.center',
+      searchid: String(Date.now()),
+      query: keywords,
+      page_num: 1,
+      num_per_page: 10,
+      highlight: 0,
+    };
+    const jar = readJar();
+    const { body } = await musicuPost({
+      comm: { ct: 24, cv: 0, format: 'json', uin: uinOf(jar) },
+      req_album: {
+        module: 'music.search.SearchCgiService',
+        method: 'DoSearchForQQMusicDesktop',
+        param: { ...common, search_type: 2 },
+      },
+      req_song: {
+        module: 'music.search.SearchCgiService',
+        method: 'DoSearchForQQMusicDesktop',
+        param: { ...common, search_type: 0 },
+      },
+    }, jar);
+    const rawAlbums = searchList(body, 'req_album', 'album');
+    const rawSongs = searchList(body, 'req_song', 'song');
+    const albums = rawAlbums.map((raw) => {
+      const a = (raw && (raw.albumInfo || raw.album)) || raw || {};
+      const mid = String(a.albumMID || a.albumMid || a.mid || '');
+      return {
+        mid,
+        name: String(a.albumName || a.name || a.title || ''),
+        artist: String(a.singerName || a.artist || '') || singerText(a.singer),
+        coverUrl: String(a.albumPic || a.pic || a.cover || '') || coverUrl(mid),
+        publishTime: String(a.publicTime || a.publishTime || a.time_public || ''),
+        trackCount: Number(a.song_count || a.songCount || a.total || 0),
+        available: Number(a.song_count || a.songCount || a.total || 0) > 0,
+      };
+    }).filter((a) => MID_RE.test(a.mid) && a.name);
+    const songs = rawSongs.map((raw) => {
+      const s = (raw && (raw.songInfo || raw.song)) || raw || {};
+      const album = s.album || {};
+      const albumMid = String(album.mid || s.albumMID || s.albumMid || s.albummid || '');
+      return {
+        mid: String(s.mid || s.songmid || ''),
+        name: String(s.name || s.songname || s.title || ''),
+        artist: singerText(s.singer) || String(s.artist || ''),
+        albumMid,
+        albumName: String(album.name || s.albumName || s.albumname || ''),
+        albumCover: String(album.pic || s.albumPic || '') || coverUrl(albumMid),
+        available:
+          (s.status == null || Number(s.status) >= 0) &&
+          (!s.action || s.action.switch == null || (Number(s.action.switch) & 1) === 1),
+      };
+    }).filter((s) => MID_RE.test(s.albumMid) && s.albumName);
+    const loggedIn = !!(jar.qm_keyst || jar.qqmusic_key);
+    return { code: 0, requiresLogin: !loggedIn && !albums.length && !songs.length, data: { albums, songs } };
+  });
+
   route('GET', '/api/qq/album', async ({ query }) => {
     const mid = String((query && query.id) || '').trim();
     if (!MID_RE.test(mid)) throw new Error(msg('gw.qqBadAlbumId'));

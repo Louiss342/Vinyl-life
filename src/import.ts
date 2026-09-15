@@ -37,6 +37,8 @@ export interface ImportContext {
 }
 
 export interface ImportResult {
+  status: 'created' | 'existing' | 'failed';
+  /** 保留给旧调用方；新界面应使用 status 区分「已存在」与失败。 */
   ok: boolean;
   detail: string;
   file?: TFile;
@@ -46,15 +48,41 @@ export interface ImportResult {
 
 // ============ A. 专辑导入（网易云 / QQ 音乐） ============
 
-export type AlbumLink =
+export type AlbumRef =
   | { source: 'netease'; id: number }
   | { source: 'qq'; mid: string };
+
+export type AlbumLink = AlbumRef;
 
 /** frontmatter 里的字符串值：走 JSON 转义（它是 YAML 双引号的子集）。
  *  不这么做的话，艺人名里一个 `"` 就能让整段 frontmatter 解析失败 —— 那张专辑会直接从
  *  专辑墙上消失，而且用户看不到任何报错。 */
 function yamlString(v: string): string {
   return JSON.stringify(v);
+}
+
+/** 在不覆盖现有笔记的前提下为在线专辑选路径；只有发生冲突时才增加歌手/年份。 */
+function availableOnlineNoteName(
+  ctx: ImportContext,
+  album: string,
+  artist: string,
+  year: string | number | undefined,
+  source: 'netease' | 'qq'
+): string {
+  const folder = ctx.settings().albumFolder;
+  const base = sanitizeFileName(album);
+  const available = (name: string) =>
+    !ctx.app.vault.getAbstractFileByPath(normalizePath(`${folder}/${name}.md`));
+  if (available(base)) return base;
+  const withArtist = sanitizeFileName(`${album}${artist ? ` - ${artist}` : ''}`);
+  if (withArtist !== base && available(withArtist)) return withArtist;
+  const suffix = [year, source === 'qq' ? 'QQ' : 'NetEase'].filter(Boolean).join(', ');
+  const detailed = sanitizeFileName(`${withArtist} (${suffix})`);
+  if (available(detailed)) return detailed;
+  for (let n = 2; ; n++) {
+    const numbered = sanitizeFileName(`${detailed} ${n}`);
+    if (available(numbered)) return numbered;
+  }
 }
 
 export function parseNeteaseInput(input: string): number | undefined {
@@ -78,11 +106,19 @@ export async function importAlbum(ctx: ImportContext, input: string): Promise<Im
   const link = parseAlbumInput(input);
   if (!link) {
     return {
+      status: 'failed',
       ok: false,
       detail: t('import.badLink'),
     };
   }
-  return link.source === 'qq' ? importQqAlbum(ctx, input) : importNeteaseAlbum(ctx, input);
+  return importAlbumRef(ctx, link);
+}
+
+/** 搜索结果的直接导入入口：不拼 URL，不再猜测来源。 */
+export function importAlbumRef(ctx: ImportContext, ref: AlbumRef): Promise<ImportResult> {
+  return ref.source === 'qq'
+    ? importQqAlbum(ctx, ref.mid)
+    : importNeteaseAlbum(ctx, String(ref.id));
 }
 
 // 封面：经本地网关代理下载（避开 CORS）→ covers/，返回 frontmatter 用的 wikilink 字面量。
@@ -134,14 +170,14 @@ export async function importNeteaseAlbum(
 ): Promise<ImportResult> {
   const id = parseNeteaseInput(input);
   if (!id) {
-    return { ok: false, detail: t('import.badId') };
+    return { status: 'failed', ok: false, detail: t('import.badId') };
   }
 
   // 查重先于接口请求：已有同 neteaseId 的笔记 → 直接指路（也避免离线/接口故障时误报失败）
   for (const f of findAlbumNotes(ctx.app)) {
     const info = getAlbumInfo(ctx.app, f);
     if (info?.neteaseId === id) {
-      return { ok: false, detail: tf('import.duplicate', { title: info.title }), file: f };
+      return { status: 'existing', ok: false, detail: tf('import.duplicate', { title: info.title }), file: f };
     }
   }
 
@@ -149,23 +185,20 @@ export async function importNeteaseAlbum(
   try {
     body = await ctx.client.album(id);
   } catch (e) {
-    return { ok: false, detail: tf('import.fetchFailed', { msg: (e as Error).message }) };
+    return { status: 'failed', ok: false, detail: tf('import.fetchFailed', { msg: (e as Error).message }) };
   }
   const album = body?.album;
   if (!album?.name) {
-    return { ok: false, detail: tf('import.albumNoData', { code: String(body?.code) }) };
+    return { status: 'failed', ok: false, detail: tf('import.albumNoData', { code: String(body?.code) }) };
   }
 
   // 建笔记
-  const name = sanitizeFileName(album.name);
-  const notePath = normalizePath(`${ctx.settings().albumFolder}/${name}.md`);
-  if (ctx.app.vault.getAbstractFileByPath(notePath)) {
-    return { ok: false, detail: tf('import.noteExists', { path: notePath }) };
-  }
   const artist = album.artist?.name || '';
   const year = album.publishTime
     ? new Date(Number(album.publishTime)).getFullYear()
     : undefined;
+  const name = availableOnlineNoteName(ctx, album.name, artist, year, 'netease');
+  const notePath = normalizePath(`${ctx.settings().albumFolder}/${name}.md`);
 
   const coverRef = await downloadCoverToVault(ctx, album.picUrl, name);
 
@@ -179,6 +212,7 @@ export async function importNeteaseAlbum(
   lines.push('---', '');
   const file = await ctx.app.vault.create(notePath, lines.join('\n'));
   return {
+    status: 'created',
     ok: true,
     detail: tf('import.neteaseDone', {
       name: album.name,
@@ -196,6 +230,7 @@ export async function importQqAlbum(ctx: ImportContext, input: string): Promise<
   const mid = parseQqAlbumMid({ qq: String(input || '').trim() });
   if (!mid) {
     return {
+      status: 'failed',
       ok: false,
       detail: t('import.badQqId'),
     };
@@ -205,7 +240,7 @@ export async function importQqAlbum(ctx: ImportContext, input: string): Promise<
   for (const f of findAlbumNotes(ctx.app)) {
     const info = getAlbumInfo(ctx.app, f);
     if (info?.qqId === mid) {
-      return { ok: false, detail: tf('import.duplicate', { title: info.title }), file: f };
+      return { status: 'existing', ok: false, detail: tf('import.duplicate', { title: info.title }), file: f };
     }
   }
 
@@ -213,24 +248,22 @@ export async function importQqAlbum(ctx: ImportContext, input: string): Promise<
   try {
     body = await ctx.qq.album(mid);
   } catch (e) {
-    return { ok: false, detail: tf('import.albumFetchFailed', { msg: (e as Error).message }) };
+    return { status: 'failed', ok: false, detail: tf('import.albumFetchFailed', { msg: (e as Error).message }) };
   }
   const album = body?.data?.album;
   if (!album?.name) {
     return {
+      status: 'failed',
       ok: false,
       detail: body?.msg || tf('import.qqNoData', { code: String(body?.code) }),
     };
   }
 
-  const name = sanitizeFileName(album.name);
-  const notePath = normalizePath(`${ctx.settings().albumFolder}/${name}.md`);
-  if (ctx.app.vault.getAbstractFileByPath(notePath)) {
-    return { ok: false, detail: tf('import.noteExistsPath', { path: notePath }) };
-  }
   const artist = album.artist || '';
   // QQ 的 aDate 形如 2020-01-01
   const year = /^(\d{4})/.exec(String(album.publishTime || ''))?.[1];
+  const name = availableOnlineNoteName(ctx, album.name, artist, year, 'qq');
+  const notePath = normalizePath(`${ctx.settings().albumFolder}/${name}.md`);
   const coverRef = await downloadCoverToVault(ctx, album.coverUrl, name);
 
   await ensureFolder(ctx.app, ctx.settings().albumFolder);
@@ -243,6 +276,7 @@ export async function importQqAlbum(ctx: ImportContext, input: string): Promise<
   lines.push('---', '');
   const file = await ctx.app.vault.create(notePath, lines.join('\n'));
   return {
+    status: 'created',
     ok: true,
     detail: tf('import.qqDone', {
       name: album.name,

@@ -9,6 +9,7 @@ import type {
   ApiErrorResponse,
   LoginResponse,
   QqAlbumResponse,
+  QqSearchResponse,
   QqSong,
   QrKeyResponse,
   SongUrlResponse,
@@ -74,6 +75,12 @@ export class QqService {
   // —— 曲库 ——
   async album(mid: string): Promise<QqAlbumResponse> {
     return this.getJson<QqAlbumResponse>('/api/qq/album', { id: mid });
+  }
+
+  async search(keywords: string): Promise<QqSearchResponse> {
+    const body = await this.getJson<QqSearchResponse>('/api/qq/search', { keywords });
+    if (body.requiresLogin) throw new Error(t('import.qqSearchLoginRequired'));
+    return body;
   }
 
   async songUrl(mid: string, level: string, mediaMid?: string): Promise<SongUrlResult> {

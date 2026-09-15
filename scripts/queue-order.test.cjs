@@ -3,7 +3,7 @@
 //   B 部分引擎：moveTrack 后「正在播的那首仍是当前曲目」+ 顺序持久化钩子 + setQueue 套用存过的顺序；
 //   C 部分设置归一化：normalizeQueueOrder 丢弃脏数据 + 默认值不被就地改写；
 //   D 部分视图：落点换算（行前/后 → 结果下标）+ 落点视觉复用专辑墙的同一套 CSS；
-//   E 部分恢复原有顺序：restoreOriginalOrder 就地排回原始顺序（不重扫）+ 当前曲目保位 + 清条目钩子。
+//   E 部分恢复发行顺序：restoreOriginalOrder 就地排回原始顺序（不重扫）+ 当前曲目保位 + 清条目钩子。
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -688,11 +688,11 @@ test('restoreOriginalOrder：换专辑后按新专辑的原始顺序恢复（原
   assert.deepEqual(clearEvents, [other], '清的是当前这张专辑的条目');
 });
 
-test('main.ts：恢复原有顺序的接线（删设置里的条目 + 复用已有防抖落盘）', () => {
+test('main.ts：恢复发行顺序的接线（删设置里的条目 + 复用已有防抖落盘）', () => {
   const src = fs.readFileSync(path.join(__dirname, '../src/main.ts'), 'utf8');
   assert.ok(
     /onQueueOrderClear: \(albumPath\) => this\.forgetQueueOrder\(albumPath\)/.test(src),
-    '「恢复原有顺序」后的清条目钩子必须接线'
+    '「恢复发行顺序」后的清条目钩子必须接线'
   );
   assert.ok(
     /forgetQueueOrder\(albumPath: string\)[\s\S]{0,400}?scheduleStatsSave\(\)/.test(src),

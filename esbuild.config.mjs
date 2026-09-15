@@ -87,7 +87,11 @@ async function build() {
 
   // 体积预算：main.js 是社区市场分发的下载主体（server.js / gateway-bundle / styles.css 都会内联进去）。
   // 超了就构建失败而不是只打日志 —— 悄悄涨到几 MB 是没人会注意的那种退化。改预算时同步 README。
-  const MAIN_JS_BUDGET = 260 * 1024;
+  // 260 → 318：空态教程的两处开销 —— 手写体（拉丁 Excalifont + 中文霞鹜文楷两个子集，内联在
+  // styles.css 尾部，见 assets/fonts/）约 41 KB，手绘笔触引擎 roughjs（与 Excalidraw 同款）约 26 KB。
+  // 318 → 348：设置面板「关于」页也走手写体，同一对字体按两处文案重做子集（中文多收 160 多字）
+  // —— 字体从 31 KB 涨到 47 KB。两处都是为了把设计稿 1:1 搬到插件里；哪天不要了，把预算调回 260。
+  const MAIN_JS_BUDGET = 348 * 1024;
   if (sizes['main.js'] > MAIN_JS_BUDGET) {
     throw new Error(
       `main.js 体积 ${(sizes['main.js'] / 1024).toFixed(1)} KB 超出预算 ${MAIN_JS_BUDGET / 1024} KB：` +

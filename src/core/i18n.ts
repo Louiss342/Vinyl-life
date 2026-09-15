@@ -26,7 +26,7 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   // —— 专辑墙：视图标题 / 工具栏 ——
   'shelf.title': { zh: '专辑墙', en: 'Album shelf' },
   'shelf.titleWithCount': { zh: '专辑墙（{n} 张）', en: 'Album shelf ({n})' },
-  'shelf.search': { zh: '搜索专辑 / 艺术家 / 流派…', en: 'Search album / artist / genre…' },
+  'shelf.search': { zh: '在这里快速检索你的黑胶 :)', en: 'Quickly search your vinyl here :)' },
   'shelf.refresh': { zh: '刷新', en: 'Refresh' },
   'shelf.sort': { zh: '排序', en: 'Sort' },
   'shelf.filter': { zh: '音源筛选', en: 'Filter by source' },
@@ -38,18 +38,46 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     zh: '新建笔记并写入 frontmatter：tags: [album] + cover / artist / year… 即可上墙；也可用工具栏「导入」从网易云或本地音频起步。',
     en: 'Create a note with frontmatter tags: [album] plus cover / artist / year… to put it on the shelf, or start with Import in the toolbar.',
   },
+  // —— 专辑墙：空态教程（文案取自 Excalidraw 设计稿 Drawing 2026-09-15 14.14.52）——
+  'shelf.tutorial.title': { zh: 'Enjoy Your Vinyl Life！！！', en: 'Enjoy Your Vinyl Life!!!' },
+  'shelf.tutorial.emptyTitle': { zh: '现在的专辑墙还什么都没有哦0.o', en: 'The album wall is still empty 0.o' },
+  'shelf.tutorial.importA': { zh: '如果你想快速导入你心爱的专辑', en: 'Want to import your beloved albums in no time?' },
+  'shelf.tutorial.importB': {
+    zh: '尝试点击这两个按钮吧，本地和在线都可以哦:)',
+    en: 'Try these two buttons — local and online both work :)',
+  },
+  'shelf.tutorial.onlineOnly': {
+    zh: '不过在线平台目前只支持网易云音乐和QQ音乐:(',
+    en: 'Online platforms currently support NetEase Cloud Music and QQ Music only :(',
+  },
+  'shelf.tutorial.moreSoon': {
+    zh: '其他平台等待我后续的更新吧^_^',
+    en: 'More platforms are coming in future updates ^_^',
+  },
+  'shelf.tutorial.playerSidebar': {
+    zh: '播放器默认是在侧边栏哦',
+    en: 'The player lives in the sidebar by default',
+  },
+  'shelf.tutorial.playerHere': { zh: '大概是在这里', en: 'Roughly here' },
+  'shelf.tutorial.playAfterImport': {
+    zh: '当你导入你的专辑后 点击它应该就会出现了！',
+    en: 'Once you import an album, click it and it should show up!',
+  },
+  'shelf.tutorial.loginNote': {
+    zh: '使用在线播放别忘了在设置里登陆你的平台账号……',
+    en: 'For online playback, remember to sign in to your platform account in Settings…',
+  },
   'shelf.filtered.title': { zh: '没有符合条件的专辑', en: 'No albums match' },
   'shelf.filtered.hint': { zh: '调整搜索词或筛选条件试试', en: 'Try a different search or filter.' },
 
   // —— 卡片属性弹层 ——
   'props.shown': { zh: '已显示（拖拽调整顺序）', en: 'Shown (drag to reorder)' },
   'props.nonePicked': { zh: '未选择任何属性：卡片只显示标题。', en: 'No properties picked: cards show the title only.' },
-  'props.available': { zh: '可添加（来自笔记 frontmatter）', en: 'Available (from note frontmatter)' },
   'props.noAlbums': { zh: '还没有专辑笔记。先用工具栏「导入」建一张。', en: 'No album notes yet — create one with Import first.' },
-  'props.allAdded': { zh: '已全部添加。', en: 'Everything is already shown.' },
+  'props.allAdded': { zh: '目前已全部添加。', en: 'Everything is already added.' },
   'props.footer': {
-    zh: '属性来自专辑笔记，部分省略；在笔记中添加属性后回到这里即可添加勾选。',
-    en: 'Properties come from album notes (some hidden). Add one to a note, then come back to pick it here.',
+    zh: '可显示的属性来自对应的专辑笔记，想要修改直接在你的专辑笔记中修改就可以啦:)',
+    en: 'The showable properties come from the album note — to change them, just edit your album note :)',
   },
 
   // —— 卡片 / 角标 / 菜单 ——
@@ -91,34 +119,54 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'player.playPause': { zh: '播放 / 暂停', en: 'Play / pause' },
   'player.next': { zh: '下一首', en: 'Next track' },
   'player.appendNote': {
-    zh: '在专辑笔记追加此刻感想',
-    en: 'Append current thoughts to the album note',
+    zh: '写点什么吧:)',
+    en: 'Write something :)',
   },
   'player.loading': { zh: '♪ 正在取碟…', en: '♪ Loading album…' },
   'player.emptyQueue': { zh: '空队列', en: 'Empty queue' },
   'player.dragToReorder': { zh: '拖拽调整顺序', en: 'Drag to reorder' },
-  'player.restoreOriginal': { zh: '恢复原有顺序', en: 'Restore original order' },
-  'player.restoreDone': { zh: '已恢复专辑原有顺序', en: 'Original album order restored' },
+  'player.restoreOriginal': { zh: '恢复发行顺序', en: 'Restore release order' },
+  'player.restoreDone': { zh: '已恢复专辑发行顺序', en: 'Album release order restored' },
   'player.restoreLocalUnsupported': {
-    zh: '本地专辑按文件名顺序播放，不支持恢复原有顺序',
+    zh: '本地专辑按文件名顺序播放，不支持恢复发行顺序',
     en: 'Local albums play in file-name order; restoring is not supported',
   },
 
   // —— 导入弹窗：专辑导入（网易云 / QQ 音乐） ——
   'import.title': { zh: '导入专辑', en: 'Import album' },
-  'import.pasteHint': {
-    zh: '粘贴专辑链接（或 ID），网易云与 QQ 音乐都支持：',
-    en: 'Paste an album link (or ID) — both NetEase and QQ Music are supported:',
+  'import.searchPlaceholder': {
+    zh: '输入专辑、歌手、歌曲、专辑源链接都可以哦:)',
+    en: 'Album, artist, song, or a source link — anything works :)',
   },
-  'import.exampleHint': {
-    zh: '网易云：https://music.163.com/#/album?id=437968 ／ QQ 音乐：https://y.qq.com/n/ryqq/albumDetail/004VSvF52mQoQp',
-    en: 'NetEase: https://music.163.com/#/album?id=437968 / QQ Music: https://y.qq.com/n/ryqq/albumDetail/004VSvF52mQoQp',
+  'import.searchAction': { zh: '搜索', en: 'Search' },
+  'import.searchEmpty': { zh: '请输入搜索内容', en: 'Enter something to search for' },
+  'import.searching': {
+    zh: '正在同时搜索网易云音乐和 QQ 音乐…',
+    en: 'Searching NetEase and QQ Music…',
   },
-  'import.linkPlaceholder': {
-    zh: '网易云或 QQ 音乐专辑链接 / ID',
-    en: 'NetEase or QQ Music album link / ID',
+  'import.searchFound': { zh: '找到 {n} 个专辑结果', en: 'Found {n} album result(s)' },
+  'import.searchNoResults': {
+    zh: '没有找到专辑，试试更短的专辑名、歌手名或歌曲名。',
+    en: 'No albums found. Try a shorter album, artist, or song name.',
   },
-  'import.linkEmpty': { zh: '请输入专辑链接或 ID', en: 'Enter an album link or ID' },
+  'import.searchFailed': {
+    zh: '两个平台都搜索失败，请检查网络后重试。',
+    en: 'Both sources failed. Check your network and try again.',
+  },
+  'import.searchPartial': {
+    zh: '{sources} 暂时不可用：{reason}。已显示其他来源的结果。',
+    en: '{sources} is unavailable: {reason}. Results from other sources are shown.',
+  },
+  'import.qqSearchLoginRequired': {
+    zh: '请先在 Vinyl Life 内登录 QQ 音乐（无需打开浏览器）',
+    en: 'Sign in to QQ Music inside Vinyl Life first (no browser required)',
+  },
+  'import.sourceNetease': { zh: '网易云', en: 'NetEase' },
+  'import.sourceQq': { zh: 'QQ 音乐', en: 'QQ Music' },
+  'import.trackCount': { zh: '{n} 首', en: '{n} tracks' },
+  'import.matchedTrack': { zh: '匹配歌曲：{name}', en: 'Matched song: {name}' },
+  'import.openExisting': { zh: '打开', en: 'Open' },
+  'import.fetchingShort': { zh: '正在获取专辑信息…', en: 'Fetching album info…' },
   'import.fetching': {
     zh: '正在获取专辑信息（在线音源首次使用需启动本地网关）…',
     en: 'Fetching album info (the local gateway starts on first online use)…',
@@ -131,10 +179,6 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'import.step1': { zh: '① 选择音频文件或文件夹', en: '① Pick audio files or a folder' },
   'import.pickFiles': { zh: '选择文件…', en: 'Choose files…' },
   'import.pickFolder': { zh: '选择文件夹…', en: 'Choose folder…' },
-  'import.noFilesPicked': {
-    zh: '尚未选择——点上面的按钮，或把文件 / 文件夹直接拖进本窗口（文件夹按一张专辑导入，子目录结构保留）',
-    en: 'Nothing picked yet — use the buttons above, or drag files / a folder into this window (a folder imports as one album and keeps its subfolders)',
-  },
   'import.step2': { zh: '② 导入到', en: '② Import into' },
   'import.targetNew': { zh: '新建专辑', en: 'New album' },
   'import.namePlaceholder': {
@@ -234,7 +278,6 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     zh: '专辑接口无数据（code={code}）',
     en: 'No data from the album API (code={code})',
   },
-  'import.noteExists': { zh: '笔记已存在：{path}', en: 'Note already exists: {path}' },
   'import.neteaseDone': {
     zh: '已导入「{name}」（{artist}{year}，{n} 曲）',
     en: 'Imported "{name}" ({artist}{year}, {n} track(s))',
@@ -463,7 +506,8 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'settings.deck': { zh: '播放器配色', en: 'Player finish' },
   'settings.deckDesc': { zh: '设备面板材质', en: 'Deck panel material' },
   'settings.deckWalnut': { zh: '胡桃木', en: 'Walnut' },
-  'settings.deckBlack': { zh: '黑胶黑', en: 'Vinyl black' },
+  'settings.deckShell': { zh: '贝壳白', en: 'Shell white' },
+  'settings.deckBlack': { zh: '哑光黑', en: 'Matte black' },
   'settings.spinSpeed': { zh: '转盘转速', en: 'Turntable speed' },
   'settings.spinSpeedDesc': { zh: '播放时唱片一圈的时间', en: 'Time for one record revolution while playing' },
   'settings.spinSlow': { zh: '慢', en: 'Slow' },
@@ -611,7 +655,6 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'player.modeOnceList': { zh: '单次播放整个列表', en: 'Play the list once' },
   'player.modeLoopList': { zh: '循环播放整个列表', en: 'Repeat the list' },
   'player.modeShuffleList': { zh: '随机播放列表中的曲目', en: 'Shuffle the tracks in the list' },
-  'player.modeHint': { zh: '{mode}（点击切换）', en: '{mode} (click to switch)' },
   'player.queueMode': { zh: '专辑队列模式', en: 'Album queue mode' },
   'player.queueModeOn': {
     zh: '专辑队列模式已开启：点专辑墙上的专辑会排到队尾，不换碟',
@@ -635,10 +678,6 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     en: 'Cannot sign in — the gateway is not ready',
   },
   'auth.gatewayNotReadyNetease': { zh: '网易云网关未就绪', en: 'The NetEase gateway is not ready' },
-  'auth.credentialWriteFailed': {
-    zh: '登录凭据写入失败，请检查插件目录权限',
-    en: 'Could not write the credential file — check permissions on the plugin folder',
-  },
   'auth.gatewayHttp': { zh: '网关 HTTP {status}（{path}）', en: 'Gateway HTTP {status} ({path})' },
   'auth.getUnikeyFailed': { zh: '获取登录 unikey 失败', en: 'Could not obtain the sign-in unikey' },
   'auth.qrGenerateFailed': { zh: '生成二维码失败', en: 'Could not generate the QR code' },
@@ -736,7 +775,6 @@ export const DICT: Record<string, { zh: string; en: string }> = {
 
   // —— 导入与写进笔记的内容（import.ts, main.ts）——
   'import.albumFetchFailed': { zh: '获取专辑失败：{msg}', en: 'Could not fetch the album: {msg}' },
-  'import.noteExistsPath': { zh: '笔记已存在：{path}', en: 'The note already exists: {path}' },
   'import.reflectionHeading': { zh: '## 感想', en: '## Reflections' },
   'note.listeningLine': { zh: '- [{ts}] 正在听 {title}：', en: '- [{ts}] Now playing {title}:' },
 };

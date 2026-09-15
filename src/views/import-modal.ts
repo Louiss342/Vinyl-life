@@ -6,9 +6,12 @@ import { AlbumInfo } from '../core/album-index';
 import {
   ImportContext,
   importAlbum,
+  importAlbumRef,
   importLocalAudio,
   createAlbumFromFiles,
+  parseAlbumInput,
 } from '../import';
+import { AlbumSearchCandidate, discoverAlbums } from '../core/album-discovery';
 import {
   notice,
   skippedFormatsText,
@@ -28,6 +31,9 @@ import { t, tf } from '../core/i18n';
 // ============ 专辑导入（网易云 / QQ 音乐） ============
 
 export class AlbumImportModal extends Modal {
+  private searchTimer: number | null = null;
+  private latestRequestId = 0;
+
   constructor(
     app: App,
     private ctx: ImportContext
@@ -39,62 +45,190 @@ export class AlbumImportModal extends Modal {
   async onOpen() {
     const c = this.contentEl;
     c.empty();
-    c.createDiv({
-      text: t('import.pasteHint'),
-      cls: 'vinyl-muted',
-    });
-    c.createDiv({
-      text: t('import.exampleHint'),
-      cls: 'vinyl-muted',
-    });
-    const input = c.createEl('input', {
-      attr: { type: 'text', placeholder: t('import.linkPlaceholder') },
+    c.addClass('vinyl-album-import');
+    const searchRow = c.createDiv({ cls: 'vinyl-import-search-row' });
+    const input = searchRow.createEl('input', {
+      attr: { type: 'search', placeholder: t('import.searchPlaceholder') },
       cls: 'vinyl-import-input',
     });
-    input.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter') void run();
-    });
-    const status = c.createDiv({ cls: 'vinyl-muted' });
-    const btnRow = c.createDiv({ cls: 'vinyl-import-actions' });
-    const btn = btnRow.createEl('button', { text: t('import.action'), cls: 'mod-cta' });
+    const searchBtn = searchRow.createEl('button', { text: t('import.searchAction'), cls: 'mod-cta' });
+    const status = c.createDiv({ cls: 'vinyl-muted vinyl-import-status' });
+    const results = c.createDiv({ cls: 'vinyl-import-results' });
+    // 状态行写入口：只在这里切 is-error（失败文案走红），调用点不必各自记着加类
+    const setStatus = (text: string, isError = false) => {
+      status.setText(text);
+      status.toggleClass('is-error', isError);
+    };
 
-    const run = async () => {
-      const val = input.value.trim();
-      if (!val) {
-        status.textContent = t('import.linkEmpty');
-        return;
-      }
-      btn.disabled = true;
-      status.textContent = t('import.fetching');
-      try {
-        const res = await importAlbum(this.ctx, val);
-        if (res.ok && res.file instanceof TFile) {
-          status.textContent = '✅ ' + res.detail;
-          await this.app.workspace.getLeaf(false).openFile(res.file);
-          this.close();
-        } else {
-          status.textContent = '❌ ' + res.detail;
-          if (res.file instanceof TFile) {
-            // 已存在的专辑 → 直接打开
-            await this.app.workspace.getLeaf(false).openFile(res.file);
-            this.close();
-          }
-        }
-      } catch (e) {
-        // 建目录 / 建笔记失败等异常：给可读提示并恢复按钮，不把弹窗卡在「正在获取…」
-        console.error('[vinyl] 导入失败', e);
-        status.textContent = `${t('import.failed')}${(e as Error).message || e}`;
-      } finally {
-        btn.disabled = false;
+    const openResult = async (res: Awaited<ReturnType<typeof importAlbum>>) => {
+      if (res.file instanceof TFile) {
+        await this.app.workspace.getLeaf(false).openFile(res.file);
+        this.close();
       }
     };
-    btn.addEventListener('click', () => {
-      void run();
+
+    const runDirect = async () => {
+      const val = input.value.trim();
+      if (!val) {
+        setStatus(t('import.searchEmpty'));
+        return;
+      }
+      this.latestRequestId++;
+      results.empty();
+      results.removeClass('is-loading');
+      searchBtn.disabled = true;
+      setStatus(t('import.fetching'));
+      try {
+        const res = await importAlbum(this.ctx, val);
+        setStatus((res.status === 'failed' ? '❌ ' : '✅ ') + res.detail, res.status === 'failed');
+        await openResult(res);
+      } catch (e) {
+        console.error('[vinyl] 导入失败', e);
+        setStatus(`${t('import.failed')}${(e as Error).message || e}`, true);
+      } finally {
+        searchBtn.disabled = false;
+      }
+    };
+
+    const importCandidate = async (
+      candidate: AlbumSearchCandidate,
+      button: HTMLButtonElement,
+      rowStatus: HTMLElement
+    ) => {
+      if (candidate.importedFilePath) {
+        const file = this.app.vault.getAbstractFileByPath(candidate.importedFilePath);
+        if (file instanceof TFile) await openResult({ status: 'existing', ok: false, detail: '', file });
+        return;
+      }
+      button.disabled = true;
+      rowStatus.setText(t('import.fetchingShort'));
+      const ref = candidate.source === 'qq'
+        ? { source: 'qq' as const, mid: candidate.sourceAlbumId }
+        : { source: 'netease' as const, id: Number(candidate.sourceAlbumId) };
+      try {
+        const res = await importAlbumRef(this.ctx, ref);
+        rowStatus.setText((res.status === 'failed' ? '❌ ' : '✅ ') + res.detail);
+        rowStatus.toggleClass('is-error', res.status === 'failed');
+        if (res.status === 'failed') button.disabled = false;
+        await openResult(res);
+      } catch (e) {
+        console.error('[vinyl] 导入搜索结果失败', e);
+        rowStatus.setText(`${t('import.failed')}${(e as Error).message || e}`);
+        rowStatus.toggleClass('is-error', true);
+        button.disabled = false;
+      }
+    };
+
+    const renderResults = (items: AlbumSearchCandidate[]) => {
+      results.empty();
+      for (const candidate of items) {
+        const card = results.createDiv({ cls: 'vinyl-import-result' });
+        if (candidate.coverUrl) {
+          const img = card.createEl('img', {
+            attr: { src: candidate.coverUrl, alt: '', loading: 'lazy' },
+            cls: 'vinyl-import-result-cover',
+          });
+          img.referrerPolicy = 'no-referrer';
+          img.addEventListener('error', () => img.addClass('vinyl-hidden'));
+        } else {
+          card.createDiv({ cls: 'vinyl-import-result-cover is-placeholder', text: '♫' });
+        }
+        const body = card.createDiv({ cls: 'vinyl-import-result-body' });
+        body.createDiv({ cls: 'vinyl-import-result-title', text: candidate.title });
+        const meta = [candidate.artists.join(' / '), candidate.releaseDate, candidate.trackCount
+          ? tf('import.trackCount', { n: candidate.trackCount })
+          : ''].filter(Boolean).join(' · ');
+        const metaRow = body.createDiv({ cls: 'vinyl-import-result-meta' });
+        metaRow.createSpan({
+          cls: `vinyl-badge ${candidate.source === 'qq' ? 'is-qq' : 'is-net'}`,
+          text: candidate.source === 'qq' ? t('import.sourceQq') : t('import.sourceNetease'),
+        });
+        if (meta) metaRow.createSpan({ cls: 'vinyl-muted', text: meta });
+        if (candidate.matchedBy === 'track' && candidate.matchedTrack) {
+          body.createDiv({
+            cls: 'vinyl-muted vinyl-import-result-match',
+            text: tf('import.matchedTrack', { name: candidate.matchedTrack }),
+          });
+        }
+        const rowStatus = body.createDiv({ cls: 'vinyl-muted vinyl-import-result-state' });
+        const side = card.createDiv({ cls: 'vinyl-import-result-side' });
+        const button = side.createEl('button', {
+          text: candidate.importedFilePath ? t('import.openExisting') : t('import.action'),
+          cls: candidate.importedFilePath ? '' : 'mod-cta',
+        });
+        button.addEventListener('click', () => void importCandidate(candidate, button, rowStatus));
+      }
+    };
+
+    const runSearch = async () => {
+      const query = input.value.trim();
+      if (parseAlbumInput(query)) {
+        await runDirect();
+        return;
+      }
+      if (query.length < 2) {
+        // 太短不搜：清掉上一轮的结果与状态即可，不再给「还差一个字符」之类的提示
+        this.latestRequestId++;
+        results.empty();
+        results.removeClass('is-loading');
+        searchBtn.disabled = false;
+        setStatus('');
+        return;
+      }
+      const requestId = ++this.latestRequestId;
+      searchBtn.disabled = true;
+      results.empty();
+      results.addClass('is-loading');
+      setStatus(t('import.searching'));
+      try {
+        const result = await discoverAlbums(this.ctx, query);
+        if (requestId !== this.latestRequestId) return;
+        renderResults(result.items);
+        if (!result.items.length) {
+          const failed = result.warnings.length === 2;
+          setStatus(failed ? t('import.searchFailed') : t('import.searchNoResults'), failed);
+        } else if (result.warnings.length) {
+          const names = result.warnings.map((warning) =>
+            warning.source === 'qq' ? t('import.sourceQq') : t('import.sourceNetease'));
+          const reasons = result.warnings.map((warning) => warning.message).filter(Boolean);
+          setStatus(tf('import.searchPartial', {
+            sources: names.join(t('common.listSep')),
+            reason: reasons.join(t('common.listSep')),
+          }));
+        } else {
+          setStatus(tf('import.searchFound', { n: result.items.length }));
+        }
+      } catch (e) {
+        if (requestId !== this.latestRequestId) return;
+        console.error('[vinyl] 聚合搜索失败', e);
+        setStatus(t('import.searchFailed'), true);
+      } finally {
+        if (requestId === this.latestRequestId) {
+          results.removeClass('is-loading');
+          searchBtn.disabled = false;
+        }
+      }
+    };
+
+    input.addEventListener('input', () => {
+      if (this.searchTimer != null) window.clearTimeout(this.searchTimer);
+      this.searchTimer = window.setTimeout(() => void runSearch(), 350);
     });
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        if (this.searchTimer != null) window.clearTimeout(this.searchTimer);
+        void runSearch();
+      }
+    });
+    searchBtn.addEventListener('click', () => void runSearch());
     window.setTimeout(() => input.focus(), 50);
   }
 
   onClose() {
+    this.latestRequestId++;
+    if (this.searchTimer != null) window.clearTimeout(this.searchTimer);
+    this.searchTimer = null;
     this.contentEl.empty();
   }
 }
@@ -147,10 +281,7 @@ export class LocalImportModal extends Modal {
     });
     this.fileInput = fileInput;
     this.dirInput = dirInput;
-    const fileSummary = fileSec.createDiv({
-      cls: 'vinyl-muted vinyl-import-files',
-      text: t('import.noFilesPicked'),
-    });
+    const fileSummary = fileSec.createDiv({ cls: 'vinyl-muted vinyl-import-files' });
 
     // —— ② 目标：新建 / 已有 ——
     const targetSec = c.createDiv({ cls: 'vinyl-import-section' });
@@ -213,7 +344,7 @@ export class LocalImportModal extends Modal {
     const refreshFiles = () => {
       const names = this.picked.map((f) => f.name);
       if (!names.length) {
-        fileSummary.setText(t('import.noFilesPicked'));
+        fileSummary.setText('');
         this.scan = null;
         return;
       }

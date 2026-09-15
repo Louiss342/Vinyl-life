@@ -24,7 +24,8 @@ npm test
 - **样式只写在 `styles.css`**：不要写内联 `style`（Obsidian 审核明确要求）。需要主题适配就用 `var(--...)` 变量。构建会把 `styles.css` 内联一份进 `main.js`（`src/core/style-fallback.ts`：安装漏文件时用构造样式表兜底，不建 `<style>` 元素）——改样式只需改 `styles.css`，内联副本构建时自动同步。
 - **定时器走 `window.*`**：`window.setTimeout` / `window.setInterval`，弹出窗口场景下才正常。
 - **网络请求用 `requestUrl`**，不要用 `fetch`（插件环境下的跨域与凭据行为不同）。
-- **不要引入已废弃 API**：设置面板用声明式 API（`getSettingDefinitions()`，`minAppVersion` 1.13.0），每行一条设置定义 —— `name`/`desc` 会进 Obsidian 的设置搜索；需要整面板刷新时用 `refreshPanel()`，它为什么要绕一圈写在注释里，别改成裸 `update()`。
+- **设置面板是自绘标签页（有意为之）**：整面板走 `display()`，不实现 `getSettingDefinitions()` —— 官方文档写明它一旦返回非空数组，`display()` 就不会被调用，两条路只能二选一。选自绘是为了认领设计稿（`Excalidraw/Drawing 2026-09-15 15.58.24`）的浏览器标签页与「关于」页手绘；代价是本插件的设置**不进 Obsidian 的全局设置搜索**（自绘面板的插件都如此），别再「顺手升级」回声明式分页。面板刷新用 `render()`：它为什么整块重建、标签页怎么保持，写在 `src/settings.ts` 的文件头注释里。
+- **除此之外不引入已废弃 API**。
 - **注释写中文**，并且写「为什么」而不是「做了什么」。仓库里现有的注释密度可以当参考。
 - 新增依赖前先想一想：能内联进 `main.js` 的小实现，好过一个只用到一次的三方包。
 
@@ -83,7 +84,8 @@ Local debugging: copy `main.js`, `manifest.json` and `styles.css` into `<vault>/
 - **Styling belongs in `styles.css`**: no inline `style` attributes (an explicit Obsidian review requirement). Use `var(--...)` theme variables for theming. The build inlines a copy of `styles.css` into `main.js` (`src/core/style-fallback.ts`: applied via a constructed stylesheet when an install is missing the file — never by creating a `<style>` element), so editing `styles.css` is all it takes and the inlined copy follows at build time.
 - **Use `window.*` timers**: `window.setTimeout` / `window.setInterval`, so popout windows behave.
 - **Use `requestUrl`**, not `fetch` — cross-origin and credential handling differ inside the plugin sandbox.
-- **No deprecated APIs**: the settings panel uses the declarative API (`getSettingDefinitions()`, `minAppVersion` 1.13.0) with one definition per row, so `name`/`desc` reach Obsidian's settings search. Use `refreshPanel()` for a full-panel refresh; the comment explains why a bare `update()` is wrong there — please don't "simplify" it back.
+- **The settings panel is drawn by the plugin itself, on purpose**: it renders through `display()` and deliberately does not implement `getSettingDefinitions()` — the docs are explicit that once that method returns a non-empty array, `display()` is never called, so the two are mutually exclusive. The self-drawn route is what lets the panel claim the browser-style tabs and the hand-drawn About page from the design (`Excalidraw/Drawing 2026-09-15 15.58.24`); the price is that this plugin's settings **do not reach Obsidian's global settings search** (true of every self-drawn panel). Please don't "upgrade" it back to declarative pages. Refresh the panel with `render()`; the header comment in `src/settings.ts` explains the full rebuild and how the active tab survives it.
+- **Other than that, no deprecated APIs.**
 - **Comments are written in Chinese**, and they explain *why*, not *what*. Match the existing comment density.
 - Think twice before adding a dependency: a small inlined implementation usually beats a third-party package used once.
 

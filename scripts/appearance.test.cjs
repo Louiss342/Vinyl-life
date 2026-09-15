@@ -30,14 +30,15 @@ vm.runInNewContext(source, {
 const mod = module_.exports;
 const i18n = mod.i18n;
 
-test('播放器配色：两个方案、默认胡桃木，类名 is-deck-*', () => {
-  assert.deepEqual([...mod.DECK_STYLES], ['walnut', 'black']);
+test('播放器配色：三个方案、默认胡桃木，类名 is-deck-*', () => {
+  assert.deepEqual([...mod.DECK_STYLES], ['walnut', 'shell', 'black']);
   assert.equal(mod.DEFAULT_DECK_STYLE, 'walnut');
   assert.equal(mod.deckClass('black'), 'is-deck-black');
   assert.equal(mod.deckClass('walnut'), 'is-deck-walnut');
+  assert.equal(mod.deckClass('shell'), 'is-deck-shell');
   // 每个方案的显示名都在词典里（防新增方案忘配文案）——文案本身归 i18n，这里只查键
   for (const v of mod.DECK_STYLES) {
-    const key = { walnut: 'settings.deckWalnut', black: 'settings.deckBlack' }[v];
+    const key = { walnut: 'settings.deckWalnut', shell: 'settings.deckShell', black: 'settings.deckBlack' }[v];
     assert.ok(i18n.DICT[key]?.zh && i18n.DICT[key]?.en, `${v} 缺词典文案（${key}）`);
   }
 });

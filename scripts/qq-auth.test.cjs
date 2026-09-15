@@ -149,6 +149,7 @@ function gateway(opts = {}) {
       try {
         payload = JSON.parse(init.body || '{}');
       } catch (_) {}
+      if (payload.req_album && payload.req_song && opts.search) return opts.search(payload);
       const mod = (payload.req && payload.req.module) || (payload.req_0 && payload.req_0.module) || '';
       if (mod === 'QQConnectLogin.LoginServer') {
         if (opts.qqLogin) return opts.qqLogin(payload);
@@ -256,6 +257,46 @@ test('qq qr/key returns a PNG data URL and qrsig as unikey', async () => {
   assert.deepEqual([...bytes.subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47]);
   assert.equal(g.files.has('/test/.qq-cookie'), false, 'key fetch must not write a credential');
   assert.equal(g.requests.length, 2, '取码 = xlogin（拿 login_sig）+ ptqrshow');
+});
+
+test('QQ 搜索：同时请求专辑与歌曲，网关返回稳定的归一化形状', async () => {
+  const g = gateway({
+    search: (payload) => {
+      assert.equal(payload.req_album.param.search_type, 2);
+      assert.equal(payload.req_song.param.search_type, 0);
+      assert.equal(payload.req_album.param.query, '叶惠美');
+      return json({
+        req_album: { code: 0, data: { body: { album: { list: [{
+          albumMID: ALBUM_MID,
+          albumName: '叶惠美',
+          singerName: '周杰伦',
+          publicTime: '2003-07-31',
+          song_count: 11,
+        }] } } } },
+        req_song: { code: 0, data: { body: { song: { list: [{ songInfo: {
+          mid: MID,
+          name: '晴天',
+          singer: [{ name: '周杰伦' }],
+          album: { mid: ALBUM_MID, name: '叶惠美' },
+        } }] } } } },
+      });
+    },
+  });
+  const result = await g.call('GET', `/api/qq/search?keywords=${encodeURIComponent('叶惠美')}`);
+  assert.equal(result.data.albums[0].mid, ALBUM_MID);
+  assert.equal(result.data.albums[0].artist, '周杰伦');
+  assert.equal(result.data.songs[0].albumMid, ALBUM_MID);
+  assert.equal(result.data.songs[0].name, '晴天');
+  assert.equal(result.requiresLogin, false);
+});
+
+test('QQ 搜索：未登录且上游返空时显式标记需要插件内登录', async () => {
+  const g = gateway({ search: () => json({
+    req_album: { code: 0, data: { body: { album: { list: [] } } } },
+    req_song: { code: 0, data: { body: { song: { list: [] } } } },
+  }) });
+  const result = await g.call('GET', '/api/qq/search?keywords=test');
+  assert.equal(result.requiresLogin, true);
 });
 
 test('扫码会话绑定：复用官方完整 Cookie 会话、动态版本与回跳地址', async () => {

@@ -2,7 +2,7 @@
 // 对外方法与 ServerClient 同构，queue / engine / import 无需感知路由细节。
 import { ServerClient, SongUrlResult } from './server-client';
 import { WebClient } from './web-client';
-import type { NeteaseAlbumResponse, SearchAlbumResponse } from './api-types';
+import type { NeteaseAlbumResponse, NeteaseSearchResponse } from './api-types';
 import { t } from './i18n';
 
 export class NeteaseService {
@@ -42,9 +42,14 @@ export class NeteaseService {
     return this.gateway.songUrl(id, level);
   }
 
-  async searchAlbum(keywords: string): Promise<SearchAlbumResponse> {
+  async searchAlbums(keywords: string): Promise<NeteaseSearchResponse> {
     await this.ensureGatewayReady();
-    return this.gateway.searchAlbum(keywords);
+    return this.gateway.searchAlbums(keywords);
+  }
+
+  async searchSongs(keywords: string): Promise<NeteaseSearchResponse> {
+    await this.ensureGatewayReady();
+    return this.gateway.searchSongs(keywords);
   }
 
   async fetchCover(url: string): Promise<ArrayBuffer> {

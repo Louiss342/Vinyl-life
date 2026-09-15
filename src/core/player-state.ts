@@ -70,7 +70,7 @@ export interface EngineDeps {
   /** 队列被拖拽重排后的钩子（持久化用；orderKeys = 新顺序的 trackKey 列表）。
    *  可选：不传则重排只影响本次会话。 */
   onQueueOrderChange?: (albumNotePath: string, orderKeys: string[]) => void;
-  /** 队列被「恢复原有顺序」后的钩子（持久化用：删掉该专辑存过的自定义顺序）。
+  /** 队列被「恢复发行顺序」后的钩子（持久化用：删掉该专辑存过的自定义顺序）。
    *  可选：不传则恢复只影响本次会话。 */
   onQueueOrderClear?: (albumNotePath: string) => void;
 }
@@ -79,7 +79,7 @@ export class PlaybackEngine {
   private audio = new Audio();
   private queue: Track[] = [];
   /** 本专辑的「原始顺序」（构建出来的自然顺序：在线源 = 专辑曲目顺序，本地 = 扫描文件名顺序）。
-   *  只在 setQueue 里按构建结果写一次，拖拽不碰它——「恢复原有顺序」靠它把队列排回去。 */
+   *  只在 setQueue 里按构建结果写一次，拖拽不碰它——「恢复发行顺序」靠它把队列排回去。 */
   private originalOrder: string[] = [];
   private index = -1;
   private status: PlayerStatus = 'idle';
@@ -247,7 +247,7 @@ export class PlaybackEngine {
     // 切换专辑：回收上一张的 Blob，保留本队列需要的
     this.deps.local.clearBlobs(this.deps.local.keysOf(tracks));
     // 先记下「原始顺序」（= 构建出来的自然顺序），再套用自定义顺序：
-    // 它是「恢复原有顺序」的基准，拖拽不得改动，故只认这里的构建结果
+    // 它是「恢复发行顺序」的基准，拖拽不得改动，故只认这里的构建结果
     this.originalOrder = tracks.map((tr) => trackKey(tr));
     // 该专辑存过自定义顺序 → 套用（新增曲目按原相对顺序补在后面）；
     // 没存过（或钩子未接线）走构建出来的原始顺序
@@ -345,7 +345,7 @@ export class PlaybackEngine {
 
   /** 只保留当前曲目所属的那张专辑（关掉专辑队列模式、或点「清空后面的专辑」时用）。
    *  按专辑路径筛，不按「段」—— 打乱后的队列里同一张专辑的曲目是散开的，
-   *  按段筛只会留下一小截。保留下来的相对顺序不变（想回原顺序有「恢复原有顺序」）。 */
+   *  按段筛只会留下一小截。保留下来的相对顺序不变（想回原顺序有「恢复发行顺序」）。 */
   keepCurrentAlbum() {
     const albumPath = this.albumOfCurrent().path;
     if (!albumPath) return;

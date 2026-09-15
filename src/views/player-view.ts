@@ -1,5 +1,5 @@
 // 播放器视图：转盘 + 旋转唱片 + 直线唱臂（不播放归位支架 / 播放落针并随进度内移）；
-//   胡桃木设备面板（.vinyl-deck）：金属圆钮控制、红色填充进度轨、丝印品牌行；
+//   设备面板（.vinyl-deck，胡桃木 / 贝壳白 / 哑光黑三套配色）：金属圆钮控制、红色填充进度轨、丝印品牌行；
 //   换碟 = 头部圆钮弹 Menu。
 // 增量渲染：壳只建一次，状态更新只改目标节点——旋转动画不被打断。
 import { ItemView, WorkspaceLeaf, setIcon } from 'obsidian';
@@ -240,11 +240,10 @@ export class VinylPlayerView extends ItemView {
     const els = this.els;
     if (els) {
       els.queueModeBtn.setAttribute('aria-label', t('player.queueMode'));
+      // 播放模式钮的提示就是当前模式名本身（不再缀「点击切换」）
       els.playModeBtn.setAttribute(
         'aria-label',
-        tf('player.modeHint', {
-          mode: t(modeLabelKey(this.lastPlayMode || 'once', this.plugin.settings.queueMode)),
-        })
+        t(modeLabelKey(this.lastPlayMode || 'once', this.plugin.settings.queueMode))
       );
       els.clearQueueBtn.setAttribute('aria-label', t('player.queueClearOthers'));
     }
@@ -294,7 +293,7 @@ export class VinylPlayerView extends ItemView {
     setIcon(playModeBtn, PLAY_MODE_ICON.once);
     playModeBtn.addEventListener('click', () => this.cyclePlayMode());
 
-    // 设备面板（胡桃木底座，样式见 .vinyl-deck）
+    // 设备面板（配色见 .vinyl-deck 与 .is-deck-*）
     const deck = c.createDiv({ cls: 'vinyl-deck' });
 
     // 转盘：外层 discOuter 承接入场动画，内层 vinyl 承载 CSS 旋转（分离互不冲突）
@@ -366,7 +365,7 @@ export class VinylPlayerView extends ItemView {
     brandRow.createDiv({ cls: 'vinyl-deck-brand', text: 'Vinyl Life' });
     const qualityEl = brandRow.createDiv({ cls: 'vinyl-quality' });
 
-    // Vinyl order 行：标题 + ✎ 追加感想 + ↺ 恢复原有顺序
+    // Vinyl order 行：标题 + ✎ 追加感想 + ↺ 恢复发行顺序
     const orderRow = c.createDiv({ cls: 'vinyl-order-row' });
     const queueTitle = orderRow.createDiv({ cls: 'vinyl-queue-title' });
     // 清空后面的专辑（保留当前这张）：只在队列里不止一张专辑时有意义
@@ -453,7 +452,7 @@ export class VinylPlayerView extends ItemView {
     return this.els;
   }
 
-  // 「恢复原有顺序」（Vinyl order 行的 ↺ 按钮）：
+  // 「恢复发行顺序」（Vinyl order 行的 ↺ 按钮）：
   //   本地专辑按扫出来的文件名顺序播放，那本身就是它的「原有顺序」→ 只提示，不做任何事；
   //   在线专辑交给引擎就地排回原始顺序（不重新联网取专辑），并清掉存过的自定义顺序。
   //   队列来源看当前曲目（snapshot().current?.source）；还没开始播（index = -1）时退到队首曲目，

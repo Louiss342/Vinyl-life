@@ -389,6 +389,18 @@ test('导入专辑：QQ 音乐链接 → 走 QQ，写出 qqId / qq 链接 / 封�
   assert.match(res.detail, /11 曲/);
 });
 
+test('导入专辑：同名不同来源不覆盖，冲突时文件名自动加歌手', async () => {
+  const h = setup();
+  h.files.set(
+    'Vinyl Life/Vinyl Note/未完成.md',
+    new TFile('Vinyl Life/Vinyl Note/未完成.md', '---\ntags: [album]\nneteaseId: 123\n---\n')
+  );
+  const res = await h.mod.importAlbumRef(h.ctx, { source: 'qq', mid: QQ_MID });
+  assert.equal(res.status, 'created');
+  assert.ok(h.files.has('Vinyl Life/Vinyl Note/未完成 - 孙燕姿.md'));
+  assert.match(h.files.get('Vinyl Life/Vinyl Note/未完成 - 孙燕姿.md')._content, /qqId:/);
+});
+
 test('导入专辑：纯 mid / 旧版链接同样可导入', async () => {
   const h1 = setup();
   assert.equal((await h1.mod.importAlbum(h1.ctx, QQ_MID)).ok, true);

@@ -123,6 +123,31 @@ function srcTsFiles(dir = path.join(__dirname, '../src'), out = []) {
   return out;
 }
 
+// ============ 词典反向自检：不留「没人引用」的死键 ============
+// 背景：功能删了、文案还留在词典里（旧版「粘贴链接」流程、重复的 noteExists 等就是这么攒下来的）。
+// 扫描范围含 scripts/ 自身：只在测试里按名字引用的键也算「有引用」，不会被误报。
+// 例外只有动态拼接的键族：modeLabelKey 用 `player.mode${name}${scope}` 现拼，源码里没有整串字面量。
+const DYNAMIC_KEY_PATTERNS = [/^player\.mode(Once|Loop|Shuffle)(Album|List)$/];
+test('i18n：词典里没有无人引用的死键（动态拼接的键族除外）', () => {
+  const scriptsDir = __dirname;
+  const files = srcTsFiles().concat(
+    fs
+      .readdirSync(scriptsDir)
+      .filter((n) => n.endsWith('.cjs'))
+      .map((n) => path.join(scriptsDir, n))
+  );
+  const haystack = files
+    .filter((f) => !f.endsWith(path.join('core', 'i18n.ts')))
+    .map((f) => fs.readFileSync(f, 'utf8'))
+    .join('\n');
+
+  const dead = Object.keys(i18n.DICT).filter(
+    (k) => !haystack.includes(k) && !DYNAMIC_KEY_PATTERNS.some((re) => re.test(k))
+  );
+  assert.ok(files.length > 0, '探针：没扫到源文件');
+  assert.deepEqual(dead, [], '词典里存在无人引用的键：删掉，或加进 DYNAMIC_KEY_PATTERNS 并注明拼接处');
+});
+
 // ============ 提示气泡防护：同一元素不得同时设 aria-label 与 title ============
 // 背景：Obsidian 会按 aria-label 渲染自己那套样式化提示，浏览器又会为 title 弹原生提示；
 // 同一元素上两个属性并存 ⇒ 悬停时弹两个气泡。
@@ -426,6 +451,7 @@ function fakeEl(tag = 'div') {
       const opts = typeof o === 'string' ? { cls: o } : o || {};
       if (opts.cls) child.addClass(opts.cls);
       if (opts.text != null) child.textContent = String(opts.text);
+      if (opts.href) child.setAttribute('href', opts.href); // createEl('a', { href }) 落到属性上
       if (opts.attr) for (const [k, v] of Object.entries(opts.attr)) child.setAttribute(k, v);
       return child;
     },
@@ -538,12 +564,12 @@ test('播放器：切语言后 applyLanguage 就地更新按钮提示与头部�
   const hasText = (v) => all.some((e) => e.textContent === v);
 
   // 提示只走 aria-label（Obsidian 的原生样式化提示）；再设 title 会叠出第二个浏览器原生气泡
-  const noteBtn = all.find((e) => e.getAttribute('aria-label') === '在专辑笔记追加此刻感想');
-  assert.ok(noteBtn, '建壳时「追加感想」的提示应为中文');
+  const noteBtn = all.find((e) => e.getAttribute('aria-label') === '写点什么吧:)');
+  assert.ok(noteBtn, '建壳时「写点什么」的提示应为中文');
   assert.equal(noteBtn.getAttribute('title'), null, '追加感想钮不得再设 title');
   assert.ok(hasLabel('上一首') && hasLabel('播放 / 暂停') && hasLabel('下一首'), '控制钮提示');
-  assert.ok(hasLabel('单次播放整张专辑（点击切换）'), '播放模式钮提示（含点击切换的说明）');
-  assert.ok(hasLabel('恢复原有顺序'), '恢复顺序钮提示');
+  assert.ok(hasLabel('单次播放整张专辑'), '播放模式钮提示就是当前模式名（不再缀「点击切换」）');
+  assert.ok(hasLabel('恢复发行顺序'), '恢复顺序钮提示');
   assert.ok(hasText('黑胶播放器'), '头部标题');
   assert.ok(hasText('空队列'), '空队列提示');
 
@@ -553,9 +579,9 @@ test('播放器：切语言后 applyLanguage 就地更新按钮提示与头部�
   view.applyLanguage();
 
   assert.ok(hasLabel('Previous track') && hasLabel('Play / pause') && hasLabel('Next track'));
-  assert.ok(hasLabel('Play the album once (click to switch)'), '模式钮提示跟着语言换');
-  assert.ok(hasLabel('Restore original order'), '恢复原有顺序 → Restore original order');
-  assert.equal(noteBtn.getAttribute('aria-label'), 'Append current thoughts to the album note');
+  assert.ok(hasLabel('Play the album once'), '模式钮提示跟着语言换');
+  assert.ok(hasLabel('Restore release order'), '恢复发行顺序 → Restore release order');
+  assert.equal(noteBtn.getAttribute('aria-label'), 'Write something :)');
   assert.equal(noteBtn.getAttribute('title'), null, '切语言也不该多出 title');
   // 标题文字在里层 span 里（外层是 marquee 容器）——假 DOM 的 textContent 不聚合子节点，所以读里层
   assert.equal(view.els.headerTitleText.textContent, 'Vinyl player', '头部标题跟着换');
@@ -566,7 +592,7 @@ test('播放器：切语言后 applyLanguage 就地更新按钮提示与头部�
 
   mod.setLanguage('zh');
   view.applyLanguage();
-  assert.equal(noteBtn.getAttribute('aria-label'), '在专辑笔记追加此刻感想', '切回中文仍是原文案');
+  assert.equal(noteBtn.getAttribute('aria-label'), '写点什么吧:)', '切回中文仍是原文案');
   assert.equal(view.els.headerTitleText.textContent, '黑胶播放器');
 });
 
@@ -962,58 +988,139 @@ test('「关于」手记：正文不进 i18n 词典（不是键、不翻译）',
   );
 });
 
-test('「关于」页接线：设置面板确有 about 分页，且渲染的是 ABOUT_TEXT 与 manifest 版本号', () => {
+test('设置面板：自绘标签页（有意不走声明式分页）', () => {
   const src = fs.readFileSync(path.join(__dirname, '../src/settings.ts'), 'utf8');
-  assert.match(src, /new AboutPage\(/, '「关于」页由 AboutPage 渲染（整页自绘，没有设置行）');
-  assert.match(src, /settings\.tab\.about/, '「关于」页名走 settings.tab.about');
-  assert.match(src, /class AboutPage extends SettingPage/, '关于页继承 SettingPage');
-  assert.match(src, /ABOUT_TEXT/, '正文要用 ABOUT_TEXT 常量渲染，别在 settings.ts 里另抄一份');
-  assert.match(
-    src,
-    /tf\('settings\.aboutVersion',\s*\{\s*v:\s*this\.plugin\.manifest\.version\s*\}\)/,
-    '版本号取自 manifest.version，走 tf 占位符'
+  // 自绘是刻意的：官方文档写明 getSettingDefinitions() 返回非空数组时 display() 不会被调用，
+  // 两条路只能二选一。这条断言是闸门，别「顺手升级」回声明式分页（注释里提到它不算）。
+  assert.equal(
+    /^\s*getSettingDefinitions\s*\(/m.test(src),
+    false,
+    '不实现 getSettingDefinitions()：声明式分页会顶掉自绘标签条（见 CONTRIBUTING 与文件头注释）'
   );
-  assert.match(src, /REPO_URL/, '底部 GitHub 外链走 REPO_URL 常量');
+  assert.match(src, /display\(\): void \{/, '面板整块由 display() 自绘');
+  assert.match(src, /containerEl\.addClass\('vinyl-settings'\)/, '整块挂 vinyl-settings（样式在 styles.css）');
+  assert.match(src, /private switchTab\(id: TabId\): void/, '点标签就地换内容走 switchTab');
+});
+
+test('「关于」页接线：about 标签页渲染手记正文，版本号与仓库地址都走常量', () => {
+  const settingsSrc = fs.readFileSync(path.join(__dirname, '../src/settings.ts'), 'utf8');
+  const aboutSrc = fs.readFileSync(path.join(__dirname, '../src/views/about-page.ts'), 'utf8');
+  assert.match(
+    settingsSrc,
+    /renderAboutPage\(el, this\.plugin\.manifest\.version\)/,
+    '版本号取自 manifest.version，交给「关于」页渲染'
+  );
+  assert.match(
+    settingsSrc,
+    /attachAboutInk\(root, note\)/,
+    '便签外框的笔触要挂上 —— 手绘的关键，不是可选项'
+  );
+  assert.match(aboutSrc, /ABOUT_TEXT(?!_)/, '正文要用 ABOUT_TEXT 常量渲染，别另抄一份');
+  assert.match(
+    aboutSrc,
+    /tf\('settings\.aboutVersion',\s*\{\s*v:\s*version\s*\}\)/,
+    '版本行走 tf 占位符（壳文案不写死）'
+  );
+  assert.match(aboutSrc, /REPO_URL/, '底部 GitHub 外链走 REPO_URL 常量');
   assert.match(about.REPO_URL, /^https:\/\/github\.com\/Louiss342\/Vinyl-life$/, '仓库地址');
 
-  // 接线顺序（只切 AboutPage 这一段：整份源码里的 import 行会让「谁在前」变得没意义）：
+  // 接线顺序（只戳正文那两行：import 行会让「谁在前」变得没意义）：
   // 中文正文先建，英译后建 —— 真正的节点先后由下面假 DOM 的用例驱动验证
-  const aboutPageSrc = src.slice(src.indexOf('class AboutPage'));
-  assert.ok(aboutPageSrc.length > 0, '探针：settings.ts 里找得到 AboutPage');
   assert.match(
-    aboutPageSrc,
+    aboutSrc,
     /ABOUT_TEXT(?!_)[\s\S]{0,400}?ABOUT_TEXT_EN/,
-    'AboutPage 里英译要接在中文正文之后（不是只 import 进来）'
+    '「关于」页里英译要接在中文正文之后（不是只 import 进来）'
+  );
+
+  // 「全手绘」的「手」来自手写体：标题 / 便签 / 页脚三块都要挂在字体族里，漏一块就不是整页手绘了
+  const css = fs.readFileSync(path.join(__dirname, '../styles.css'), 'utf8');
+  assert.match(
+    css,
+    /\.vinyl-about-title,\s*\.vinyl-about-note,\s*\.vinyl-about-meta\s*\{[^}]*font-family:\s*'Vinyl Hand',\s*'Vinyl Hand CJK'/,
+    '「关于」页的标题 / 便签 / 页脚都要用上手写体'
   );
 });
 
-test('设置面板：四页原生分页（type: page），页名走 i18n', () => {
+test('手写体子集：取材覆盖「关于」页（改文案要重跑脚本，字才有手写感）', () => {
+  const script = fs.readFileSync(path.join(__dirname, 'subset-hand-font.cjs'), 'utf8');
+  assert.match(script, /core\/about\.ts/, '子集要按 about.ts 的手记正文取材');
+  assert.match(script, /ABOUT_TEXT_EN/, '英译正文也要进子集');
+  assert.match(script, /settings\.aboutVersion|settings\.aboutLicense/, '版本行 / 许可行的字也要收');
+  assert.match(script, /shelf\.tutorial\./, '教程文案的来源不能被删掉（两处共用一个字体族）');
+  assert.match(script, /Vinyl Life/, '页面上写死的拉丁文（产品名等）不在 i18n 里，得在脚本里列出来');
+
+  // 两个面都要真的内联在样式表尾部：子集没生成 / 被清掉的话，「关于」页会整页回落到主题字体
+  const css = fs.readFileSync(path.join(__dirname, '../styles.css'), 'utf8');
+  assert.equal((css.match(/data:font\/woff2/g) || []).length, 2, 'styles.css 尾部是两个内联子集');
+  assert.match(css, /font-family: 'Vinyl Hand'/, '拉丁面');
+  assert.match(css, /font-family: 'Vinyl Hand CJK'/, '中文面');
+});
+
+test('设置面板：四个标签页，顺序与页名固定（页名走词典）', () => {
   const mod = settingsModule();
-  const plugin = {
-    manifest: { version: '9.9.9' },
-    settings: mod.DEFAULT_SETTINGS,
-    server: {},
-  };
-  const tab = new mod.VinylSettingTab({}, plugin);
-  const pages = tab.getSettingDefinitions();
+  const tabs = mod.SETTINGS_TABS;
   // 展开一层再比：vm 沙箱里的数组原型与测试侧不同，deepStrictEqual 会判不等
   assert.deepEqual(
-    [...pages.map((p) => p.name)],
-    ['通用', '外观', '源', '关于'],
-    '四页分页，页名随语言（默认中文）'
+    [...tabs.map((tab) => tab.id)],
+    ['general', 'appearance', 'source', 'about'],
+    '标签顺序照设计稿：通用 / 外观 / 源 / 关于'
   );
   assert.deepEqual(
-    [...pages.map((p) => p.type)],
-    ['page', 'page', 'page', 'page'],
-    '四页都是原生分页（type: page）'
+    [...tabs.map((tab) => tab.key)],
+    ['settings.tab.general', 'settings.tab.appearance', 'settings.tab.source', 'settings.tab.about'],
+    '页名键收在清单里，别在渲染处另拼'
   );
-  assert.equal(typeof pages[3].page, 'function', '「关于」走 page 工厂');
-  assert.ok(Array.isArray(pages[0].items) && pages[0].items.length > 0, '前几页是 items 分页');
+  for (const tab of tabs) {
+    for (const lang of ['zh', 'en']) {
+      const entry = i18n.DICT[tab.key];
+      assert.ok(entry && entry[lang], `${tab.key} 缺 ${lang} 页名`);
+    }
+  }
 });
 
-// ============ 「关于」页：中英并列的渲染顺序（假 DOM 驱动真实分页内容） ============
-// settings.ts 的其余分页要整个 Obsidian App 才能跑，这里只驱动 AboutPage.display() ——
-// 它只用得到 container 的 createDiv / createSpan / createEl，正是下面 fakeEl 覆盖的那部分。
+test('设置面板：标签条四个按钮，点一下就换内容、高亮跟着走（假 DOM 驱动 display()）', () => {
+  // 面板整块自绘，所以 display() 能在这个假 DOM 上跑起来：Setting 用链式桩顶掉，
+  // 控件本身（下拉 / 开关的真实现）不需要 —— 这里验的是标签条与「点一下就换内容」。
+  const mod = settingsModule();
+  const tab = new mod.VinylSettingTab(
+    {},
+    {
+      manifest: { version: '9.9.9' },
+      settings: mod.DEFAULT_SETTINGS,
+      server: {},
+      saveSettings: async () => {},
+      refreshLanguage: () => {},
+      refreshAppearance: () => {},
+    }
+  );
+  tab.containerEl = fakeEl();
+  tab.display();
+
+  const buttons = () => collect(tab.containerEl).filter((e) => e.classes.has('vinyl-settings-tab'));
+  assert.equal(buttons().length, 4, '四个标签');
+  assert.deepEqual(
+    [...buttons().map((b) => b.textContent)],
+    ['通用', '外观', '源', '关于'],
+    '标签文案走词典（默认中文）'
+  );
+  assert.equal(buttons()[0].getAttribute('aria-current'), 'true', '当前标签要报给读屏软件');
+  assert.equal(buttons()[1].getAttribute('aria-current'), 'false', '其余标签不是当前页');
+  assert.ok(buttons()[0].classes.has('is-active'), '当前标签挂外观类');
+
+  const has = (text) => collect(tab.containerEl).some((e) => String(e.textContent).includes(text));
+  assert.ok(has('语言 / Language'), '默认停在「通用」：看得到语言这一行');
+  assert.equal(has('每行专辑数量'), false, '「外观」页的行还没渲染（切标签是重建，不是预建四份）');
+
+  buttons()[1].onclick();
+  assert.ok(buttons()[1].classes.has('is-active'), '切到「外观」后高亮跟过去');
+  assert.equal(buttons()[0].getAttribute('aria-current'), 'false', '上一个标签不再报当前页');
+  assert.ok(has('每行专辑数量'), '内容换成「外观」页的设置行');
+  assert.equal(has('语言 / Language'), false, '「通用」页的行已经清掉');
+});
+
+// ============ 设置面板与「关于」页：esbuild + 假 DOM ============
+// 面板整块自绘，所以能在这个假 DOM 上跑：Setting 顶成链式桩（控件回调不触发，
+// 验的是行的装配与标签切换），「关于」页的文本部分是纯 DOM 构建，直接驱动。
 let settingsBundle = null;
 function settingsModule() {
   if (settingsBundle) return settingsBundle;
@@ -1044,8 +1151,36 @@ function settingsModule() {
               this.plugin = plugin;
             }
           },
-          SettingPage: class {},
-          Setting: class {},
+          // 链式桩：设置行的装配只用得到这几个方法，控件本身不参与断言（回调不触发）。
+          // setName 把标题落进 DOM（真实类名 setting-item-name），标签切换的用例靠它找行。
+          Setting: class {
+            constructor(containerEl) {
+              this.settingEl = containerEl.createDiv({ cls: 'setting-item' });
+              this.controlEl = this.settingEl.createDiv({ cls: 'setting-item-control' });
+            }
+            setName(text) {
+              this.settingEl.createSpan({ cls: 'setting-item-name', text });
+              return this;
+            }
+            setDesc() {
+              return this;
+            }
+            setHeading() {
+              return this;
+            }
+            addDropdown() {
+              return this;
+            }
+            addToggle() {
+              return this;
+            }
+            addText() {
+              return this;
+            }
+            addButton() {
+              return this;
+            }
+          },
           TFile: class {},
           TFolder: class {},
           WorkspaceLeaf: class {},
@@ -1066,23 +1201,40 @@ function settingsModule() {
   return settingsBundle;
 }
 
-test('「关于」页：中文正文在上、英译在下（渲染顺序 + 两份内容逐字进 DOM）', () => {
-  const mod = settingsModule();
-  // 只驱动「关于」页：定义里其余三页要整个 Obsidian App 才渲染得出来，这里只取 page 工厂那一页
-  const tab = new mod.VinylSettingTab({}, {
-    manifest: { version: '9.9.9' },
-    settings: mod.DEFAULT_SETTINGS,
-    server: {},
+// 「关于」页单独起一份 bundle：它的文本渲染是纯 DOM 构建（笔触那半要真实 SVG，
+// 由源码级断言把关），测试直接驱动 renderAboutPage 就行。
+let aboutBundle = null;
+function aboutModule() {
+  if (aboutBundle) return aboutBundle;
+  const src = esbuild.buildSync({
+    entryPoints: [path.join(__dirname, '../src/views/about-page.ts')],
+    bundle: true,
+    write: false,
+    format: 'cjs',
+    platform: 'node',
+    external: ['obsidian'],
+  }).outputFiles[0].text;
+  const module = { exports: {} };
+  vm.runInNewContext(src, {
+    module,
+    exports: module.exports,
+    require: () => ({}),
+    console,
+    Buffer,
+    setTimeout,
+    clearTimeout,
   });
-  const aboutDef = tab
-    .getSettingDefinitions()
-    .find((d) => d.type === 'page' && typeof d.page === 'function');
-  assert.ok(aboutDef, '四页里有一页走 page 工厂（「关于」）');
-  const page = aboutDef.page();
-  page.containerEl = fakeEl();
-  page.display();
+  aboutBundle = module.exports;
+  return aboutBundle;
+}
 
-  const nodes = collect(page.containerEl);
+test('「关于」页：中文正文在上、英译在下（渲染顺序 + 两份内容逐字进 DOM）', () => {
+  const mod = aboutModule();
+  const container = fakeEl();
+  const { root, note } = mod.renderAboutPage(container, '9.9.9');
+  assert.ok(root && note, '返回根块与便签块：手绘框要按便签的实际尺寸画');
+
+  const nodes = collect(container);
   const zh = nodes.findIndex((e) => e.classes.has('vinyl-about-text'));
   const en = nodes.findIndex((e) => e.classes.has('vinyl-about-text-en'));
   const meta = nodes.findIndex((e) => e.classes.has('vinyl-about-meta'));
@@ -1094,8 +1246,11 @@ test('「关于」页：中文正文在上、英译在下（渲染顺序 + 两�
   assert.equal(nodes[en].textContent, ABOUT_EXPECTED_EN, '英文块原样进 DOM（textContent 不裁剪）');
   assert.ok(
     nodes.some((e) => String(e.textContent).includes('9.9.9')),
-    '版本号仍取自 manifest.version'
+    '版本号走版本行（入参由 settings.ts 从 manifest.version 取，接线另有用例把关）'
   );
+  const link = nodes.find((e) => e.tag === 'a');
+  assert.ok(link, '底部有 GitHub 外链');
+  assert.equal(link.getAttribute('href'), about.REPO_URL, '链接指向仓库地址常量');
 });
 
 test('README：开头的中文手记下方跟着同一份英译（不加标题）', () => {

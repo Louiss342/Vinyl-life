@@ -30,7 +30,7 @@ export interface NeteaseSong {
   id?: number | string;
   name?: string;
   ar?: NeteaseArtist[];
-  al?: { name?: string; picUrl?: string };
+  al?: { id?: number | string; name?: string; picUrl?: string; publishTime?: number | string };
   dt?: number | string;
 }
 
@@ -85,8 +85,67 @@ export interface QqAlbumResponse {
   };
 }
 
-export interface SearchAlbumResponse {
-  result?: unknown;
+export interface NeteaseSearchAlbum {
+  id?: number | string;
+  name?: string;
+  artist?: NeteaseArtist;
+  artists?: NeteaseArtist[];
+  picUrl?: string;
+  publishTime?: number | string;
+  size?: number | string;
+  status?: number | string;
+  copyrightId?: number | string;
+  available?: boolean;
+}
+
+export interface NeteaseSearchSong extends NeteaseSong {
+  status?: number | string;
+  copyrightId?: number | string;
+  available?: boolean;
+  artists?: NeteaseArtist[];
+  album?: {
+    id?: number | string;
+    name?: string;
+    picUrl?: string;
+    publishTime?: number | string;
+  };
+}
+
+export interface NeteaseSearchResponse {
+  code?: number | string;
+  result?: {
+    albums?: NeteaseSearchAlbum[];
+    songs?: NeteaseSearchSong[];
+  };
+}
+
+export interface QqSearchAlbum {
+  mid?: string;
+  name?: string;
+  artist?: string;
+  coverUrl?: string;
+  publishTime?: string;
+  trackCount?: number;
+  available?: boolean;
+}
+
+export interface QqSearchSong {
+  mid?: string;
+  name?: string;
+  artist?: string;
+  albumMid?: string;
+  albumName?: string;
+  albumCover?: string;
+  available?: boolean;
+}
+
+export interface QqSearchResponse {
+  code?: number | string;
+  requiresLogin?: boolean;
+  data?: {
+    albums?: QqSearchAlbum[];
+    songs?: QqSearchSong[];
+  };
 }
 
 export interface ApiErrorResponse {

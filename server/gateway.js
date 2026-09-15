@@ -744,10 +744,11 @@ route('GET', '/api/lyric', async ({ query, cookie }) => {
 });
 
 route('GET', '/api/search', async ({ query, cookie }) => {
+  const type = query.type === 'song' ? 1 : 10;
   const r = await search(
     {
       keywords: query.keywords,
-      type: 10,
+      type,
       limit: 10,
       cookie: cookie || readCookie(),
     },
