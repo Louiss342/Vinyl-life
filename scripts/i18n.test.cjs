@@ -439,6 +439,10 @@ function fakeEl(tag = 'div') {
       return el.attrs.has(k) ? el.attrs.get(k) : null;
     },
     addEventListener() {},
+    setText(t) {
+      el.textContent = String(t); // Obsidian 的 DOM 扩展：面板的分区图标回落会用到
+      return el;
+    },
     createDiv(o) {
       return el.createEl('div', o);
     },
@@ -1095,12 +1099,57 @@ test('设置面板：标签条四个按钮，点一下就换内容、高亮跟�
   assert.equal(has('语言 / Language'), false, '「通用」页的行已经清掉');
 });
 
+test('设置面板：分区图标优先走宿主 Lucide，宿主没有该图标名才回落文本符号', () => {
+  // 通用页的五个分区：sliders-horizontal / folder-tree / notebook-pen / audio-lines / chart-no-axes-column
+  const generalIcons = ['sliders-horizontal', 'folder-tree', 'notebook-pen', 'audio-lines', 'chart-no-axes-column'];
+  const render = (extra) => {
+    const mod = settingsModule(extra);
+    const tab = new mod.VinylSettingTab(
+      {},
+      {
+        manifest: { version: '9.9.9' },
+        settings: mod.DEFAULT_SETTINGS,
+        server: {},
+        saveSettings: async () => {},
+        refreshLanguage: () => {},
+        refreshAppearance: () => {},
+      }
+    );
+    tab.containerEl = fakeEl();
+    tab.display();
+    return collect(tab.containerEl).filter((e) => e.classes.has('vinyl-settings-section-icon'));
+  };
+
+  const lucide = render({
+    getIconIds: () => [...generalIcons],
+    setIcon: (el, name) => el.setAttribute('data-icon', name),
+  });
+  assert.equal(lucide.length, 5, '五个分区各有一个图标位');
+  assert.deepEqual(
+    [...lucide.map((el) => el.getAttribute('data-icon'))],
+    generalIcons,
+    '宿主有这些图标名时必须用 Lucide（SVG 形状跨平台一致），别再用文本符号'
+  );
+  assert.deepEqual([...lucide.map((el) => el.textContent)], ['', '', '', '', ''], '走了 Lucide 就不再放文本');
+
+  // 老宿主：没有 getIconIds（或图标名是较新才加的）→ 回落文本符号
+  const legacy = render({});
+  assert.equal(legacy.length, 5);
+  assert.deepEqual(
+    [...legacy.map((el) => el.textContent)],
+    ['⌁', '⌂', '✎', '≋', '▥'],
+    '取不到图标集时回落文本符号，界面不至于空一块'
+  );
+  assert.equal(legacy.every((el) => el.getAttribute('data-icon') === null), true);
+});
+
 // ============ 设置面板与「关于」页：esbuild + 假 DOM ============
 // 面板整块自绘，所以能在这个假 DOM 上跑：Setting 顶成链式桩（控件回调不触发，
 // 验的是行的装配与标签切换），「关于」页的文本部分是纯 DOM 构建，直接驱动。
 let settingsBundle = null;
-function settingsModule() {
-  if (settingsBundle) return settingsBundle;
+/** extra：额外（或覆盖）的 obsidian 导出，用于验宿主能力分支（如 getIconIds 有没有）。 */
+function settingsModule(extra = null) {
+  if (settingsBundle && !extra) return settingsBundle;
   const src = esbuild.buildSync({
     entryPoints: [path.join(__dirname, '../src/settings.ts')],
     bundle: true,
@@ -1165,6 +1214,7 @@ function settingsModule() {
           normalizePath: (p) => p,
           setIcon: () => {},
           requestUrl: async () => ({}),
+          ...(extra || {}), // 放最后：用例要用真实行为覆盖某个导出（如 setIcon / getIconIds）
         };
       }
       return require(name);
@@ -1174,8 +1224,8 @@ function settingsModule() {
     setTimeout,
     clearTimeout,
   });
-  settingsBundle = module.exports;
-  return settingsBundle;
+  if (!extra) settingsBundle = module.exports;
+  return module.exports;
 }
 
 // 「关于」页单独起一份 bundle：它的文本渲染是纯 DOM 构建（笔触那半要真实 SVG，

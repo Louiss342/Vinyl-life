@@ -91,8 +91,13 @@ export default class VinylLifePlugin extends Plugin {
   handoff!: HandoffController;
 
   async onload() {
-    // 样式兜底：手工安装漏掉 styles.css 时挂上构建期内联的副本（正常安装返回 null，什么都不做）
-    const disposeStyleFallback = installStyleFallback(pluginAbsPath(this, 'styles.css'), STYLE_GZIP);
+    // 样式兜底：styles.css 缺失、或与插件版本不一致（只覆盖了 main.js / 同步到一半）时，
+    // 挂上构建期内联的副本（版本一致且文件在位时返回 null，什么都不做）
+    const disposeStyleFallback = installStyleFallback(
+      pluginAbsPath(this, 'styles.css'),
+      STYLE_GZIP,
+      this.manifest.version
+    );
     if (disposeStyleFallback) this.register(disposeStyleFallback);
 
     await this.loadSettings();

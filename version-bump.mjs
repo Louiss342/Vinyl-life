@@ -55,4 +55,18 @@ const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
 pkg.version = targetVersion;
 writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
 
+// 4) styles.css 尾部的版本戳：插件启动时拿它核对样式表是否与代码同版本。
+//    「升级只覆盖了 main.js」会留下新代码配旧样式（设置面板 1.0.10 起整块改版，
+//    那时候会完全没样式），所以这一步必须跟着 version 一起走 —— 有测试在盯这一行。
+const cssFile = 'styles.css';
+const css = readFileSync(cssFile, 'utf8');
+const stamp = `/*! vinyl-life styles v${targetVersion} — 由 npm run version-bump 维护，勿手改这一行：
+   插件启动时核对版本（见 src/core/style-fallback.ts）；缺失或与 main.js 不符会自动挂上内置副本。 */`;
+const STAMP_RE = /\/\*! vinyl-life styles v[0-9][0-9.]*[\s\S]*?\*\//;
+if (STAMP_RE.test(css)) {
+  writeFileSync(cssFile, css.replace(STAMP_RE, stamp));
+} else {
+  writeFileSync(cssFile, css.trimEnd() + '\n\n' + stamp + '\n');
+}
+
 console.log(`[version-bump] ${targetVersion} (minAppVersion ${minAppVersion})`);

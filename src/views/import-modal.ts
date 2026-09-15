@@ -59,6 +59,8 @@ export class AlbumImportModal extends Modal {
       status.setText(text);
       status.toggleClass('is-error', isError);
     };
+    // 本轮已经导入了多少张：搜索页导入后不跳转，要有个进度给用户看（批量导入就靠它）
+    let importedCount = 0;
 
     const openResult = async (res: Awaited<ReturnType<typeof importAlbum>>) => {
       if (res.file instanceof TFile) {
@@ -96,6 +98,7 @@ export class AlbumImportModal extends Modal {
       rowStatus: HTMLElement
     ) => {
       if (candidate.importedFilePath) {
+        // 这一张已经在库里：点「打开」才离开搜索页 —— 是用户明确要去看它
         const file = this.app.vault.getAbstractFileByPath(candidate.importedFilePath);
         if (file instanceof TFile) await openResult({ status: 'existing', ok: false, detail: '', file });
         return;
@@ -109,8 +112,20 @@ export class AlbumImportModal extends Modal {
         const res = await importAlbumRef(this.ctx, ref);
         rowStatus.setText((res.status === 'failed' ? '❌ ' : '✅ ') + res.detail);
         rowStatus.toggleClass('is-error', res.status === 'failed');
-        if (res.status === 'failed') button.disabled = false;
-        await openResult(res);
+        if (res.status === 'failed' || !(res.file instanceof TFile)) {
+          button.disabled = false; // 失败拿不到笔记：按钮留在「导入」，让用户能再点
+          return;
+        }
+        // 批量导入：导入完**不跳转、不关窗**，就地把这张卡片改成「打开」，接着点下一张就行。
+        // 想立刻看笔记的话，按钮就在原地（那是「打开」，语义不变）。
+        candidate.importedFilePath = res.file.path;
+        button.disabled = false; // 「打开」要能点（浏览器不会给 disabled 按钮派发点击）
+        button.setText(t('import.openExisting'));
+        button.removeClass('mod-cta');
+        if (res.status === 'created') {
+          importedCount++;
+          setStatus(tf('import.batchProgress', { n: importedCount }));
+        }
       } catch (e) {
         console.error('[vinyl] 导入搜索结果失败', e);
         rowStatus.setText(`${t('import.failed')}${(e as Error).message || e}`);

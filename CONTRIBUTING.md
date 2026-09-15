@@ -40,7 +40,7 @@ npm test
 - 提交信息用中文，一句话说清这次改了什么；版本提交沿用 `1.0.x：一句话` 的格式（见 `git log`）。
 - 提 PR 前请保证 `build` / `typecheck` / `lint` / `test` 四项全绿，CI 跑的就是这四项。
 - PR 描述里写清：解决了什么问题、怎么验证的（手动步骤或新增的用例）、有没有用户可见的行为变化。
-- 发版由维护者操作：改 `manifest.json` 的 `version` → `npm run version-bump` → 提交 → 打同名 tag 推送，GitHub Actions 会自动构建并创建 Release。
+- 发版由维护者操作：改 `manifest.json` 的 `version` → `npm run version-bump` → 提交 → 打同名 tag 推送，GitHub Actions 会自动构建并创建 Release。`version-bump` 会把版本号同步到 `versions.json`、`package.json` 和 **`styles.css` 末尾的版本戳**；最后这行是插件启动时核对样式表版本的依据（用户升级时只覆盖了 `main.js`，就靠它把界面从「完全没样式」里救回来），有测试盯着，漏跑会红。
 
 ## 报告问题
 

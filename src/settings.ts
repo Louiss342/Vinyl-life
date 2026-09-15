@@ -8,7 +8,7 @@
 //
 // 切标签 = 清空内容区重画：不预建四份再藏起来 ——「关于」页的手绘框要按真实尺寸画，
 // 藏起来的元素量出来是 0。语言 / 取值变了走 render()：整面板重建，仍停在当前标签页。
-import { App, PluginSettingTab, Setting } from 'obsidian';
+import { App, PluginSettingTab, Setting, getIconIds, setIcon } from 'obsidian';
 import type VinylLifePlugin from './main';
 import { QrLoginModal, qqQrProvider } from './views/qr-login-modal';
 import { StatsModal } from './views/stats-modal';
@@ -162,6 +162,24 @@ const row = (parent: HTMLElement, name: string, desc: string, build: (s: Setting
 };
 
 /** 设置分区：只负责视觉分组，不改变 Setting 的原生结构与行为。 */
+const section = (
+  parent: HTMLElement,
+  text: string,
+  kind: string,
+  icon: string,
+  build: (el: HTMLElement) => void
+): void => {
+  const el = parent.createDiv({ cls: `vinyl-settings-section is-${kind}` });
+  const title = new Setting(el).setName(text).setHeading();
+  title.settingEl.addClass('vinyl-settings-section-heading');
+  const iconEl = title.settingEl.createSpan({ cls: 'vinyl-settings-section-icon' });
+  mountSectionIcon(iconEl, icon);
+  build(el);
+};
+
+/** 图标名 → 文本符号：宿主没有对应 Lucide 图标时的回落。
+ *  这些符号的字形由系统字体逐字回落决定，换机器会变样（粗细/大小不一致，缺字形时是豆腐块），
+ *  所以只当兜底用，别当主路径。 */
 const SECTION_ICONS: Record<string, string> = {
   'sliders-horizontal': '⌁',
   'folder-tree': '⌂',
@@ -177,22 +195,28 @@ const SECTION_ICONS: Record<string, string> = {
   'hard-drive': '▱',
 };
 
-const section = (
-  parent: HTMLElement,
-  text: string,
-  kind: string,
-  icon: string,
-  build: (el: HTMLElement) => void
-): void => {
-  const el = parent.createDiv({ cls: `vinyl-settings-section is-${kind}` });
-  const title = new Setting(el).setName(text).setHeading();
-  title.settingEl.addClass('vinyl-settings-section-heading');
-  title.settingEl.createSpan({
-    cls: 'vinyl-settings-section-icon',
-    text: SECTION_ICONS[icon] ?? '·',
-  });
-  build(el);
-};
+/** 分区图标：优先用 Obsidian 自带的 Lucide（内联 SVG，形状与线条跨平台一致）。 */
+function mountSectionIcon(el: HTMLElement, name: string): void {
+  if (hasIcon(name)) {
+    setIcon(el, name);
+    return;
+  }
+  el.setText(SECTION_ICONS[name] ?? '·');
+}
+
+// 宿主装了哪些图标：取一次就够（图标集在会话内不变）。
+// 老版本 Obsidian 没有 getIconIds，或图标名是较新才加入的 → 回落文本符号。
+let knownIcons: Set<string> | null = null;
+function hasIcon(name: string): boolean {
+  if (!knownIcons) {
+    try {
+      knownIcons = new Set(getIconIds());
+    } catch {
+      knownIcons = new Set();
+    }
+  }
+  return knownIcons.has(name);
+}
 
 const columnOptions = (): [number, string][] => [
   [2, tf('settings.columnsN', { n: 2 })],

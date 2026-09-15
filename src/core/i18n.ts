@@ -147,6 +147,11 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     en: 'Searching NetEase and QQ Music…',
   },
   'import.searchFound': { zh: '找到 {n} 个专辑结果', en: 'Found {n} album result(s)' },
+  // 搜索结果导入后不跳转（批量导入的前提）：每导一张就报一次进度
+  'import.batchProgress': {
+    zh: '已导入 {n} 张专辑，可以继续导入下一张',
+    en: 'Imported {n} album(s) — keep going with the next one',
+  },
   'import.searchNoResults': {
     zh: '没有找到专辑，试试更短的专辑名、歌手名或歌曲名。',
     en: 'No albums found. Try a shorter album, artist, or song name.',
