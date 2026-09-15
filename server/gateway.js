@@ -1,7 +1,8 @@
 // Vinyl Life 本地网关（由插件 main.js 内联源码生成，勿手改）
 // 设计：自研极简 request（node:crypto 实现 weapi/eapi 加密 + 内置 fetch 发请求），
 // 仅复用 NeteaseCloudMusicApi 的 7 个轻量端点模块负责响应整形。
-// 无 axios / crypto-js / node-forge / pac-proxy-agent / tunnel 等重依赖。
+// 无 axios / crypto-js / node-forge / pac-proxy-agent / tunnel 等重依赖：
+// 出口代理是自写的 HTTP CONNECT 隧道（server/proxy.js），不需要三方包。
 const http = require('http');
 const dns = require('dns');
 const fs = require('fs');
@@ -9,6 +10,7 @@ const path = require('path');
 const crypto = require('crypto');
 const QRCode = require('qrcode');
 const { registerQqRoutes } = require('./qq');
+const { resolveProxyConfig, createProxyFetch } = require('./proxy');
 
 const login_qr_key = require('NeteaseCloudMusicApi/module/login_qr_key');
 const login_status = require('NeteaseCloudMusicApi/module/login_status');
@@ -40,6 +42,22 @@ const MSG = {
     en: 'Cover URL not reachable (points to this machine or a private network)',
   },
   'gw.coverNotImage': { zh: '封面地址不是图片', en: 'Cover URL is not an image' },
+  'gw.coverNotFound': {
+    zh: '封面不存在（源站 404）',
+    en: 'Cover image not found (upstream 404)',
+  },
+  'gw.coverBadStatus': {
+    zh: '封面源站返回 HTTP {status}',
+    en: 'The cover host returned HTTP {status}',
+  },
+  'gw.coverDnsFailed': {
+    zh: '封面地址无法解析（{host}），可能被 DNS 或网络拦截',
+    en: 'Could not resolve the cover host ({host}) — possibly blocked by DNS or the network',
+  },
+  'gw.coverUnreachable': {
+    zh: '封面地址连接失败或超时（{host}）',
+    en: 'Could not reach the cover host ({host}) — connection failed or timed out',
+  },
   'gw.coverTooLarge': { zh: '封面图过大', en: 'Cover image is too large' },
   'gw.qrServiceUnavailable': {
     zh: '网易云扫码服务暂时不可用，请重试',
@@ -96,6 +114,16 @@ const MSG = {
     zh: 'QQ 扫码服务暂时不可用，请重试',
     en: 'The QQ QR service is temporarily unavailable — try again',
   },
+  // —— 出站代理（server/proxy.js 用注入进来的 msg）——
+  'gw.proxyFailed': {
+    zh: '代理连接失败（{msg}）',
+    en: 'Could not connect to the proxy ({msg})',
+  },
+  'gw.proxyRejected': {
+    zh: '代理拒绝建立隧道（HTTP {status}）',
+    en: 'The proxy refused the tunnel (HTTP {status})',
+  },
+  'gw.proxyTimeout': { zh: '代理连接超时', en: 'Proxy connection timed out' },
   'gw.qqBadAlbumId': { zh: '专辑 ID 无效', en: 'Invalid album ID' },
   'gw.qqBadSongId': { zh: '歌曲 ID 无效', en: 'Invalid song ID' },
   'gw.qqLyricFailed': { zh: 'QQ 音乐歌词获取失败', en: 'Could not fetch the QQ Music lyrics' },
@@ -265,6 +293,24 @@ function serverLog(...args) {
   } catch (_) {}
 }
 
+// ==================== 出站代理 ====================
+// 内置 fetch（undici）不读系统代理：会出现「浏览器能打开封面、插件下载不了」。
+// 插件启动网关时把「系统代理」（Electron session.resolveProxy）经 VINYL_PROXY 注入，
+// 也认 HTTPS_PROXY / HTTP_PROXY / ALL_PROXY 等常规变量；都没有则直连（与从前一致）。
+const proxyConfig = resolveProxyConfig(process.env);
+const proxyFetch = createProxyFetch((...args) => fetch(...args), proxyConfig, {
+  msg,
+  log: serverLog,
+});
+serverLog(
+  '[vinyl-server] 出站网络:',
+  proxyConfig.mode === 'http'
+    ? `经代理 ${proxyConfig.host}:${proxyConfig.port}（来源 ${proxyConfig.source}）`
+    : proxyConfig.mode === 'unsupported'
+      ? `代理配置无法使用（${proxyConfig.raw}），按直连处理`
+      : '直连'
+);
+
 // 构建指纹 Cookie 头（对齐库的 processCookieObject）
 // deviceId 优先复用已有匿名 token 的设备标识。
 function buildFingerprintCookie(cookieObj, uri, includeMusicAuth) {
@@ -386,7 +432,7 @@ function createRequest(uri, data, options) {
         url = 'https://interface.music.163.com/eapi/' + uri.substr(5);
       }
 
-      fetch(url, {
+      proxyFetch(url, {
         method: 'POST',
         headers: { ...headers, 'Content-Type': 'application/x-www-form-urlencoded' },
         body,
@@ -537,6 +583,8 @@ function readBody(req) {
 // 封面代理的护栏（这个路由是拿内部 token 也不该被当成任意代理用的）：
 //   只允许 http(s) → 解析出的地址不能是本机 / 内网 / 链路本地（防 SSRF 打内网服务）
 //   → 只收图片 → 限时 10s、限 12MB。跳转按同一套规则重新校验，不信任 Location 的协议。
+// 失败原因要能分流：DNS 解析失败 / 内网地址 / 源站 404 / 其它状态码 / 连不上，各有各的文案 ——
+// 这些文案会一路冒到导入提示里，一律说「不是图片」只会把排查带偏。
 const BINARY_TIMEOUT_MS = 10000;
 const BINARY_MAX_BYTES = 12 * 1024 * 1024;
 
@@ -571,7 +619,13 @@ function assertFetchable(rawUrl) {
   return new Promise((resolve, reject) => {
     dns.lookup(target.hostname, { all: true }, (err, addrs) => {
       const list = Array.isArray(addrs) ? addrs : [];
-      if (err || list.length === 0 || list.some((a) => isPrivateAddress(a.address))) {
+      // 解析失败与被解析到内网地址是两回事：前者（DNS 被拦 / 域名不存在）说成「指向本机或内网」
+      // 只会误导排查方向
+      if (err || list.length === 0) {
+        reject(new Error(msg('gw.coverDnsFailed', { host: target.hostname })));
+        return;
+      }
+      if (list.some((a) => isPrivateAddress(a.address))) {
         reject(new Error(msg('gw.coverBlocked')));
         return;
       }
@@ -583,13 +637,28 @@ function assertFetchable(rawUrl) {
 async function fetchBinary(url, redirects = 0) {
   if (redirects > 3) throw new Error('too many redirects');
   const target = await assertFetchable(url);
-  const res = await fetch(target, {
-    redirect: 'manual',
-    signal: AbortSignal.timeout(BINARY_TIMEOUT_MS),
-  });
+  let res;
+  try {
+    res = await proxyFetch(target, {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(BINARY_TIMEOUT_MS),
+    });
+  } catch (e) {
+    // 代理自身的失败原因已经完整（含「代理」字样）：原样上抛，别当成「目标不可达」吞掉
+    if (e && e.vinylProxy) {
+      serverLog('[vinyl-server] 封面代理失败:', String((e && e.message) || e));
+      throw e;
+    }
+    // 连接失败 / 超时：undici 的英文报错不适合直接展示给用户（它会一路冒到导入提示里）
+    serverLog('[vinyl-server] 封面请求异常:', String((e && e.message) || e));
+    throw new Error(msg('gw.coverUnreachable', { host: target.hostname }));
+  }
   if (res.status >= 300 && res.status < 400 && res.headers.get('location')) {
     return fetchBinary(new URL(res.headers.get('location'), target).toString(), redirects + 1);
   }
+  // 源站明确的失败状态：404（这张图确实不存在）与其它状态分开报
+  if (res.status === 404) throw new Error(msg('gw.coverNotFound'));
+  if (res.status >= 400) throw new Error(msg('gw.coverBadStatus', { status: res.status }));
   const contentType = String(res.headers.get('content-type') || '');
   if (!contentType.startsWith('image/')) throw new Error(msg('gw.coverNotImage'));
   const chunks = [];
@@ -690,16 +759,14 @@ route('GET', '/api/search', async ({ query, cookie }) => {
 route('GET', '/api/cover', async ({ query }) => {
   const url = String(query.url || '');
   if (!/^https?:\/\//.test(url)) throw new Error(msg('gw.coverBadUrl'));
-  return fetchBinary(url);
+  try {
+    return await fetchBinary(url);
+  } catch (e) {
+    // 封面失败通常只在渲染进程控制台可见 → 同时落 gateway.log（用户报障时附的就是这份日志）
+    serverLog('[vinyl-server] 封面获取失败:', url, '→', String((e && e.message) || e));
+    throw e;
+  }
 });
-
-route('POST', '/api/cookie', async ({ body }) => {
-  await validateCookie(body?.cookie);
-  writeCookie(body.cookie);
-  return { ok: true };
-});
-
-route('POST', '/api/cookie/validate', async ({ body }) => validateCookie(body?.cookie));
 
 route('DELETE', '/api/cookie', async () => {
   writeCookie('');
@@ -712,7 +779,7 @@ route('DELETE', '/api/cookie', async () => {
 registerQqRoutes({
   route,
   log: serverLog,
-  fetch: (...args) => fetch(...args),
+  fetch: proxyFetch,
   makeStore: makeCookieStore,
   msg,
   timeout: (ms) => AbortSignal.timeout(ms),
@@ -763,7 +830,8 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify(result));
   } catch (e) {
     const message = e instanceof Error ? e.message : msg('gw.neteaseRequestFailed');
-    console.error('[vinyl-server] route error:', message);
+    // 走 serverLog 落盘：只进 stderr 的话，gateway.log 里查不到这类失败（排查时抓瞎）
+    serverLog('[vinyl-server] route error:', req.method, url.pathname, message);
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: message }));
   }

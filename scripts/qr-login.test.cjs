@@ -61,7 +61,6 @@ function setup(overrides = {}) {
     async beginQr() { stats.begin++; return { key: `qr-${stats.begin}`, qrimg: 'data:image/png;base64,AAAA' }; },
     async checkQr() { stats.check++; return 801; },
     async getStatus() { stats.status++; return { loggedIn: true, nick: '测试账号', userId: 42 }; },
-    async saveCookie() {},
     ...overrides,
   };
   class Modal {
@@ -74,15 +73,12 @@ function setup(overrides = {}) {
     require: name => name === 'obsidian' ? { Modal, TFile: class {} } : require(name),
     window,
     Buffer,
-    AbortController,
   });
   const modal = new module.exports.QrLoginModal({}, { auth, server: {} });
   return {
     modal, auth, stats, jobs,
     status: () => modal.contentEl.all().find(el => el.cls === 'vinyl-qr-section').children.find(el => el.cls === 'vinyl-muted').textContent,
     refresh: () => modal.contentEl.all().find(el => el.tag === 'button' && el.textContent.includes('刷新二维码')),
-    textarea: () => modal.contentEl.all().find(el => el.tag === 'textarea'),
-    save: () => modal.contentEl.all().find(el => el.tag === 'button' && el.textContent === '保存 Cookie'),
     async tick() {
       const first = jobs.entries().next().value;
       if (!first) return;
@@ -223,27 +219,3 @@ test('refresh while login verification is pending ignores the obsolete result', 
   assert.equal(h.jobs.size, 1);
 });
 
-test('manual fallback explains HttpOnly cookie retrieval without document.cookie', async () => {
-  const h = setup();
-  await h.modal.onOpen();
-  const text = h.modal.contentEl.all().map(el => el.textContent).join('\n');
-  assert.match(text, /Application|应用/);
-  assert.match(text, /MUSIC_U/);
-  assert.doesNotMatch(text, /document\.cookie/);
-});
-
-test('closing during manual Cookie validation aborts the pending account replacement', async () => {
-  const pending = deferred();
-  let signal;
-  const h = setup({ saveCookie: async (_raw, s) => { signal = s; await pending.promise; } });
-  await h.modal.onOpen();
-  h.textarea().value = 'MUSIC_U=fixture';
-  const saving = h.save().events.click();
-  await flush();
-  h.modal.onClose();
-  assert.equal(signal.aborted, true);
-  pending.resolve();
-  await saving;
-  assert.equal(h.modal.contentEl.children.length, 0);
-  assert.equal(h.jobs.size, 0);
-});

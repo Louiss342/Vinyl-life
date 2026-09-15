@@ -11,6 +11,8 @@ import { trackSourceLabel, trackSourceClass, qualityText } from '../core/track';
 import { fmtTime, notice, prefersReducedMotion } from '../util';
 import { SPIN_SPEEDS } from '../core/disc-motion';
 import { DECK_STYLES, RECORD_COLORS, deckClass, recordClass } from '../core/appearance';
+import { coverChain } from '../core/cover-url';
+import { resolveAlbumCover } from '../core/album-index';
 import { t, tf } from '../core/i18n';
 import { onMarqueeOver, onMarqueeOut } from './marquee';
 
@@ -115,7 +117,9 @@ export class VinylPlayerView extends ItemView {
   private segmentEls: Array<{ el: HTMLElement; seg: { start: number; count: number; albumTitle: string; albumPath: string } }> = [];
   // 队列行右侧的来源角标（文案随语言变；行不重建，切语言时按 renderedQueue 就地重写）
   private queueBadges: HTMLElement[] = [];
-  private currentCoverSrc: string | null = null;
+  /** 封面候选链的签名（链内容变化才换图；链见 core/cover-url.coverChain） */
+  private currentCoverSig: string | null = null;
+  private coverChain: string[] = [];
   private lastAlbumPath: string | null = null;
   private lastSpinning = false;
   private lastArmAngle = NaN;
@@ -526,18 +530,14 @@ export class VinylPlayerView extends ItemView {
     els.vinyl.classList.toggle('is-paused', s.status === 'paused');
     els.vinyl.classList.toggle('is-empty', !s.queue.length);
 
-    // 唱片中心封面（变化才换 src）
-    const coverSrc = s.current?.cover || '';
-    if (coverSrc !== this.currentCoverSrc) {
-      this.currentCoverSrc = coverSrc;
-      if (coverSrc) {
-        els.labelImg.src = coverSrc;
-        els.labelImg.removeClass('vinyl-hidden');
-        els.labelEmpty.addClass('vinyl-hidden');
-      } else {
-        els.labelImg.addClass('vinyl-hidden');
-        els.labelEmpty.removeClass('vinyl-hidden');
-      }
+    // 唱片中心封面：库内封面 → 曲目远程封面 → 备用图床（见 coverChain）。
+    // 链内容变化才重置显示；单个候选加载失败自动换下一个（onerror），全失败回占位符。
+    const chain = coverChain(this.localCover(s), s.current?.cover);
+    const sig = chain.join('\n');
+    if (sig !== this.currentCoverSig) {
+      this.currentCoverSig = sig;
+      this.coverChain = chain;
+      this.showCover(els, 0);
     }
 
     // 进度 / 计数器（值不变不写 DOM）
@@ -584,6 +584,30 @@ export class VinylPlayerView extends ItemView {
       setVal(els.volSlider, String(vol));
       fillRange(els.volSlider, s.volume, FILL_SILVER);
     }
+  }
+
+  /** 库内封面（专辑笔记 cover / 约定自动识别）：离线可用，不受图床可达性影响 */
+  private localCover(s: PlayerSnapshot): string | undefined {
+    const app = this.plugin?.app;
+    if (!app) return undefined; // 极简测试依赖下没有 app：跳过库内封面
+    return resolveAlbumCover(app, s.albumNotePath || undefined, {
+      coverFolder: this.plugin.settings?.coverFolder,
+    });
+  }
+
+  /** 显示候选链里第 i 个封面：加载失败（onerror）→ 下一个候选；耗尽 → 占位符 */
+  private showCover(els: PlayerEls, i: number) {
+    const src = this.coverChain[i];
+    if (!src) {
+      els.labelImg.onerror = null;
+      els.labelImg.addClass('vinyl-hidden');
+      els.labelEmpty.removeClass('vinyl-hidden');
+      return;
+    }
+    els.labelImg.onerror = () => this.showCover(els, i + 1);
+    els.labelImg.src = src;
+    els.labelImg.removeClass('vinyl-hidden');
+    els.labelEmpty.addClass('vinyl-hidden');
   }
 
   private rebuildQueue(els: PlayerEls, s: PlayerSnapshot) {

@@ -1,6 +1,5 @@
-// 网易云登录弹窗：
-//   扫码：qrimg 自带 data: 前缀（勿重复拼接）→ 2s 轮询 800/801/802/803
-//   手动：粘贴浏览器 Cookie 兜底
+// 网易云登录弹窗：qrimg 自带 data: 前缀（勿重复拼接）→ 2s 轮询 800/801/802/803。
+// 登录只有扫码这一条路径（网页登录与手动粘贴已移除）。
 import { App, Modal } from 'obsidian';
 import { ServerManager } from '../core/server-manager';
 import type { LoginState } from '../core/auth';
@@ -10,7 +9,6 @@ export interface QrAuthLike {
   beginQr(): Promise<{ key: string; qrimg: string }>;
   checkQr(key: string): Promise<number | { code: number; state?: LoginState }>;
   getStatus(): Promise<LoginState>;
-  saveCookie(raw: string, signal?: AbortSignal): Promise<void>;
 }
 
 export interface QrLoginDeps {
@@ -24,15 +22,9 @@ export interface QrProvider {
   title: string;
   /** 扫码区提示（含 App 名） */
   appHint: string;
-  /** 手动粘贴说明（含获取途径与 Cookie 名） */
-  manualHint: string;
-  /** 手动粘贴 placeholder */
-  placeholder: string;
   /** CSP 兜底临时图片文件名（每位源独立，避免并发冲突） */
   tempPng: string;
-  /** 扫码不顺时的替代入口提示（网易云默认无） */
-  fallbackHint?: string;
-  /** 「802 已授权但没拿到会话」这个失败态的指引（默认给手动粘贴兜底） */
+  /** 「802 已授权但没拿到会话」这个失败态的指引（默认给重试建议） */
   noSessionHint?: string;
 }
 
@@ -42,10 +34,8 @@ export function neteaseQrProvider(): QrProvider {
     id: 'netease',
     title: t('login.netease.title'),
     appHint: t('login.netease.appHint'),
-    manualHint: t('login.netease.manualHint'),
-    placeholder: 'MUSIC_U=xxx; __csrf=yyy; ...',
     tempPng: 'qr-login-tmp.png',
-    // 新用户首次扫码时网关会现场注册匿名设备身份，该接口可能限流 → 失败态给出浏览器登录指引
+    // 新用户首次扫码时网关会现场注册匿名设备身份，该接口可能限流 → 失败态给出重试指引
     noSessionHint: t('login.netease.noSessionHint'),
   };
 }
@@ -55,9 +45,6 @@ export function qqQrProvider(): QrProvider {
     id: 'qq',
     title: t('login.qq.title'),
     appHint: t('login.qq.appHint'),
-    fallbackHint: t('login.qq.fallbackHint'),
-    manualHint: t('login.qq.manualHint'),
-    placeholder: 'qm_keyst=xxx; uin=123456789; ...',
     tempPng: 'qr-login-tmp-qq.png',
   };
 }
@@ -66,18 +53,13 @@ export class QrLoginModal extends Modal {
   private deps: QrLoginDeps;
   private provider: QrProvider;
   private pollTimer: number | null = null;
-  private showQr: boolean;
-  private showManual: boolean;
   private qrGeneration = 0;
-  private manualAbort: AbortController | null = null;
   private onLogin?: (state: LoginState) => void | Promise<void>;
 
   constructor(
     app: App,
     deps: QrLoginDeps,
     opts?: {
-      qr?: boolean;
-      manual?: boolean;
       provider?: QrProvider;
       onLogin?: (state: LoginState) => void | Promise<void>;
     }
@@ -85,8 +67,6 @@ export class QrLoginModal extends Modal {
     super(app);
     this.deps = deps;
     this.provider = opts?.provider ?? neteaseQrProvider();
-    this.showQr = opts?.qr ?? true;
-    this.showManual = opts?.manual ?? true;
     this.onLogin = opts?.onLogin;
     this.titleEl.setText(this.provider.title);
   }
@@ -95,108 +75,53 @@ export class QrLoginModal extends Modal {
     const c = this.contentEl;
     c.empty();
     c.addClass('vinyl-qr-modal');
-    let startQr: (() => Promise<void>) | undefined;
 
-    if (this.showQr) {
-      const qrSec = c.createDiv({ cls: 'vinyl-qr-section' });
-      qrSec.createEl('h4', { text: t('login.qrSection') });
-      const img = qrSec.createEl('img', { attr: { width: '220', height: '220' } });
-      const qrStatus = qrSec.createDiv({ text: t('login.generating'), cls: 'vinyl-muted' });
-      const refreshBtn = qrSec.createEl('button', { text: t('login.refreshQr') });
-      if (this.provider.fallbackHint) {
-        qrSec.createDiv({ text: this.provider.fallbackHint, cls: 'vinyl-muted' });
-      }
+    const qrSec = c.createDiv({ cls: 'vinyl-qr-section' });
+    qrSec.createEl('h4', { text: t('login.qrSection') });
+    const img = qrSec.createEl('img', { attr: { width: '220', height: '220' } });
+    const qrStatus = qrSec.createDiv({ text: t('login.generating'), cls: 'vinyl-muted' });
+    const refreshBtn = qrSec.createEl('button', { text: t('login.refreshQr') });
 
-      const start = async () => {
-        const generation = ++this.qrGeneration;
-        this.stopPolling();
-        refreshBtn.disabled = true;
-        img.onerror = null;
-        img.removeAttribute('src');
-        qrStatus.textContent = t('login.generating');
-        try {
-          const { key, qrimg } = await this.deps.auth.beginQr();
+    const start = async () => {
+      const generation = ++this.qrGeneration;
+      this.stopPolling();
+      refreshBtn.disabled = true;
+      img.onerror = null;
+      img.removeAttribute('src');
+      qrStatus.textContent = t('login.generating');
+      try {
+        const { key, qrimg } = await this.deps.auth.beginQr();
+        if (generation !== this.qrGeneration) return;
+        // CSP 兜底：data URL 被拦时写临时文件走 app:// 资源路径
+        img.onerror = async () => {
           if (generation !== this.qrGeneration) return;
-          // CSP 兜底：data URL 被拦时写临时文件走 app:// 资源路径
-          img.onerror = async () => {
+          img.onerror = null;
+          try {
+            const b64 = qrimg.replace(/^data:image\/\w+;base64,/, '');
+            const buf = Buffer.from(b64, 'base64');
+            const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+            // 配置目录可被用户改名（不能写死 .obsidian），故按 Vault#configDir 拼插件目录
+            const tmpPath = `${this.app.vault.configDir}/plugins/vinyl-life/${this.provider.tempPng}`;
+            await this.app.vault.adapter.writeBinary(tmpPath, ab);
             if (generation !== this.qrGeneration) return;
-            img.onerror = null;
-            try {
-              const b64 = qrimg.replace(/^data:image\/\w+;base64,/, '');
-              const buf = Buffer.from(b64, 'base64');
-              const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
-              // 配置目录可被用户改名（不能写死 .obsidian），故按 Vault#configDir 拼插件目录
-              const tmpPath = `${this.app.vault.configDir}/plugins/vinyl-life/${this.provider.tempPng}`;
-              await this.app.vault.adapter.writeBinary(tmpPath, ab);
-              if (generation !== this.qrGeneration) return;
-              img.src = this.app.vault.adapter.getResourcePath(tmpPath);
-            } catch (e) {
-              if (generation === this.qrGeneration) qrStatus.textContent = t('login.qrRenderFailed') + (e as Error).message;
-            }
-          };
-          img.src = qrimg.startsWith('data:image/') ? qrimg : 'data:image/png;base64,' + qrimg;
-          qrStatus.textContent = this.provider.appHint;
-          this.poll(key, qrStatus, start, generation);
-        } catch (e) {
-          if (generation === this.qrGeneration) qrStatus.textContent = t('login.qrGenFailed') + (e as Error).message;
-        } finally {
-          if (generation === this.qrGeneration) refreshBtn.disabled = false;
-        }
-      };
-      refreshBtn.addEventListener('click', () => {
-        void start();
-      });
-      startQr = start;
-    }
-
-    if (this.showManual) {
-      if (this.showQr) c.createEl('hr');
-      c.createEl('h4', { text: t('login.manualSection') });
-      c.createDiv({
-        text: this.provider.manualHint,
-        cls: 'vinyl-muted',
-      });
-      const ta = c.createEl('textarea', {
-        attr: { placeholder: this.provider.placeholder },
-      });
-      const saveBtn = c.createEl('button', { text: t('login.saveCookie'), cls: 'mod-cta' });
-      const manualStatus = c.createDiv({ cls: 'vinyl-muted' });
-      const saveManual = async () => {
-        const val = ta.value.trim();
-        if (!val) {
-          manualStatus.textContent = t('login.cookieEmpty');
-          return;
-        }
-        saveBtn.disabled = true;
-        manualStatus.textContent = t('login.verifying');
-        this.manualAbort?.abort();
-        const abort = new AbortController();
-        this.manualAbort = abort;
-        try {
-          await this.deps.auth.saveCookie(val, abort.signal);
-          if (abort.signal.aborted) return;
-          const st = await this.deps.auth.getStatus();
-          if (abort.signal.aborted) return;
-          if (st.loggedIn) {
-            manualStatus.textContent =
-              tf('login.cookieOk', { nick: String(st.nick), id: String(st.userId) }) +
-              (st.vipType === 11 ? ' · VIP' : '');
-            void this.onLogin?.(st);
-          } else {
-            manualStatus.textContent = t('login.cookieInvalid');
+            img.src = this.app.vault.adapter.getResourcePath(tmpPath);
+          } catch (e) {
+            if (generation === this.qrGeneration) qrStatus.textContent = t('login.qrRenderFailed') + (e as Error).message;
           }
-        } catch (e) {
-          if (!abort.signal.aborted) manualStatus.textContent = t('login.saveFailed') + (e as Error).message;
-        } finally {
-          if (this.manualAbort === abort) this.manualAbort = null;
-          if (!abort.signal.aborted) saveBtn.disabled = false;
-        }
-      };
-      saveBtn.addEventListener('click', () => {
-        void saveManual();
-      });
-    }
-    if (startQr) await startQr();
+        };
+        img.src = qrimg.startsWith('data:image/') ? qrimg : 'data:image/png;base64,' + qrimg;
+        qrStatus.textContent = this.provider.appHint;
+        this.poll(key, qrStatus, start, generation);
+      } catch (e) {
+        if (generation === this.qrGeneration) qrStatus.textContent = t('login.qrGenFailed') + (e as Error).message;
+      } finally {
+        if (generation === this.qrGeneration) refreshBtn.disabled = false;
+      }
+    };
+    refreshBtn.addEventListener('click', () => {
+      void start();
+    });
+    await start();
   }
 
   private poll(key: string, statusEl: HTMLElement, restart: () => Promise<void>, generation: number) {
@@ -265,8 +190,6 @@ export class QrLoginModal extends Modal {
 
   onClose() {
     this.qrGeneration++;
-    this.manualAbort?.abort();
-    this.manualAbort = null;
     this.stopPolling();
     this.contentEl.empty();
   }

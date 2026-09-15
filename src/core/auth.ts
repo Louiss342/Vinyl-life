@@ -1,11 +1,10 @@
 // 登录态与 Cookie 管理：
-//   扫码 803 → 网关验证后落盘 .cookie；官方登录窗口 + 手动粘贴。
+//   扫码 803 → 网关验证后落盘 .cookie（登录只有这一条路径）。
 //   凭据仅存本机插件目录，不进笔记/日志/git。
 import { Plugin } from 'obsidian';
 import * as fs from 'fs';
 import { ServerManager } from './server-manager';
 import { ServerClient } from './server-client';
-import { writeCredentialFile } from './credential-file';
 import { pluginAbsPath } from '../util';
 import { t } from './i18n';
 
@@ -79,21 +78,6 @@ export class Auth {
       // 网关在但状态接口失败：按未登录返回（cookieBytes 仍如实报告）
       return { loggedIn: false, cookieBytes: bytes, serverOk: true };
     }
-  }
-
-  async saveCookie(raw: string, signal?: AbortSignal): Promise<void> {
-    signal?.throwIfAborted();
-    const cookie = raw.trim();
-    if (!/(?:^|;\s*)MUSIC_U=[^;\s]+/.test(cookie) || /[\r\n]/.test(cookie)) {
-      throw new Error(t('auth.cookieMissingMusicU'));
-    }
-    const ok = await this.server.ensure();
-    if (!ok) throw new Error(this.server.lastError || t('auth.gatewayNotReady'));
-    signal?.throwIfAborted();
-    await this.client.validateCookie(cookie, signal);
-    // 验证期间关闭登录窗口时，不让迟到的请求覆盖原账号。
-    signal?.throwIfAborted();
-    writeCredentialFile(this.cookieFile(), cookie);
   }
 
   async clear(): Promise<void> {

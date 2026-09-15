@@ -807,17 +807,6 @@ function registerQqRoutes(deps) {
     return { code: 0, lyric: String(body.lyric || ''), trans: String(body.trans || '') };
   });
 
-  route('POST', '/api/qq/cookie', async ({ body }) => {
-    const info = await validateCookieValue(body && body.cookie);
-    cookieStore.write(String(body.cookie).trim());
-    return { ok: true, data: { account: { id: info.uin } } };
-  });
-
-  route('POST', '/api/qq/cookie/validate', async ({ body }) => {
-    const info = await validateCookieValue(body && body.cookie);
-    return normalizeAccount(info);
-  });
-
   route('DELETE', '/api/qq/cookie', async () => {
     cookieStore.write('');
     return { ok: true };

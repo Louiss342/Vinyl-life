@@ -1239,20 +1239,6 @@
   object-fit: cover;
 }
 
-/* 浏览器登录弹窗 */
-.vinyl-web-steps {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 6px 0;
-}
-
-.vinyl-web-login textarea {
-  width: 100%;
-  height: 72px;
-  margin: 6px 0;
-}
-
 .vinyl-copy-row {
   display: flex;
   gap: 8px;

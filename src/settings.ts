@@ -9,7 +9,6 @@ import { App, PluginSettingTab, Setting, SettingPage } from 'obsidian';
 import type { SettingDefinitionItem, SettingDefinitionRender } from 'obsidian';
 import type VinylLifePlugin from './main';
 import { QrLoginModal, qqQrProvider } from './views/qr-login-modal';
-import { WebLoginModal, qqWebProvider } from './views/web-login-modal';
 import { StatsModal } from './views/stats-modal';
 import { DiscDirection, DISC_DIRECTIONS, SpinSpeed, SPIN_SPEEDS } from './core/disc-motion';
 import { notice } from './util';
@@ -595,24 +594,12 @@ export class VinylSettingTab extends PluginSettingTab {
               })
             )
           ),
-          row(t('settings.webLogin'), t('settings.webLoginDescNetease'), (s) =>
-            s.addButton((b) =>
-              b.setButtonText(t('settings.webLogin')).onClick(() => {
-                new WebLoginModal(this.app, {
-                  auth: p.auth,
-                  browserLogin: p.browserLogin,
-                  onLogin: () => void this.refreshNetease(),
-                }).open();
-              })
-            )
-          ),
           row(t('settings.logout'), t('settings.logoutDescNetease'), (s) =>
             s.addButton((b) =>
               b
                 .setButtonText(t('settings.logoutAction'))
                 .setDestructive()
                 .onClick(async () => {
-                  p.browserLogin.cancel();
                   await p.auth.clear();
                   notice(t('notice.neteaseLoggedOut'));
                   await this.refreshNetease();
@@ -637,48 +624,17 @@ export class VinylSettingTab extends PluginSettingTab {
               })
             )
           ),
-          row(t('settings.webLogin'), t('settings.webLoginDescQq'), (s) =>
-            s.addButton((b) =>
-              b.setButtonText(t('settings.webLogin')).onClick(() => {
-                new WebLoginModal(this.app, {
-                  auth: p.qqAuth,
-                  browserLogin: p.qqBrowserLogin,
-                  provider: qqWebProvider(),
-                  onLogin: () => void this.refreshQq(),
-                }).open();
-              })
-            )
-          ),
           row(t('settings.logout'), t('settings.logoutDescQq'), (s) =>
             s.addButton((b) =>
               b
                 .setButtonText(t('settings.logoutAction'))
                 .setDestructive()
                 .onClick(async () => {
-                  p.qqBrowserLogin.cancel();
                   await p.qqAuth.clear();
                   notice(t('notice.qqLoggedOut'));
                   await this.refreshQq();
                 })
             )
-          ),
-        ],
-      },
-      {
-        type: 'group',
-        heading: t('settings.sub.runtime'),
-        items: [
-          row(
-            'Node.js', // 产品名不翻译
-            p.server.nodeBinary ? p.server.nodeBinary : t('settings.nodeMissing'),
-            (s) =>
-              s.addButton((b) =>
-                b.setButtonText(t('settings.redetect')).onClick(async () => {
-                  b.setButtonText(t('settings.detecting')).setDisabled(true);
-                  p.server.nodeBinary = await p.server.resolveNodeBinary();
-                  this.refreshPanel();
-                })
-              )
           ),
         ],
       },

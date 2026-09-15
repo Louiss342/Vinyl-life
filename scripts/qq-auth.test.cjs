@@ -479,31 +479,6 @@ test('success but login-gated userinfo rejects and preserves the existing accoun
   assert.equal(g.files.get('/test/.qq-cookie'), 'qm_keyst=old-account');
 });
 
-test('imported cookie without qm_keyst cannot overwrite an existing account', async () => {
-  const g = gateway({ cookie: 'qm_keyst=old-account; uin=1111111111' });
-  await assert.rejects(
-    g.call('POST', '/api/qq/cookie', { cookie: 'uin=1234567890; __csrf=x' }),
-    /qm_keyst/
-  );
-  assert.equal(g.files.get('/test/.qq-cookie'), 'qm_keyst=old-account; uin=1111111111');
-});
-
-test('valid imported cookie is validated then written', async () => {
-  const g = gateway({ cookie: 'qm_keyst=old-account' });
-  const r = await g.call('POST', '/api/qq/cookie', { cookie: 'qm_keyst=new-keyst; uin=1234567890' });
-  assert.equal(r.ok, true);
-  assert.equal(g.files.get('/test/.qq-cookie'), 'qm_keyst=new-keyst; uin=1234567890');
-  const info = g.requests.find((x) => String(x.body).includes('GetLoginUserInfo'));
-  assert.ok(String(info.headers.Cookie).includes('qm_keyst=new-keyst'), 'validation used the new cookie');
-});
-
-test('cookie validation is read-only and returns the verified account', async () => {
-  const g = gateway({ cookie: 'qm_keyst=old-account' });
-  const r = await g.call('POST', '/api/qq/cookie/validate', { cookie: 'qm_keyst=probe; uin=1234567890' });
-  assert.equal(r.data.account.id, 1234567890);
-  assert.equal(g.files.get('/test/.qq-cookie'), 'qm_keyst=old-account');
-});
-
 test('DELETE /api/qq/cookie clears the credential', async () => {
   const g = gateway({ cookie: 'qm_keyst=old-account' });
   await g.call('DELETE', '/api/qq/cookie');

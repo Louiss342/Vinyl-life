@@ -1,5 +1,5 @@
 // Vinyl Life —— 主入口：注册视图 / 命令 / 设置面板，装配服务层与播放引擎。
-// 本地源（零后端）+ 网易云源（懒加载 Node 网关）统一为 Track 队列。
+// 本地源（零后端）+ 在线源（应用内网关）统一为 Track 队列。
 import { Editor, Plugin, TFile, MarkdownView, WorkspaceLeaf, normalizePath } from 'obsidian';
 import {
   VinylSettings,
@@ -17,7 +17,6 @@ import { ServerClient } from './core/server-client';
 import { WebClient } from './core/web-client';
 import { NeteaseService } from './core/netease';
 import { Auth } from './core/auth';
-import { BrowserLogin, QQ_BROWSER_LOGIN } from './core/browser-login';
 import { QqService } from './core/qq';
 import { QqAuth } from './core/qq-auth';
 import { LocalSource } from './core/local-source';
@@ -56,7 +55,6 @@ import {
 import { AlbumImportModal, LocalImportModal } from './views/import-modal';
 import { DeleteAlbumModal } from './views/delete-album-modal';
 import { collectAlbumDeleteTargets, deleteAlbumAssets } from './delete';
-import { WebLoginModal, qqWebProvider } from './views/web-login-modal';
 import { setLanguage, t, tf } from './core/i18n';
 import { ensureStats, recordTrackPlay } from './core/stats';
 import { Track, trackKey } from './core/track';
@@ -87,10 +85,8 @@ export default class VinylLifePlugin extends Plugin {
   web!: WebClient;
   netease!: NeteaseService;
   auth!: Auth;
-  browserLogin!: BrowserLogin;
   qq!: QqService;
   qqAuth!: QqAuth;
-  qqBrowserLogin!: BrowserLogin;
   local!: LocalSource;
   engine!: PlaybackEngine;
   handoff!: HandoffController;
@@ -118,15 +114,11 @@ export default class VinylLifePlugin extends Plugin {
     );
     this.netease = new NeteaseService(this.web, this.client, () => this.server.ensure(), () => this.server.lastError);
     this.auth = new Auth(this, this.server, this.client);
-    this.browserLogin = new BrowserLogin(this.auth);
-    this.register(() => this.browserLogin.dispose());
     this.qq = new QqService(
       () => this.server.base,
       () => this.server.token
     );
     this.qqAuth = new QqAuth(this, this.server, this.qq);
-    this.qqBrowserLogin = new BrowserLogin(this.qqAuth, QQ_BROWSER_LOGIN);
-    this.register(() => this.qqBrowserLogin.dispose());
     this.local = new LocalSource(this.app);
 
     // 播放引擎
@@ -228,24 +220,9 @@ export default class VinylLifePlugin extends Plugin {
       callback: () => this.openLogin(),
     });
     this.addCommand({
-      id: 'netease-web-login',
-      name: t('cmd.neteaseWebLogin'),
-      callback: () => new WebLoginModal(this.app, { auth: this.auth, browserLogin: this.browserLogin }).open(),
-    });
-    this.addCommand({
       id: 'qq-login',
       name: t('cmd.qqLogin'),
       callback: () => this.openQqLogin(),
-    });
-    this.addCommand({
-      id: 'qq-browser-login',
-      name: t('cmd.qqWebLogin'),
-      callback: () =>
-        new WebLoginModal(this.app, {
-          auth: this.qqAuth,
-          browserLogin: this.qqBrowserLogin,
-          provider: qqWebProvider(),
-        }).open(),
     });
     this.addCommand({
       id: 'qq-logout',

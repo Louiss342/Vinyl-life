@@ -67,23 +67,6 @@ export class QqService {
     return this.getJson<LoginResponse>('/api/qq/login/status');
   }
 
-  async validateCookie(cookie: string, signal?: AbortSignal): Promise<LoginResponse> {
-    signal?.throwIfAborted();
-    const body = await this.request<LoginResponse>('/api/qq/cookie/validate', {
-      method: 'POST',
-      body: JSON.stringify({ cookie }),
-    });
-    signal?.throwIfAborted();
-    return body;
-  }
-
-  async setCookie(cookie: string): Promise<void> {
-    await this.request<unknown>('/api/qq/cookie', {
-      method: 'POST',
-      body: JSON.stringify({ cookie }),
-    });
-  }
-
   async clearCookie(): Promise<void> {
     await this.request<unknown>('/api/qq/cookie', { method: 'DELETE' });
   }

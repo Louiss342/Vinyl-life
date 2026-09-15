@@ -107,6 +107,20 @@ export function resolveCover(
   return undefined;
 }
 
+/** 专辑笔记当前生效的封面（显式 cover 优先，其次约定自动识别，与 buildAlbumInfo 同一套规则）。
+ *  播放器要「优先用库内已有封面」时走这里，避免两边解析规则各写一份、日后漂移。 */
+export function resolveAlbumCover(
+  app: App,
+  albumNotePath: string | undefined,
+  opts?: AlbumInfoOpts
+): string | undefined {
+  const p = String(albumNotePath || '').trim();
+  if (!p) return undefined;
+  const file = app.vault.getAbstractFileByPath(normalizePath(p));
+  if (!(file instanceof TFile)) return undefined;
+  return getAlbumInfo(app, file, opts)?.cover;
+}
+
 // 主解析（同步，走 metadataCache）
 export function getAlbumInfo(app: App, file: TFile, opts?: AlbumInfoOpts): AlbumInfo | null {
   const fm = app.metadataCache.getFileCache(file)?.frontmatter;

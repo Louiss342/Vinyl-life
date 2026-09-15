@@ -98,23 +98,6 @@ export class ServerClient {
     return this.getJson<LoginResponse>('/api/login/status');
   }
 
-  async setCookie(cookie: string): Promise<void> {
-    await this.request<unknown>('/api/cookie', {
-      method: 'POST',
-      body: JSON.stringify({ cookie }),
-    });
-  }
-
-  async validateCookie(cookie: string, signal?: AbortSignal): Promise<LoginResponse> {
-    signal?.throwIfAborted();
-    const body = await this.request<LoginResponse>('/api/cookie/validate', {
-      method: 'POST',
-      body: JSON.stringify({ cookie }),
-    });
-    signal?.throwIfAborted();
-    return body;
-  }
-
   async clearCookie(): Promise<void> {
     await this.request<unknown>('/api/cookie', { method: 'DELETE' });
   }
@@ -148,7 +131,8 @@ export class ServerClient {
     return this.getJson<SearchAlbumResponse>('/api/search', { keywords });
   }
 
-  // 封面代理下载（避开浏览器 CORS）
+  // 封面代理下载（避开浏览器 CORS）。失败时透传网关给的原因（图床超时 / 404 / 被拦等），
+  // 而不是只留一个 HTTP 500 —— 导入提示与控制台要靠它分流病因。
   async fetchCover(url: string): Promise<ArrayBuffer> {
     const res = await requestUrl({
       url: this.url('/api/cover', { url }),
@@ -156,7 +140,8 @@ export class ServerClient {
       throw: false,
     });
     if (res.status < 200 || res.status >= 300) {
-      throw new Error(tf('auth.coverDownloadHttp', { status: res.status }));
+      const error = (res.json as ApiErrorResponse | null)?.error;
+      throw new Error(error || tf('auth.coverDownloadHttp', { status: res.status }));
     }
     return res.arrayBuffer;
   }

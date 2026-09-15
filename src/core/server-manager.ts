@@ -1,19 +1,21 @@
 // 本地网关管理：
-//   Obsidian 二进制禁用 ELECTRON_RUN_AS_NODE → 依赖系统 Node，先探测 PATH 再试常见绝对路径
-//   空闲端口探测 → 懒加载 spawn → 就绪等待 → 优雅关闭 → 崩溃自愈（限次重启）
-//   所有路径经 gatewayEnv 统一绝对化注入
+//   一律用 Electron 自带的 Node（utilityProcess）在应用内跑网关 —— 插件不依赖系统 Node.js
+//   （Obsidian 的 Electron 二进制禁用了 ELECTRON_RUN_AS_NODE，utilityProcess 是官方替代通道，
+//   见 in-app-gateway.ts）。
+//   空闲端口探测 → 懒加载 fork → 就绪等待 → 优雅关闭 → 崩溃自愈（限次重启）
+//   所有路径经 gatewayEnv 统一绝对化注入；系统代理随 VINYL_PROXY 一并注入
 import { Plugin, requestUrl } from 'obsidian';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as net from 'net';
-import { spawn, execFile, ChildProcess } from 'child_process';
+import { execFile } from 'child_process';
 import { pluginAbsPath, sleep } from '../util';
 import { getLanguage } from './i18n';
 import { gunzipSync } from 'zlib';
 import { GATEWAY_HASH, GATEWAY_GZIP } from './gateway-bundle';
 import { t, tf } from './i18n';
-import { loadUtilityProcess } from './in-app-gateway';
+import { loadUtilityProcess, loadProxyResolver } from './in-app-gateway';
 import type { UtilityProcessLike } from './in-app-gateway';
 
 export type ServerState = 'stopped' | 'starting' | 'running' | 'error';
@@ -46,15 +48,15 @@ function randomToken(): string {
 export class ServerManager {
   state: ServerState = 'stopped';
   lastError = '';
-  nodeBinary: string | null = null;
   /** 网关鉴权 token：随 env 下发给网关（VINYL_TOKEN），所有客户端请求带 x-vinyl-token。
    *  为什么要它：网关只监听 127.0.0.1，但浏览器里的任意页面都能扫本机端口 —— 没有 token 时，
    *  扫到就能拿你的网易云/QQ 账号发请求、读搜索结果、改凭据（见 README 的「权限说明」）。 */
   readonly token: string = randomToken();
 
-  private child: ChildProcess | null = null;
-  /** 应用内网关进程（Electron utilityProcess；仅在未装系统 Node 时使用，见 startInApp） */
+  /** 应用内网关进程（Electron utilityProcess，见 startInApp） */
   private utility: UtilityProcessLike | null = null;
+  /** 系统代理（启动网关时经 VINYL_PROXY 注入；空串 = 未取到 / 直连） */
+  private systemProxy = '';
   private port = 0;
   private startPromise: Promise<boolean> | null = null;
   private stopping = false;
@@ -71,38 +73,19 @@ export class ServerManager {
     return this.state === 'running';
   }
 
-  // —— Node 探测（需系统 Node，做友好引导）——
-  probeNode(bin: string): Promise<boolean> {
-    return new Promise((resolve) => {
-      try {
-        const p = spawn(bin, ['-v']);
-        let out = '';
-        p.stdout?.on('data', (d) => (out += String(d)));
-        p.on('error', () => resolve(false));
-        p.on('close', (code) => resolve(code === 0 && out.trim().startsWith('v')));
-        window.setTimeout(() => resolve(false), 4000);
-      } catch {
-        resolve(false); // spawn 同步抛错（二进制不可执行等）：探测失败
-      }
-    });
-  }
-
-  async resolveNodeBinary(): Promise<string | null> {
-    if (await this.probeNode('node')) return 'node';
-    const candidates = [
-      'C:/Program Files/nodejs/node.exe',
-      path.join(process.env.ProgramFiles || '', 'nodejs/node.exe'),
-      path.join(process.env['ProgramFiles(x86)'] || '', 'nodejs/node.exe'),
-      path.join(process.env.LOCALAPPDATA || '', 'Programs/nodejs/node.exe'),
-    ];
-    for (const c of candidates) {
-      try {
-        if (fs.existsSync(c) && (await this.probeNode(c))) return c;
-      } catch {
-        // 单个候选路径不可用：继续试下一个
-      }
+  // —— 系统代理（与 Chromium 同一套设置）——
+  // 网关的出口是 Electron 自带的 Node，内置 fetch 不读系统代理；不把这份配置喂给它，
+  // 就会出现「Chromium 能打开封面、网关下载不了」这类同机两链路一好一坏的现象。
+  // 取不到一律按直连处理（网关那边还会退回读 HTTPS_PROXY 等环境变量）。
+  async resolveSystemProxy(): Promise<string> {
+    try {
+      const resolver = loadProxyResolver();
+      if (!resolver) return '';
+      const result = await resolver.resolveProxy('https://music.163.com');
+      return typeof result === 'string' ? result : '';
+    } catch {
+      return ''; // 解析失败不能让网关起不来
     }
-    return null;
   }
 
   // —— 生命周期 ——
@@ -132,81 +115,17 @@ export class ServerManager {
     this.state = 'starting';
     this.lastError = '';
     this.stopping = false;
-    if (!this.nodeBinary) this.nodeBinary = await this.resolveNodeBinary();
-    // 插件每次重载都会起新网关；旧进程不清会常驻堆积，先按 PID 记录清掉上一个。
+    // 旧版本（≤1.0.8）用系统 Node spawn 的网关进程不会随插件重载消失 → 按 PID 记录清掉遗留。
+    // 应用内网关不需要这条兜底：随插件卸载 / Obsidian 退出一起回收。
     await this.killStaleGateway();
     this.port = await this.findFreePort();
-    // 没装系统 Node：改用 Electron 自带的 Node（utilityProcess）在应用内跑同一个网关产物。
-    // 装了 Node 的用户仍走下面的独立进程分支：隔离与清理逻辑保持原样。
-    if (!this.nodeBinary) return this.startInApp();
-    let gateway = '';
-    try {
-      gateway = this.materializeGateway();
-    } catch (e) {
-      // 明确报错，绝不静默失败（社区市场只分发 main.js，网关源码内联其中）
-      this.state = 'error';
-      this.lastError = (e as Error).message;
-      console.error('[vinyl] ' + this.lastError);
-      return false;
-    }
-    // stdout 直接丢弃：网关自己写 gateway.log（VINYL_LOG_FILE 见 gatewayEnv），
-    // 再往 DevTools 控制台镜像一份属多余日志。stderr 仍需读取——既是排空管道（不读会让子进程写阻塞），
-    // 也用来给启动失败提供原因。
-    this.child = spawn(this.nodeBinary, [gateway], {
-      env: this.gatewayEnv(),
-      stdio: ['ignore', 'ignore', 'pipe'],
-    });
-    this.rememberPid(this.child.pid);
-    let earlyError = '';
-    this.child.on('error', (err) => {
-      earlyError = earlyError || err.message;
-    });
-    this.child.stderr?.on('data', (d) => {
-      earlyError = earlyError || String(d).trim();
-    });
-    this.child.on('exit', (code) => {
-      const wasIntentional = this.stopping;
-      this.child = null;
-      this.port = 0;
-      this.state = 'stopped';
-      this.forgetPid();
-      if (wasIntentional) return;
-      this.scheduleRestart(code);
-    });
-
-    // 就绪等待（最多 15s）
-    for (let i = 0; i < 100; i++) {
-      if (earlyError) break;
-      try {
-        const r = await requestUrl({
-          url: `${this.base}/api/ping`,
-          headers: { 'x-vinyl-token': this.token },
-          throw: false,
-        });
-        if (r.status >= 200 && r.status < 300) {
-          this.state = 'running';
-          this.restarts = 0;
-          return true;
-        }
-      } catch {
-        // 尚未监听（进程刚起来）：继续等下一轮
-      }
-      await sleep(150);
-    }
-    const msg = earlyError
-      ? tf('gateway.startFailed', { msg: earlyError.slice(0, 200) })
-      : t('gateway.notReady');
-    this.stop();
-    this.state = 'error';
-    this.lastError = msg;
-    console.error('[vinyl] ' + msg);
-    return false;
+    this.systemProxy = await this.resolveSystemProxy();
+    return this.startInApp();
   }
 
-  // —— 应用内网关（没装系统 Node 时的兜底）——
-  // 用 Electron 自带的 Node（utilityProcess.fork）跑同一个网关产物：扫码登录 / 导入 / 播放
-  // 等在线能力不再要求用户安装 Node.js。装了 Node 的用户走独立进程（start 的下半段），
-  // 隔离、清理、崩溃自愈完全不动；两条路共用同一份网关源码、同一套 env、同一条就绪检查。
+  // —— 应用内网关 ——
+  // 用 Electron 自带的 Node（utilityProcess.fork）跑网关产物：扫码登录 / 导入 / 播放
+  // 等在线能力不要求用户安装 Node.js（发布形态只带 main.js，网关源码内联其中）。
   private async startInApp(): Promise<boolean> {
     const up = loadUtilityProcess();
     if (!up) {
@@ -293,7 +212,7 @@ export class ServerManager {
   }
 
   // 网关源码内联在 main.js 里（社区市场只安装 main.js / manifest.json / styles.css），
-  // 首次使用时把源码落盘到系统临时目录再 spawn；文件名带源码 hash，升级自动换新文件。
+  // 首次使用时把源码落盘到系统临时目录再 fork；文件名带源码 hash，升级自动换新文件。
   private materializeGateway(): string {
     const dir = path.join(os.tmpdir(), 'vinyl-life');
     const file = path.join(dir, `gateway-${GATEWAY_HASH}.js`);
@@ -331,7 +250,7 @@ export class ServerManager {
     }
   }
 
-  // 网关路径注入统一封装：COOKIE / ANON / QQ 凭据 / LOG 全部绝对化
+  // 网关路径注入统一封装：COOKIE / ANON / QQ 凭据 / LOG / 代理 全部绝对化
   private gatewayEnv(): NodeJS.ProcessEnv {
     return {
       ...process.env,
@@ -344,19 +263,16 @@ export class ServerManager {
       VINYL_QQ_COOKIE_FILE: pluginAbsPath(this.plugin, '.qq-cookie'),
       VINYL_QQ_GUID_FILE: pluginAbsPath(this.plugin, '.qq-guid'),
       VINYL_LOG_FILE: pluginAbsPath(this.plugin, 'gateway.log'),
+      // 系统代理 → 网关；'DIRECT' 不注入，留空让它回落读 HTTPS_PROXY 等环境变量
+      VINYL_PROXY:
+        this.systemProxy && this.systemProxy.trim().toUpperCase() !== 'DIRECT'
+          ? this.systemProxy
+          : '',
     };
   }
 
   stop() {
     this.stopping = true;
-    if (this.child) {
-      try {
-        this.child.kill();
-      } catch {
-        // 进程可能已自行退出：忽略，下面照常复位状态
-      }
-      this.child = null;
-    }
     if (this.utility) {
       try {
         this.utility.kill();
@@ -384,7 +300,9 @@ export class ServerManager {
     });
   }
 
-  // —— 旧网关 PID 记录与清理（跨插件重载/崩溃的孤儿进程）——
+  // —— 旧网关 PID 记录与清理（只服务升级路径）——
+  // ≤1.0.8 的版本用系统 Node spawn 网关：它不随插件重载消失，会常驻堆积，所以按 PID 记录清理。
+  // 现行（应用内）网关随插件卸载 / Obsidian 退出回收，不再写 PID 记录。
 
   private stalePidFile(): string {
     return pluginAbsPath(this.plugin, '.gateway.pid');
@@ -436,14 +354,6 @@ export class ServerManager {
       } catch {
         // 记录文件本就不在：无需清理
       }
-    }
-  }
-
-  private rememberPid(pid: number | undefined): void {
-    try {
-      if (pid) fs.writeFileSync(this.stalePidFile(), String(pid));
-    } catch {
-      // 写不进去只影响「下次启动清理旧进程」，不阻塞本次启动
     }
   }
 

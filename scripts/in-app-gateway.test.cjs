@@ -1,8 +1,9 @@
-// 免装 Node：没装系统 Node.js 时，用 Electron 自带的 Node（utilityProcess.fork）在应用内跑同一个网关。
+// 应用内网关（插件唯一的网关形态）：用 Electron 自带的 Node 跑网关，不依赖系统 Node.js。
 //   1) loadUtilityProcess 的三条加载路径：@electron/remote / electron.remote 回退 / 都拿不到；
-//   2) ServerManager 无 Node 时的内嵌分支端到端：fork（测试里用真 Node 模拟 utility fork）→ 就绪 →
-//      带 token 放行 / 无 token 401 → stop 回收进程；
-//   3) utilityProcess 不可用 / fork 抛错：明确失败态，不静默。
+//   2) loadProxyResolver：系统代理解析器可用性（session.resolveProxy）；
+//   3) ServerManager 端到端：fork（测试里用真 Node 模拟 utility fork）→ 就绪 →
+//      系统代理注入 env → 带 token 放行 / 无 token 401 → stop 回收进程；
+//   4) utilityProcess 不可用 / fork 抛错：明确失败态，不静默。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -96,9 +97,13 @@ test('loadUtilityProcess：两条路都拿不到 → null（调用方报明确�
 // ---- 2) ServerManager 内嵌分支端到端 ----
 
 function makeUtilityProcessStub({ failFork = false } = {}) {
+  const calls = { env: null, serviceName: '' };
   return {
+    calls,
     fork(modulePath, _args, options) {
       if (failFork) throw new Error('fork boom');
+      calls.env = (options && options.env) || null;
+      calls.serviceName = (options && options.serviceName) || '';
       // 测试环境没有 Electron：用真 Node 起同一个网关文件，模拟 utility fork 的进程语义
       const child = spawn(process.execPath, [modulePath], { env: options && options.env, stdio: 'ignore' });
       return {
@@ -112,7 +117,7 @@ function makeUtilityProcessStub({ failFork = false } = {}) {
   };
 }
 
-function loadManager({ utility = makeUtilityProcessStub() } = {}) {
+function loadManager({ utility = makeUtilityProcessStub(), session = null } = {}) {
   const pluginDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vinyl-plugin-'));
   // server-manager 的 requestUrl 来自 obsidian：测试里用真 HTTP（它就是拿它 ping 网关的）
   const requestUrl = ({ url, headers, throw: thr = true }) =>
@@ -148,23 +153,24 @@ function loadManager({ utility = makeUtilityProcessStub() } = {}) {
     require: (name) => {
       if (name === 'obsidian') return { Plugin: class {}, requestUrl };
       if (name.endsWith('gateway-bundle')) return { GATEWAY_GZIP, GATEWAY_HASH: 'testhash' };
-      if (name === '@electron/remote') return { require: (id) => (id === 'electron' ? { utilityProcess: utility } : {}) };
+      if (name === '@electron/remote') {
+        return { require: (id) => (id === 'electron' ? { utilityProcess: utility, session } : {}) };
+      }
       if (name === 'electron') return { remote: null };
       return require(name);
     },
   });
   const plugin = { app: { vault: { adapter: { getBasePath: () => pluginDir } } }, manifest: { dir: 'plugins/vinyl-life' } };
   const manager = new mod.exports.ServerManager(plugin);
-  manager.resolveNodeBinary = async () => null; // 模拟「没装 Node」
   return { manager, pluginDir };
 }
 
-test('内嵌网关：fork 就绪 → token 放行 / 无 token 401 → stop 回收', async () => {
+test('应用内网关：fork 就绪 → token 放行 / 无 token 401 → stop 回收', async () => {
   const { manager } = loadManager();
   let pid = 0;
   try {
     const ok = await manager.ensure();
-    assert.equal(ok, true, '没装 Node 时也应通过应用内网关就绪');
+    assert.equal(ok, true, '应通过应用内网关就绪');
     assert.equal(manager.state, 'running');
     pid = manager.utility && manager.utility.pid;
     assert.ok(pid > 0, '应拿到网关进程 pid');
@@ -188,6 +194,58 @@ test('内嵌网关：fork 就绪 → token 放行 / 无 token 401 → stop 回�
     }
   }
   assert.equal(alive, false, 'stop 后内嵌网关进程应已退出');
+});
+
+test('系统代理：resolveProxy 结果经 VINYL_PROXY 注入网关 env；DIRECT / 取不到则不注入', async () => {
+  const utility = makeUtilityProcessStub();
+  const { manager } = loadManager({
+    utility,
+    session: { defaultSession: { resolveProxy: async (url) => {
+      assert.equal(url, 'https://music.163.com', '按代表性子集解析一次');
+      return 'PROXY 127.0.0.1:7890';
+    } } },
+  });
+  try {
+    const ok = await manager.ensure();
+    assert.equal(ok, true);
+    assert.equal(utility.calls.env.VINYL_PROXY, 'PROXY 127.0.0.1:7890', '系统代理要交给网关');
+    assert.equal(utility.calls.env.VINYL_TOKEN, manager.token, '其余注入不受影响');
+  } finally {
+    manager.stop();
+  }
+});
+
+test('系统代理：DIRECT / 解析不到时留空（网关自己回落读环境变量）', async () => {
+  const direct = makeUtilityProcessStub();
+  const a = loadManager({ utility: direct, session: { defaultSession: { resolveProxy: async () => 'DIRECT' } } });
+  try {
+    assert.equal(await a.manager.ensure(), true);
+    assert.equal(direct.calls.env.VINYL_PROXY, '', 'DIRECT 不注入');
+  } finally {
+    a.manager.stop();
+  }
+
+  const none = makeUtilityProcessStub();
+  const b = loadManager({ utility: none }); // 没有 session（remote 拿不到）
+  try {
+    assert.equal(await b.manager.ensure(), true);
+    assert.equal(none.calls.env.VINYL_PROXY, '');
+  } finally {
+    b.manager.stop();
+  }
+});
+
+test('loadProxyResolver：有 session.resolveProxy 就用，缺 session / 抛错都按不可用处理', () => {
+  const withSession = loadInAppModule({
+    package: {
+      require: (id) =>
+        id === 'electron' ? { session: { defaultSession: { resolveProxy: async () => 'DIRECT' } } } : {},
+    },
+  });
+  assert.ok(withSession.loadProxyResolver(), '应拿到 session');
+
+  const noSession = loadInAppModule({ package: { require: () => ({}) }, legacy: null });
+  assert.equal(noSession.loadProxyResolver(), null, '没有 session → null（按直连）');
 });
 
 test('拿不到 utilityProcess：明确失败态（不静默）', async () => {

@@ -252,6 +252,11 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     en: 'Imported "{name}" ({artist}{year}{tracks})',
   },
   'import.qqTracks': { zh: '，{n} 曲', en: ', {n} track(s)' },
+  // 封面下载彻底失败（含备用图床）时的可见提示：专辑照常建好，只有封面要用户知道
+  'import.coverFailed': {
+    zh: '封面下载失败（{msg}），可在专辑卡片右键手动设置封面',
+    en: 'Cover download failed ({msg}) — you can set a cover from the album card later',
+  },
   'import.nameConflict': {
     zh: '已存在同名文件「{path}」，请先改名或移走后再拖入',
     en: 'A file named "{path}" already exists — rename or move it, then drop again',
@@ -319,25 +324,12 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'cover.removed': { zh: '已移除封面', en: 'Cover removed' },
   'cover.writeFailed': { zh: '设置封面失败：{msg}', en: 'Could not set the cover: {msg}' },
 
-  // —— 登录弹窗（扫码 / 浏览器）：公共部分 ——
+  // —— 登录弹窗（扫码）：公共部分 ——
   'login.qrSection': { zh: '扫码登录', en: 'Scan to sign in' },
-  'login.manualSection': { zh: '手动粘贴 Cookie（兜底）', en: 'Paste a cookie manually (fallback)' },
   'login.generating': { zh: '正在生成二维码…', en: 'Generating the QR code…' },
   'login.refreshQr': { zh: '刷新二维码', en: 'Refresh QR code' },
   'login.qrRenderFailed': { zh: '二维码渲染失败：', en: 'Could not render the QR code: ' },
   'login.qrGenFailed': { zh: '生成二维码失败：', en: 'Could not generate the QR code: ' },
-  'login.saveCookie': { zh: '保存 Cookie', en: 'Save cookie' },
-  'login.cookieEmpty': { zh: '请输入 Cookie 内容', en: 'Paste the cookie content first' },
-  'login.verifying': { zh: '正在保存并验证…', en: 'Saving and verifying…' },
-  'login.cookieOk': {
-    zh: '✅ Cookie 有效，已登录：{nick}（{id}）',
-    en: '✅ Cookie is valid, signed in: {nick} ({id})',
-  },
-  'login.cookieInvalid': {
-    zh: '❌ 登录态无效（Cookie 可能过期或格式不对）',
-    en: '❌ Sign-in is invalid (the cookie may be expired or malformed)',
-  },
-  'login.saveFailed': { zh: '保存失败：', en: 'Save failed: ' },
   'login.qrExpired': { zh: '二维码已过期，正在刷新…', en: 'QR code expired, refreshing…' },
   'login.waitScan': { zh: '等待扫码，', en: 'Waiting for the scan — ' },
   'login.scannedConfirm': {
@@ -353,8 +345,8 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     en: '✅ Signed in: {nick} ({id}){vip}. The session has been saved.',
   },
   'login.noSession': {
-    zh: '❌ 已授权但未取得有效登录会话，请刷新二维码重试，或使用「手动粘贴 Cookie」。',
-    en: '❌ Authorized but no valid session was issued — refresh the QR code, or use "Paste a cookie manually".',
+    zh: '❌ 已授权但未取得有效登录会话，请刷新二维码重试。',
+    en: '❌ Authorized but no valid session was issued — refresh the QR code and try again.',
   },
   'login.qrAbnormal': {
     zh: '扫码状态异常（{code}），正在重试；也可刷新二维码。',
@@ -368,13 +360,9 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   // —— 登录弹窗：音源文案（网易云） ——
   'login.netease.title': { zh: '网易云登录', en: 'NetEase sign-in' },
   'login.netease.appHint': { zh: '请用网易云音乐 App 扫码', en: 'Scan with the NetEase Cloud Music app' },
-  'login.netease.manualHint': {
-    zh: '浏览器打开 music.163.com 登录 → F12 → Application（应用）→ Cookies → music.163.com，复制 MUSIC_U 的 Value，按 MUSIC_U=复制的值 粘贴到下面。此方法也可读取 HttpOnly Cookie。',
-    en: 'Sign in to music.163.com in a browser → F12 → Application → Cookies → music.163.com, copy the Value of MUSIC_U, then paste it below as MUSIC_U=<value>. This also reads HttpOnly cookies.',
-  },
   'login.netease.noSessionHint': {
-    zh: '❌ 已授权但未取得有效登录会话（新设备的匿名注册可能被网易云限流）。请刷新二维码重试；仍不行请改用「网易云浏览器登录（官方登录页）」，也可手动粘贴 Cookie。',
-    en: '❌ Authorized but no valid session was issued (anonymous device registration may be rate-limited by NetEase). Refresh the QR code and try again; if that fails, use "NetEase browser sign-in (official page)" or paste a cookie manually.',
+    zh: '❌ 已授权但未取得有效登录会话（新设备的匿名注册可能被网易云限流）。请稍等片刻后刷新二维码重试。',
+    en: '❌ Authorized but no valid session was issued (anonymous device registration may be rate-limited by NetEase). Wait a moment, then refresh the QR code and try again.',
   },
 
   // —— 登录弹窗：音源文案（QQ 音乐） ——
@@ -382,60 +370,6 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'login.qq.appHint': {
     zh: '请用手机 QQ 扫码（此为 QQ 互联二维码，QQ 音乐 App 的「扫一扫」识别不了）',
     en: 'Scan with mobile QQ (this is a QQ Connect QR code — the QQ Music app scanner cannot read it)',
-  },
-  'login.qq.fallbackHint': {
-    zh: '若扫码后长时间停在「已扫码」，请改用设置里的「QQ 浏览器登录」——在官方页面里微信 / QQ 扫码都能完成登录（已实测可用）。',
-    en: 'If it stays on "scanned" for a long time, use "QQ browser sign-in" in the settings — both WeChat and QQ scans work on the official page (verified).',
-  },
-  'login.qq.manualHint': {
-    zh: '浏览器打开 y.qq.com 登录 → F12 → Application（应用）→ Cookies → y.qq.com，复制 qm_keyst 的 Value，按 qm_keyst=复制的值 粘贴到下面。此方法也可读取 HttpOnly Cookie。',
-    en: 'Sign in to y.qq.com in a browser → F12 → Application → Cookies → y.qq.com, copy the Value of qm_keyst, then paste it below as qm_keyst=<value>. This also reads HttpOnly cookies.',
-  },
-
-  // —— 浏览器登录弹窗 ——
-  'login.web.netease.title': { zh: '网易云登录（浏览器）', en: 'NetEase sign-in (browser)' },
-  'login.web.netease.displayName': { zh: '网易云', en: 'NetEase' },
-  'login.web.qq.title': { zh: 'QQ 音乐登录（浏览器）', en: 'QQ Music sign-in (browser)' },
-  'login.web.qq.displayName': { zh: 'QQ 音乐', en: 'QQ Music' },
-  'login.web.readingAccount': { zh: '正在读取当前账号…', en: 'Reading the current account…' },
-  'login.web.account': {
-    zh: '当前账号：{nick}（{id}）；新登录验证通过后才会替换。',
-    en: 'Current account: {nick} ({id}) — it is replaced only after a new sign-in verifies.',
-  },
-  'login.web.notLoggedIn': {
-    zh: '当前未登录；登录完成后自动验证并接回账号。',
-    en: 'Not signed in yet — once you finish, the account is verified and attached automatically.',
-  },
-  'login.web.accountFailed': {
-    zh: '当前账号读取失败，可在设置页查看登录态。',
-    en: 'Could not read the current account — check the sign-in state in the settings.',
-  },
-  'login.web.step1': {
-    zh: '第 1 步：点击下方按钮，在弹出的官方窗口内完成登录（扫码 / 账号密码均可）。',
-    en: 'Step 1: click the button below and sign in inside the official window that opens (QR code or password).',
-  },
-  'login.web.step2': {
-    zh: '第 2 步：登录完成后无需操作——插件会自动检测、验证并接回账号；验证通过前不会覆盖现有登录。',
-    en: 'Step 2: nothing else to do — the plugin detects, verifies and attaches the account automatically; the existing sign-in is never overwritten before verification.',
-  },
-  'login.web.openWindow': {
-    zh: '打开官方登录窗口',
-    en: 'Open the official sign-in window',
-  },
-  'login.web.check': { zh: '检测登录', en: 'Check sign-in' },
-  'login.web.opening': {
-    zh: '正在打开官方登录窗口…',
-    en: 'Opening the official sign-in window…',
-  },
-  'login.web.openFailed': {
-    zh: '无法打开登录窗口：{msg}（可改用「{fallback}」或手动粘贴 Cookie）',
-    en: 'Could not open the sign-in window: {msg} (use "{fallback}" or paste a cookie manually instead)',
-  },
-  'login.web.success': { zh: '{name}登录成功，已接回账号', en: '{name} signed in — account attached' },
-  'login.web.saved': { zh: '✅ 登录成功，账号已保存。', en: '✅ Signed in, account saved.' },
-  'login.web.closed': {
-    zh: '登录窗口已关闭，尚未完成登录。可点击「打开官方登录窗口」重试。',
-    en: 'The sign-in window was closed before finishing. Click "Open the official sign-in window" to retry.',
   },
 
   // —— 设置面板：标签页 / 通用 ——
@@ -555,27 +489,11 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     zh: '手机网易云 App 扫码授权',
     en: 'Authorize by scanning with the NetEase Cloud Music app',
   },
-  'settings.webLogin': { zh: '浏览器登录', en: 'Browser sign-in' },
-  'settings.webLoginDescNetease': {
-    zh: '独立窗口登录 music.163.com',
-    en: 'Sign in to music.163.com in a separate window',
-  },
   'settings.logout': { zh: '退出登录', en: 'Sign out' },
   'settings.logoutDescNetease': { zh: '清除本机 Cookie（.cookie）', en: 'Clear the local cookie (.cookie)' },
   'settings.logoutAction': { zh: '退出', en: 'Sign out' },
   'settings.qrLoginDescQq': { zh: '手机 QQ 扫码授权', en: 'Authorize by scanning with mobile QQ' },
-  'settings.webLoginDescQq': {
-    zh: '独立窗口登录 y.qq.com',
-    en: 'Sign in to y.qq.com in a separate window',
-  },
   'settings.logoutDescQq': { zh: '清除本机 Cookie（.qq-cookie）', en: 'Clear the local cookie (.qq-cookie)' },
-  'settings.sub.runtime': { zh: '运行环境', en: 'Runtime' },
-  'settings.nodeMissing': {
-    zh: '未检测到（在线音源自动使用应用内网关）',
-    en: 'Not detected (online sources use the in-app gateway)',
-  },
-  'settings.redetect': { zh: '重新探测', en: 'Detect again' },
-  'settings.detecting': { zh: '探测中…', en: 'Detecting…' },
   'settings.section.local': { zh: '本地源', en: 'Local sources' },
   'settings.audioFolder': { zh: '音频根目录', en: 'Audio root folder' },
   'settings.audioFolderDesc': {
@@ -601,15 +519,7 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'cmd.openShelf': { zh: '打开专辑墙', en: 'Open album shelf' },
   'cmd.openPlayer': { zh: '打开播放器', en: 'Open player' },
   'cmd.neteaseLogin': { zh: '网易云扫码登录', en: 'NetEase QR sign-in' },
-  'cmd.neteaseWebLogin': {
-    zh: '网易云浏览器登录（官方登录页）',
-    en: 'NetEase browser sign-in (official page)',
-  },
   'cmd.qqLogin': { zh: 'QQ 音乐扫码登录', en: 'QQ Music QR sign-in' },
-  'cmd.qqWebLogin': {
-    zh: 'QQ 音乐浏览器登录（官方登录页）',
-    en: 'QQ Music browser sign-in (official page)',
-  },
   'cmd.qqLogout': { zh: '退出 QQ 音乐登录', en: 'Sign out of QQ Music' },
   'cmd.neteaseLogout': { zh: '退出网易云登录', en: 'Sign out of NetEase' },
   'cmd.importAlbum': { zh: '导入专辑', en: 'Import album' },
@@ -720,9 +630,6 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'notice.queuedAlbum': { zh: '已加入队列：{name}', en: 'Queued: {name}' },
 
   // —— 登录 / 凭据 / 网关错误（core/auth, qq-auth, credential-file, netease, server-client, qq, web-client）——
-  'auth.cookieMissingMusicU': { zh: 'Cookie 缺少有效的 MUSIC_U', en: 'The cookie has no valid MUSIC_U' },
-  'auth.cookieMissingQmKeyst': { zh: 'Cookie 缺少有效的 qm_keyst', en: 'The cookie has no valid qm_keyst' },
-  'auth.gatewayNotReady': { zh: '网关未就绪', en: 'The gateway is not ready' },
   'auth.gatewayNotReadyCannotLogin': {
     zh: '网关未就绪，无法登录',
     en: 'Cannot sign in — the gateway is not ready',
@@ -740,48 +647,6 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'auth.coverDownloadHttp': {
     zh: '封面下载失败 HTTP {status}',
     en: 'Cover download failed: HTTP {status}',
-  },
-
-  // —— 浏览器登录窗口（core/browser-login）——
-  'login.windowTitleNetease': { zh: '网易云音乐登录 · Vinyl Life', en: 'NetEase sign-in · Vinyl Life' },
-  'login.windowTitleQq': { zh: 'QQ 音乐登录 · Vinyl Life', en: 'QQ Music sign-in · Vinyl Life' },
-  'login.displayNameNetease': { zh: '网易云', en: 'NetEase' },
-  'login.displayNameQq': { zh: 'QQ 音乐', en: 'QQ Music' },
-  'login.pluginUnloaded': {
-    zh: '插件已卸载，请重新启用后登录',
-    en: 'The plugin was unloaded — enable it again to sign in',
-  },
-  'login.noWindowEnv': {
-    zh: '当前环境无法创建登录窗口，请使用桌面版 Obsidian',
-    en: 'Cannot open a sign-in window here — use desktop Obsidian',
-  },
-  'login.windowClosed': {
-    zh: '登录窗口已停止运行，请重新打开登录窗口。',
-    en: 'The sign-in window stopped — open it again.',
-  },
-  'login.hintClickLogin': {
-    zh: '请在官方窗口点击右上角「登录」。登录完成后会自动验证并返回。',
-    en: 'Click “Sign in” in the official window; it is verified and closed automatically when done.',
-  },
-  'login.waitingForAccount': {
-    zh: '尚未检测到账号登录，请在官方窗口完成登录。',
-    en: 'No account detected yet — finish signing in in the official window.',
-  },
-  'login.detectedVerifying': {
-    zh: '已检测到账号，正在验证登录…',
-    en: 'Account detected — verifying…',
-  },
-  'login.success': {
-    zh: '{name}登录成功，已保存登录状态。',
-    en: '{name} signed in — the session has been saved.',
-  },
-  'login.verifyFailed': {
-    zh: '登录验证失败：{msg}。可继续登录或点击「检测登录」重试。',
-    en: 'Sign-in verification failed: {msg}. You can keep going, or hit “Check sign-in” to retry.',
-  },
-  'login.pageLoadFailed': {
-    zh: '官方登录页加载失败，请检查网络后关闭并重新打开登录窗口。',
-    en: 'The official sign-in page failed to load — check your network, then close and reopen the window.',
   },
 
   // —— 播放与队列（core/player-state, core/queue）——
@@ -828,20 +693,19 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   },
   'queue.qqFailed': { zh: '获取 QQ 音乐专辑失败：{msg}', en: 'Could not fetch the QQ Music album: {msg}' },
 
-  // —— 网关与运行环境（core/server-manager）——
+  // —— 网关（core/server-manager）——
   'gateway.inAppUnavailable': {
-    zh: '未找到 Node.js，且应用内网关在本机不可用：在线音源（网易云 / QQ 音乐）暂不可用。可安装 Node.js（nodejs.org）后重启 Obsidian，或在设置里「重新探测」。',
-    en: 'No Node.js found and the in-app gateway is unavailable on this machine: online sources (NetEase / QQ Music) are unavailable. Install Node.js from nodejs.org and restart Obsidian, or hit “Detect again” in the settings.',
+    zh: '应用内网关在本机不可用（Electron 的 utilityProcess 通道拿不到）：在线音源（网易云 / QQ 音乐）暂不可用。请重启 Obsidian 后再试。',
+    en: 'The in-app gateway is unavailable on this machine (the Electron utilityProcess channel could not be reached): online sources (NetEase / QQ Music) are unavailable. Restart Obsidian and try again.',
   },
   'gateway.inAppStartFailed': {
-    zh: '应用内网关启动失败：{msg}。可安装 Node.js（nodejs.org）后重启 Obsidian 作为替代。',
-    en: 'The in-app gateway failed to start: {msg}. Installing Node.js (nodejs.org) and restarting Obsidian is a fallback.',
+    zh: '应用内网关启动失败：{msg}。请重启 Obsidian 后再试（更多线索见 gateway.log）。',
+    en: 'The in-app gateway failed to start: {msg}. Restart Obsidian and try again (see gateway.log for details).',
   },
   'gateway.crashLoop': {
-    zh: '网关多次崩溃（最近一次退出码 {code}），已停止自动重启（可在设置里重试，或查看 gateway.log）',
-    en: 'The gateway crashed repeatedly (last exit code {code}); auto-restart stopped (retry from the settings, or check gateway.log)',
+    zh: '网关多次崩溃（最近一次退出码 {code}），已停止自动重启（可重启 Obsidian 重试，或查看 gateway.log）',
+    en: 'The gateway crashed repeatedly (last exit code {code}); auto-restart stopped (restart Obsidian to retry, or check gateway.log)',
   },
-  'gateway.startFailed': { zh: '网关启动失败：{msg}', en: 'The gateway failed to start: {msg}' },
   'gateway.notReady': { zh: '网关 15s 未就绪', en: 'The gateway did not become ready within 15s' },
   'gateway.exitCodeUnknown': { zh: '未知', en: 'unknown' },
   'gateway.tempWriteFailed': {

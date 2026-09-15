@@ -7,7 +7,7 @@ const { createRequire } = require('node:module');
 
 // Execute the real gateway and upstream endpoint modules. Only I/O is replaced;
 // account cookies here are synthetic and never touch the installed plugin.
-function gateway(qrCode, qrCookies = [], valid = true) {
+function gateway(qrCode, qrCookies = [], valid = true, opts = {}) {
   const filename = path.resolve(__dirname, '../server/gateway.js');
   const requireFromGateway = createRequire(filename);
   const files = new Map([
@@ -25,6 +25,14 @@ function gateway(qrCode, qrCookies = [], valid = true) {
         unlinkSync(file) { files.delete(file); },
         appendFileSync() {},
       };
+      if (name === 'dns') {
+        const realDns = requireFromGateway('dns');
+        return {
+          // 默认走真实解析（本机 / localhost 这类既有用例依赖它）；封面用例用 opts.dns 接管
+          lookup: (hostname, options, cb) =>
+            opts.dns ? opts.dns(hostname, options, cb) : realDns.lookup(hostname, options, cb),
+        };
+      }
       if (name === 'http') {
         return {
           createServer: (handler) => {
@@ -49,6 +57,11 @@ function gateway(qrCode, qrCookies = [], valid = true) {
     Buffer, URL, URLSearchParams, AbortSignal, setTimeout, clearTimeout,
     fetch: async (url) => {
       requests.push(url);
+      // 用例可用 opts.fetch 接管（返回 falsy 则落回默认桩）
+      if (opts.fetch) {
+        const custom = await opts.fetch(String(url));
+        if (custom) return custom;
+      }
       const isQr = url.includes('qrcode/client/login');
       const body = isQr ? { code: qrCode } : {
         code: 200,
@@ -120,19 +133,6 @@ test('QR 803 without MUSIC_U fails clearly and preserves the existing account', 
   assert.equal(g.files.get('/test/.cookie'), 'MUSIC_U=existing-account');
 });
 
-test('invalid imported cookie cannot overwrite an existing account', async () => {
-  const g = gateway(801, [], false);
-  await assert.rejects(g.call('POST', '/api/cookie', { cookie: 'MUSIC_U=expired' }), /登录|Cookie|cookie/);
-  assert.equal(g.files.get('/test/.cookie'), 'MUSIC_U=existing-account');
-});
-
-test('cookie validation is read-only and returns the verified account', async () => {
-  const g = gateway(801);
-  const result = await g.call('POST', '/api/cookie/validate', { cookie: 'MUSIC_U=new-account' });
-  assert.equal(result.data.account.id, 123);
-  assert.equal(g.files.get('/test/.cookie'), 'MUSIC_U=existing-account');
-});
-
 // ============ 请求级：鉴权与响应头 ============
 
 test('网关鉴权：没有 token 一律 401，带对 token（header 或 ?t=）才放行', async () => {
@@ -159,4 +159,81 @@ test('封面代理：本机 / 内网 / 链路本地地址一律拒绝（防 SSRF
   for (const url of blocked) {
     await assert.rejects(g.call('GET', '/api/cover', {}, { url }), /不可访问|无效/, `应拒绝 ${url}`);
   }
+});
+
+// ============ 请求级：封面代理的失败分流（这些文案会一路冒到导入提示） ============
+
+const COVER_URL = 'https://y.gtimg.cn/music/photo_new/T002R300x300M000001mvhPh0qevad.jpg';
+const publicDns = (hostname, options, cb) => cb(null, [{ address: '203.0.113.10', family: 4 }]);
+
+/** 假流式响应：fetchBinary 按 res.body.getReader() 逐块读 */
+function imageResponse(chunks, contentType = 'image/jpeg', status = 200) {
+  let i = 0;
+  return {
+    status,
+    headers: { get: (k) => (String(k).toLowerCase() === 'content-type' ? contentType : null) },
+    body: {
+      getReader: () => ({
+        read: async () => (i < chunks.length ? { done: false, value: chunks[i++] } : { done: true }),
+        cancel: async () => {},
+      }),
+    },
+  };
+}
+
+test('封面代理：正常图片按二进制返回并带上 Content-Type', async () => {
+  const g = gateway(803, [], true, {
+    dns: publicDns,
+    fetch: async () => imageResponse([new Uint8Array([1, 2, 3])]),
+  });
+  const result = await g.call('GET', '/api/cover', {}, { url: COVER_URL });
+  assert.equal(result.contentType, 'image/jpeg');
+  assert.deepEqual(Array.from(result.binary), [1, 2, 3]);
+});
+
+test('封面代理：源站 404 报「不存在」，不再误报「不是图片」', async () => {
+  const g = gateway(803, [], true, {
+    dns: publicDns,
+    fetch: async () => ({ status: 404, headers: { get: () => 'text/plain' } }),
+  });
+  await assert.rejects(g.call('GET', '/api/cover', {}, { url: COVER_URL }), /不存在/);
+});
+
+test('封面代理：源站 5xx 报出状态码', async () => {
+  const g = gateway(803, [], true, {
+    dns: publicDns,
+    fetch: async () => ({ status: 502, headers: { get: () => 'text/html' } }),
+  });
+  await assert.rejects(g.call('GET', '/api/cover', {}, { url: COVER_URL }), /HTTP 502/);
+});
+
+test('封面代理：200 但内容不是图片 → 仍是「不是图片」', async () => {
+  const g = gateway(803, [], true, {
+    dns: publicDns,
+    fetch: async () => imageResponse([], 'text/html'),
+  });
+  await assert.rejects(g.call('GET', '/api/cover', {}, { url: COVER_URL }), /不是图片/);
+});
+
+test('封面代理：DNS 解析失败与「解析到内网」分开报（排查方向不同）', async () => {
+  const g = gateway(803, [], true, {
+    dns: (hostname, options, cb) => cb(new Error('ENOTFOUND')),
+    fetch: async () => imageResponse([]),
+  });
+  await assert.rejects(g.call('GET', '/api/cover', {}, { url: COVER_URL }), /无法解析/);
+
+  const g2 = gateway(803, [], true, {
+    dns: (hostname, options, cb) => cb(null, [{ address: '127.0.0.1', family: 4 }]),
+  });
+  await assert.rejects(g2.call('GET', '/api/cover', {}, { url: COVER_URL }), /不可访问/);
+});
+
+test('封面代理：连接失败 / 超时 → 中文可达性文案（不透出 undici 英文报错）', async () => {
+  const g = gateway(803, [], true, {
+    dns: publicDns,
+    fetch: async () => {
+      throw new Error('The operation was aborted due to timeout');
+    },
+  });
+  await assert.rejects(g.call('GET', '/api/cover', {}, { url: COVER_URL }), /连接失败或超时/);
 });

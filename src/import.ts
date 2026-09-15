@@ -10,6 +10,7 @@ import {
   getAlbumInfo,
   parseQqAlbumMid,
 } from './core/album-index';
+import { coverCandidates } from './core/cover-url';
 import {
   isAudioFile,
   baseName,
@@ -17,6 +18,7 @@ import {
   sanitizeFileName,
   ensureFolder,
   relDirOf,
+  notice,
 } from './util';
 import { t, tf } from './core/i18n';
 // 以下仅作类型使用（import type 让测试打包不牵连整条服务链）
@@ -83,15 +85,34 @@ export async function importAlbum(ctx: ImportContext, input: string): Promise<Im
   return link.source === 'qq' ? importQqAlbum(ctx, input) : importNeteaseAlbum(ctx, input);
 }
 
-// 封面：经本地网关代理下载（避开 CORS）→ covers/，返回 frontmatter 用的 wikilink 字面量
+// 封面：经本地网关代理下载（避开 CORS）→ covers/，返回 frontmatter 用的 wikilink 字面量。
+// QQ 封面地址是拼出来的，主图床（y.gtimg.cn）在部分网络下不可达 —— 按候选图床依次重试
+//（见 core/cover-url.ts）。全部失败时给出可见提示（Notice + 控制台），不再静默留白。
 async function downloadCoverToVault(
   ctx: ImportContext,
   url: string | undefined,
   name: string
 ): Promise<string> {
   if (!url) return '';
+  let ab: ArrayBuffer | null = null;
+  let firstError = '';
+  for (const candidate of coverCandidates(String(url))) {
+    try {
+      ab = await ctx.client.fetchCover(candidate);
+      break;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!firstError) firstError = msg;
+      // 主图床失败、备用图床顶上属常态 → 只进控制台；全部失败才弹提示
+      console.warn(`[vinyl] 封面下载失败（${candidate}）：${msg}`);
+    }
+  }
+  if (!ab) {
+    console.error('[vinyl] 封面下载失败', firstError);
+    notice(tf('import.coverFailed', { msg: firstError }));
+    return '';
+  }
   try {
-    const ab = await ctx.client.fetchCover(String(url));
     const ext = String(url).match(/\.(jpe?g|png|webp)(\?|$)/i)?.[1] || 'jpg';
     const coverPath = normalizePath(`${ctx.settings().coverFolder}/${name}.${ext}`);
     if (!ctx.app.vault.getAbstractFileByPath(coverPath)) {
@@ -100,7 +121,9 @@ async function downloadCoverToVault(
     }
     return `"[[${coverPath}]]"`;
   } catch (e) {
-    console.error('[vinyl] 封面下载失败', e);
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error('[vinyl] 封面写入失败', e);
+    notice(tf('import.coverFailed', { msg }));
     return '';
   }
 }

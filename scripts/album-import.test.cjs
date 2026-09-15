@@ -53,7 +53,7 @@ class TFile {
 function setup() {
   const files = new Map();
   const binaries = new Map();
-  const calls = { qqAlbum: [], neteaseAlbum: [], covers: [] };
+  const calls = { qqAlbum: [], neteaseAlbum: [], covers: [], notices: [] };
 
   // 目录单独登记（不混进 getMarkdownFiles），模拟 Obsidian「createFolder 逐级建目录」
   const folders = new Set();
@@ -127,7 +127,12 @@ function setup() {
           TFile,
           TFolder: class {},
           normalizePath: (p) => p,
-          Notice: class {},
+          // 封面失败提示走 Notice：这里收集下来（断言「失败可见」）
+          Notice: class {
+            constructor(message) {
+              calls.notices.push(String(message));
+            }
+          },
           Plugin: class {},
           Modal: class {},
         };
@@ -392,6 +397,48 @@ test('导入专辑：纯 mid / 旧版链接同样可导入', async () => {
     (await h2.mod.importAlbum(h2.ctx, `https://y.qq.com/n/ryqq/album/${QQ_MID}.html`)).ok,
     true
   );
+});
+
+// ============ 封面图床回退（y.gtimg.cn 不可达的机器） ============
+
+const QQ_COVER = `https://y.gtimg.cn/music/photo_new/T002R300x300M000${QQ_MID}.jpg`;
+const QQ_COVER_MIRROR = `https://y.qq.com/music/photo_new/T002R300x300M000${QQ_MID}.jpg`;
+
+test('导入专辑：主图床失败 → 自动换备用图床（y.qq.com），封面照常落库', async () => {
+  const h = setup();
+  h.ctx.client.fetchCover = async (url) => {
+    h.calls.covers.push(url);
+    if (String(url).includes('y.gtimg.cn')) throw new Error('封面地址连接失败或超时（y.gtimg.cn）');
+    return new ArrayBuffer(8);
+  };
+  const res = await h.mod.importAlbum(h.ctx, QQ_URL);
+  assert.equal(res.ok, true, res.detail);
+  assert.deepEqual(
+    Array.from(h.calls.covers),
+    [QQ_COVER, QQ_COVER_MIRROR],
+    '先试主图床，失败后再试备用图床'
+  );
+  const note = h.files.get('Vinyl Life/Vinyl Note/未完成.md');
+  assert.match(note._content, /cover: "\[\[Vinyl Life\/covers\/未完成\.jpg\]\]"/);
+  assert.ok(h.binaries.has('Vinyl Life/covers/未完成.jpg'), '备用图床取到的图应落库');
+  assert.deepEqual(Array.from(h.calls.notices), [], '回退成功不该打扰用户');
+});
+
+test('导入专辑：两个图床都失败 → 专辑照建、不留 cover 字段、给出可见提示（不再静默）', async () => {
+  const h = setup();
+  h.ctx.client.fetchCover = async (url) => {
+    h.calls.covers.push(url);
+    throw new Error('封面地址连接失败或超时（y.gtimg.cn）');
+  };
+  const res = await h.mod.importAlbum(h.ctx, QQ_URL);
+  assert.equal(res.ok, true, '封面失败不影响专辑建好：' + res.detail);
+  const note = h.files.get('Vinyl Life/Vinyl Note/未完成.md');
+  assert.ok(note, '应建立专辑笔记');
+  assert.doesNotMatch(note._content, /^cover:/m, '拿不到图就不写 cover 字段');
+  assert.equal(h.calls.covers.length, 2, '两个候选都试过才放弃');
+  assert.equal(h.calls.notices.length, 1, '失败必须可见（一条 Notice）');
+  assert.match(h.calls.notices[0], /封面下载失败/);
+  assert.match(h.calls.notices[0], /连接失败或超时/, '提示里要带原因');
 });
 
 // ============ 查重 ============

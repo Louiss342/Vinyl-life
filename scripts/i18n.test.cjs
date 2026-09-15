@@ -196,8 +196,13 @@ test('i18n：tf() 占位符替换（缺变量 / 缺键时原样保留，不吞�
     'Importing 2/5: Abbey Road…'
   );
   assert.equal(
-    i18n.tf('login.web.openFailed', { msg: 'boom', fallback: 'NetEase QR sign-in' }),
-    'Could not open the sign-in window: boom (use "NetEase QR sign-in" or paste a cookie manually instead)'
+    i18n.tf('import.qqDone', {
+      name: 'Unfinished',
+      artist: 'Stefanie Sun',
+      year: ', 2002',
+      tracks: ', 11 track(s)',
+    }),
+    'Imported "Unfinished" (Stefanie Sun, 2002, 11 track(s))'
   );
   i18n.setLanguage('zh');
 });
@@ -221,7 +226,7 @@ test('i18n：语言切换后新建的登录 provider 文案跟着变（不能被
   const providers = esbuild.buildSync({
     stdin: {
       // setLanguage 从这里取：bundle 里的 i18n 是独立实例，改外层实例对它无效
-      contents: `export * from '../src/views/qr-login-modal';\nexport * from '../src/views/web-login-modal';\nexport { setLanguage } from '../src/core/i18n';\n`,
+      contents: `export * from '../src/views/qr-login-modal';\nexport { setLanguage } from '../src/core/i18n';\n`,
       resolveDir: __dirname,
       loader: 'ts',
     },
@@ -250,8 +255,6 @@ test('i18n：语言切换后新建的登录 provider 文案跟着变（不能被
   mod.exports.setLanguage('en');
   assert.equal(mod.exports.qqQrProvider().title, 'QQ Music sign-in');
   assert.equal(mod.exports.qqQrProvider().appHint.includes('QQ Connect QR code'), true);
-  assert.equal(mod.exports.qqWebProvider().title, 'QQ Music sign-in (browser)');
-  assert.equal(mod.exports.qqWebProvider().qrFallback, 'QQ Music QR sign-in', '兜底入口名跟命令名一致');
 
   mod.exports.setLanguage('zh');
   assert.equal(mod.exports.qqQrProvider().title, 'QQ 音乐登录', '切回中文仍是原文案');
@@ -735,7 +738,7 @@ const KEPT_COMMANDS = [
 ];
 // 只应出现在调试门后的那批（登录 / 退出 —— 设置面板按钮没覆盖到的维护命令）
 const DEBUG_COMMANDS = [
-  'netease-login', 'netease-web-login', 'qq-login', 'qq-browser-login',
+  'netease-login', 'qq-login',
   'qq-logout', 'netease-logout',
 ];
 
@@ -758,7 +761,7 @@ test('main：打开「调试命令」后补齐登录 / 退出（id 与回调都�
   assert.equal(
     ids.length,
     KEPT_COMMANDS.length + DEBUG_COMMANDS.length,
-    '调试模式下命令数 = 5 + 6（别重复注册）'
+    '调试模式下命令数 = 8 + 4（别重复注册）'
   );
   for (const c of plugin.commands) {
     assert.equal(typeof c.callback, 'function', `${c.id} 缺回调`);
@@ -989,7 +992,7 @@ test('设置面板：四页原生分页（type: page），页名走 i18n', () =>
   const plugin = {
     manifest: { version: '9.9.9' },
     settings: mod.DEFAULT_SETTINGS,
-    server: { nodeBinary: null },
+    server: {},
   };
   const tab = new mod.VinylSettingTab({}, plugin);
   const pages = tab.getSettingDefinitions();
@@ -1069,7 +1072,7 @@ test('「关于」页：中文正文在上、英译在下（渲染顺序 + 两�
   const tab = new mod.VinylSettingTab({}, {
     manifest: { version: '9.9.9' },
     settings: mod.DEFAULT_SETTINGS,
-    server: { nodeBinary: null },
+    server: {},
   });
   const aboutDef = tab
     .getSettingDefinitions()
