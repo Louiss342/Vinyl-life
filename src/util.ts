@@ -374,7 +374,7 @@ export function prefersReducedMotion(): boolean {
       typeof window.matchMedia === 'function' &&
       window.matchMedia('(prefers-reduced-motion: reduce)').matches
     );
-  } catch (_) {
+  } catch {
     return false;
   }
 }

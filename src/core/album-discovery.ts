@@ -386,7 +386,7 @@ const sessions = new Map<string, SearchSession>();
 
 function trimSessions(): void {
   while (sessions.size > MAX_SESSIONS) {
-    const oldest = sessions.keys().next().value;
+    const oldest = sessions.keys().next().value as string | undefined;
     if (oldest == null) return;
     sessions.delete(oldest);
   }

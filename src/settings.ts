@@ -319,7 +319,7 @@ export class VinylSettingTab extends PluginSettingTab {
     const p = this.plugin;
     section(el, t('settings.section.basics'), 'basics', 'sliders-horizontal', (group) => {
       row(group, t('settings.language'), t('settings.languageDesc'), (s) =>
-        s.addDropdown((d) => {
+        void s.addDropdown((d) => {
           for (const l of LANGUAGES) d.addOption(l.value, l.label);
           d.setValue(p.settings.language);
           d.onChange(async (v) => {
@@ -334,7 +334,7 @@ export class VinylSettingTab extends PluginSettingTab {
 
     section(el, t('settings.path'), 'paths', 'folder-tree', (group) => {
       row(group, t('settings.albumFolder'), t('settings.albumFolderDesc'), (s) =>
-        s.addText((txt) =>
+        void s.addText((txt) =>
           txt
             .setPlaceholder(DEFAULT_SETTINGS.albumFolder)
             .setValue(p.settings.albumFolder)
@@ -345,7 +345,7 @@ export class VinylSettingTab extends PluginSettingTab {
         )
       );
       row(group, t('settings.coverFolder'), t('settings.coverFolderDesc'), (s) =>
-        s.addText((txt) =>
+        void s.addText((txt) =>
           txt
             .setPlaceholder(DEFAULT_SETTINGS.coverFolder)
             .setValue(p.settings.coverFolder)
@@ -359,7 +359,7 @@ export class VinylSettingTab extends PluginSettingTab {
 
     section(el, t('settings.template'), 'template', 'notebook-pen', (group) => {
       row(group, t('settings.albumTemplate'), t('settings.albumTemplateDesc'), (s) =>
-        s
+        void s
           .addText((txt) =>
             txt
               .setPlaceholder(t('settings.albumTemplatePlaceholder'))
@@ -380,7 +380,7 @@ export class VinylSettingTab extends PluginSettingTab {
 
     section(el, t('settings.section.playback'), 'playback', 'audio-lines', (group) => {
       row(group, t('settings.defaultSource'), t('settings.defaultSourceDesc'), (s) =>
-        s.addDropdown((d) =>
+        void s.addDropdown((d) =>
           d
             .addOption('auto', t('settings.sourceAuto'))
             .addOption('local', t('settings.sourceLocal'))
@@ -394,7 +394,7 @@ export class VinylSettingTab extends PluginSettingTab {
         )
       );
       row(group, t('settings.quality'), t('settings.qualityDesc'), (s) =>
-        s.addDropdown((d) =>
+        void s.addDropdown((d) =>
           d
             .addOption('standard', t('settings.qualityStandard'))
             .addOption('higher', t('settings.qualityHigher'))
@@ -408,7 +408,7 @@ export class VinylSettingTab extends PluginSettingTab {
         )
       );
       row(group, t('settings.autoPlay'), t('settings.autoPlayDesc'), (s) =>
-        s.addToggle((tg) =>
+        void s.addToggle((tg) =>
           tg.setValue(p.settings.autoPlay).onChange(async (v) => {
             p.settings.autoPlay = v;
             await p.saveSettings();
@@ -427,7 +427,7 @@ export class VinylSettingTab extends PluginSettingTab {
           tracks: Object.keys(p.settings.stats.tracks).length,
         }),
         (s) =>
-          s
+          void s
             .addButton((b) =>
               b.setButtonText(t('settings.viewStats')).onClick(() => {
                 new StatsModal(this.app, p.settings.stats).open();
@@ -453,7 +453,7 @@ export class VinylSettingTab extends PluginSettingTab {
     const p = this.plugin;
     section(el, t('settings.section.shelf'), 'shelf', 'layout-grid', (group) => {
       row(group, t('settings.columns'), t('settings.columnsDesc'), (s) =>
-        s.addDropdown((d) => {
+        void s.addDropdown((d) => {
           d.addOption('auto', t('settings.columnsAuto'));
           for (const [n, label] of columnOptions()) d.addOption(String(n), label);
           d.setValue(String(p.settings.shelfColumns)).onChange(async (v) => {
@@ -465,7 +465,7 @@ export class VinylSettingTab extends PluginSettingTab {
         })
       );
       row(group, t('settings.discDirection'), t('settings.discDirectionDesc'), (s) =>
-        s.addDropdown((d) => {
+        void s.addDropdown((d) => {
           for (const [key, label] of discOptions()) d.addOption(key, label);
           d.setValue(p.settings.discDirection).onChange(async (v) => {
             const dir = DISC_DIRECTIONS.includes(v as DiscDirection)
@@ -481,7 +481,7 @@ export class VinylSettingTab extends PluginSettingTab {
 
     section(el, t('settings.section.vinyl'), 'vinyl', 'disc-3', (group) => {
       row(group, t('settings.recordColor'), t('settings.recordColorDesc'), (s) =>
-        s.addDropdown((d) => {
+        void s.addDropdown((d) => {
           for (const key of RECORD_COLORS) d.addOption(key, t(RECORD_LABEL_KEYS[key]));
           d.setValue(p.settings.recordColor).onChange(async (v) => {
             p.settings.recordColor = normalizeRecordColor(v);
@@ -494,7 +494,7 @@ export class VinylSettingTab extends PluginSettingTab {
 
     section(el, t('settings.section.player'), 'deck', 'radio-tower', (group) => {
       row(group, t('settings.playerLocation'), t('settings.playerLocationDesc'), (s) =>
-        s.addDropdown((d) =>
+        void s.addDropdown((d) =>
           d
             .addOption('sidebar', t('settings.locSidebar'))
             .addOption('tab', t('settings.locTab'))
@@ -507,7 +507,7 @@ export class VinylSettingTab extends PluginSettingTab {
         )
       );
       row(group, t('settings.deck'), t('settings.deckDesc'), (s) =>
-        s.addDropdown((d) => {
+        void s.addDropdown((d) => {
           for (const key of DECK_STYLES) d.addOption(key, t(DECK_LABEL_KEYS[key]));
           d.setValue(p.settings.playerDeck).onChange(async (v) => {
             p.settings.playerDeck = normalizeDeckStyle(v);
@@ -517,7 +517,7 @@ export class VinylSettingTab extends PluginSettingTab {
         })
       );
       row(group, t('settings.spinSpeed'), t('settings.spinSpeedDesc'), (s) =>
-        s.addDropdown((d) => {
+        void s.addDropdown((d) => {
           d.addOption('slow', t('settings.spinSlow'));
           d.addOption('normal', t('settings.spinNormal'));
           d.addOption('fast', t('settings.spinFast'));
@@ -539,7 +539,7 @@ export class VinylSettingTab extends PluginSettingTab {
     section(el, t('settings.sub.netease'), 'netease', 'cloud', (group) => {
       this.statusRow(group, 'netease');
       row(group, t('settings.qrLogin'), t('settings.qrLoginDescNetease'), (s) =>
-        s.addButton((b) =>
+        void s.addButton((b) =>
           b.setButtonText(t('settings.qrLogin')).onClick(() => {
             new QrLoginModal(
               this.app,
@@ -550,7 +550,7 @@ export class VinylSettingTab extends PluginSettingTab {
         )
       );
       row(group, t('settings.logout'), t('settings.logoutDescNetease'), (s) =>
-        s.addButton((b) =>
+        void s.addButton((b) =>
           b
             .setButtonText(t('settings.logoutAction'))
             .setDestructive()
@@ -566,7 +566,7 @@ export class VinylSettingTab extends PluginSettingTab {
     section(el, t('settings.sub.qq'), 'qq', 'message-circle-more', (group) => {
       this.statusRow(group, 'qq');
       row(group, t('settings.qrLogin'), t('settings.qrLoginDescQq'), (s) =>
-        s.addButton((b) =>
+        void s.addButton((b) =>
           b.setButtonText(t('settings.qrLogin')).onClick(() => {
             new QrLoginModal(
               this.app,
@@ -577,7 +577,7 @@ export class VinylSettingTab extends PluginSettingTab {
         )
       );
       row(group, t('settings.logout'), t('settings.logoutDescQq'), (s) =>
-        s.addButton((b) =>
+        void s.addButton((b) =>
           b
             .setButtonText(t('settings.logoutAction'))
             .setDestructive()
@@ -592,7 +592,7 @@ export class VinylSettingTab extends PluginSettingTab {
 
     section(el, t('settings.section.local'), 'local', 'hard-drive', (group) => {
       row(group, t('settings.audioFolder'), t('settings.audioFolderDesc'), (s) =>
-        s.addText((txt) =>
+        void s.addText((txt) =>
           txt
             .setPlaceholder(DEFAULT_SETTINGS.audioFolder)
             .setValue(p.settings.audioFolder)
@@ -603,7 +603,7 @@ export class VinylSettingTab extends PluginSettingTab {
         )
       );
       row(group, t('settings.importMode'), t('settings.importModeDesc'), (s) =>
-        s.addDropdown((d) =>
+        void s.addDropdown((d) =>
           d
             .addOption('copy', t('settings.importCopy'))
             .addOption('link', t('settings.importLink'))

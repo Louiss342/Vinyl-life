@@ -25,7 +25,7 @@ const PARALLAX_PX = 22;
 export function pickerRows<T>(items: T[], columns = PICKER_COLUMNS): T[][] {
   const safeColumns = Math.max(1, columns);
   const rowCount = Math.max(PICKER_ROWS, Math.ceil(items.length / safeColumns));
-  const out: T[][] = Array.from({ length: rowCount }, () => []);
+  const out: T[][] = Array.from({ length: rowCount }, (): T[] => []);
   items.forEach((item, i) => out[Math.floor(i / safeColumns)].push(item));
   return out;
 }
@@ -120,7 +120,7 @@ export class AlbumPicker {
     const current = this.deps.currentPath();
     const albums = this.entries.map((e) => e.album);
     const order = current && albums.some((a) => a.path === current)
-      ? [albums.find((a) => a.path === current) as AlbumInfo, ...albums.filter((a) => a.path !== current)]
+      ? [albums.find((a) => a.path === current), ...albums.filter((a) => a.path !== current)]
       : albums;
     const byPath = new Map(this.entries.map((e) => [e.album.path, e]));
     const rows = pickerRows(order);
@@ -128,7 +128,7 @@ export class AlbumPicker {
       const row = this.track.createDiv({ cls: 'vinyl-picker-row' });
       // 保留原有的层次感：越靠下视差系数越大，但只在该行被指向时生效。
       row.style.setProperty('--vinyl-row-k', (0.45 + rowIdx * 0.35).toFixed(2));
-      for (const album of rowAlbums) this.buildTile(row, byPath.get(album.path) as PickerEntry);
+      for (const album of rowAlbums) this.buildTile(row, byPath.get(album.path));
     });
     this.applyLabels();
   }

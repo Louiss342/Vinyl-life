@@ -40,7 +40,7 @@ function randomToken(): string {
     const buf = new Uint8Array(16);
     crypto.getRandomValues(buf);
     return Array.from(buf, (b) => b.toString(16).padStart(2, '0')).join('');
-  } catch (_) {
+  } catch {
     return Math.random().toString(36).slice(2) + Date.now().toString(36);
   }
 }

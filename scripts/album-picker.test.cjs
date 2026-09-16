@@ -387,6 +387,16 @@ test('样式：恢复原来的窄侧脊 → 悬停展开封面，保留纵向视
   assert.match(css, /\.vinyl-pick\s*\{[^}]*transform-origin:\s*50% 100%/, '绕底边放倒');
   assert.match(css, /\.vinyl-pick:hover[\s\S]{0,220}?rotateX\(-8deg\)/, '保留原有放倒的 3D 视觉');
   assert.match(css, /\.vinyl-picker-row\s*\{[^}]*translateX\(calc\(var\(--vinyl-parallax[^)]*\)\s*\*\s*var\(--vinyl-row-k/, '保留每行不同深度的视差');
+  // 面板配色：唱片区背景与唱机面共用（见 player-controls.test.cjs），架内墨色跟着面板走
+  assert.match(css, /\.vinyl-flip-face\.is-crate\s*\{[^}]*--vinyl-crate-muted/, '深色面板用奶白墨');
+  assert.match(
+    css,
+    /\.vinyl-player\.is-deck-shell \.vinyl-flip-face\.is-crate\s*\{[^}]*--vinyl-crate-muted/,
+    '贝壳白面板翻深灰墨'
+  );
+  assert.match(css, /\.vinyl-picker-row\s*\{[^}]*var\(--vinyl-crate-line/, '行分隔线跟面板走');
+  assert.match(css, /\.vinyl-picker-actions\s*\{[^}]*var\(--vinyl-crate-bar-bg/, '动作条底色跟面板走');
+  assert.match(css, /\.vinyl-picker-count\s*\{[^}]*var\(--vinyl-crate-muted/, '计数文字跟面板走');
   const src = fs.readFileSync(path.join(__dirname, '../src/views/album-picker.ts'), 'utf8');
   assert.match(src, /--vinyl-parallax/, '鼠标位置仍会写入视差变量');
   assert.match(src, /--vinyl-row-k/, '行深度系数保留');

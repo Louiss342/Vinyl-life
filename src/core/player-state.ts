@@ -314,7 +314,6 @@ export class PlaybackEngine {
     const end = Math.min(this.queue.length, start + count);
     const removed = this.queue.slice(start, end);
     const wasCurrent = this.index >= start && this.index < end;
-    const removedKeys = new Set(removed.map((tr) => trackKey(tr)));
     const currentKey = this.index >= 0 ? trackKey(this.queue[this.index]) : '';
     this.deps.local.clearBlobs(this.deps.local.keysOf(removed));
     const nextQueue = [...this.queue.slice(0, start), ...this.queue.slice(end)];

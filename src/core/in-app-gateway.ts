@@ -31,7 +31,7 @@ export function loadMainElectron(): Record<string, unknown> | null {
     const loadModule: (id: string) => unknown = require;
     let remote: { require?: (id: string) => unknown } | null = null;
     try {
-      remote = loadModule('@electron/remote') as { require?: (id: string) => unknown };
+      remote = loadModule('@electron/remote');
     } catch {
       const electron = loadModule('electron') as { remote?: { require?: (id: string) => unknown } };
       remote = electron.remote ?? null;

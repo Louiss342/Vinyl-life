@@ -126,9 +126,18 @@ test('播放器版面（设计稿）：三张卡 —— 顶部三键 / 唱机 / 
   assert.match(view, /const progress = amp\.createDiv\(\{ cls: 'vinyl-progress' \}\)/);
   assert.match(view, /const volRow = amp\.createDiv\(\{ cls: 'vinyl-vol-row' \}\)/);
   assert.doesNotMatch(view, /deck\.createDiv\(\{ cls: 'vinyl-(progress|vol-row)' \}\)/);
-  // ②③ 合并成一张卡（用户要求）：面板材质 / 落影改挂翻转面，两张卡只留外框线
-  assert.match(css, /\.vinyl-flip-face\.is-deck\s*\{[^}]*background-image:/, '材质挂在翻转面（木纹一张到底）');
-  assert.match(css, /\.vinyl-flip-face\.is-deck\s*\{[^}]*box-shadow:/, '落影也归翻转面（一张卡一道影）');
+  // ②③ 合并成一张卡（用户要求）：面板材质 / 落影改挂翻转面，两张卡只留外框线；
+  // 唱片区（背面）与唱机面共用同一块面板 —— 翻面时两面材质一致，不会「转到一半换脸」
+  assert.match(
+    css,
+    /\.vinyl-flip-face\.is-deck,\s*\.vinyl-flip-face\.is-crate\s*\{[^}]*background-image:/,
+    '材质挂在翻转面（木纹一张到底，两面同一块面板）'
+  );
+  assert.match(
+    css,
+    /\.vinyl-flip-face\.is-deck,\s*\.vinyl-flip-face\.is-crate\s*\{[^}]*box-shadow:/,
+    '落影也归翻转面（两面共用一道影）'
+  );
   assert.match(css, /\.vinyl-deck,\s*\.vinyl-amp\s*\{[^}]*border:\s*1px solid/, '两张卡保留外框线（拼成同一道外框）');
   assert.match(css, /\.vinyl-deck,\s*\.vinyl-amp\s*\{[^}]*border-radius:\s*0/, '棱角照旧');
   const cardFrame = css.match(/\.vinyl-deck,\s*\.vinyl-amp \{[^}]*\}/);
@@ -136,8 +145,10 @@ test('播放器版面（设计稿）：三张卡 —— 顶部三键 / 唱机 / 
   for (const v of ['black', 'shell', 'coral']) {
     assert.match(
       css,
-      new RegExp(`\\.vinyl-player\\.is-deck-${v} \\.vinyl-flip-face\\.is-deck`),
-      `${v} 配色要挂在翻转面上`
+      new RegExp(
+        `\\.vinyl-player\\.is-deck-${v} \\.vinyl-flip-face\\.is-deck,\\s*\\.vinyl-player\\.is-deck-${v} \\.vinyl-flip-face\\.is-crate`
+      ),
+      `${v} 配色要挂在翻转面上（唱机面与唱片区共用）`
     );
     assert.match(
       css,

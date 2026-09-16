@@ -55,7 +55,7 @@ function mediaSession(): MediaSessionLike | null {
   try {
     const ms = (navigator as unknown as { mediaSession?: MediaSessionLike }).mediaSession;
     return ms && typeof ms.setActionHandler === 'function' ? ms : null;
-  } catch (_) {
+  } catch {
     return null; // 没有 navigator（脚本测试）或实现不全：静默降级
   }
 }
@@ -73,7 +73,7 @@ export function syncMediaSession(s: PlayerSnapshot, hooks: MediaSessionHooks) {
     const bind = (action: string, handler: (details?: unknown) => void) => {
       try {
         ms.setActionHandler(action, handler);
-      } catch (_) {
+      } catch {
         // 该动作不被支持：忽略
       }
     };
@@ -95,7 +95,7 @@ export function syncMediaSession(s: PlayerSnapshot, hooks: MediaSessionHooks) {
     .MediaMetadata;
   try {
     ms.metadata = meta && Ctor ? new Ctor(meta) : null;
-  } catch (_) {
+  } catch {
     // 构造失败（形状不被接受）：保留上一次的元数据，不影响播放
   }
 
@@ -106,7 +106,7 @@ export function syncMediaSession(s: PlayerSnapshot, hooks: MediaSessionHooks) {
   const pos = positionStateOf(s);
   try {
     if (ms.setPositionState) ms.setPositionState(pos ?? undefined);
-  } catch (_) {
+  } catch {
     // 时长/位置不合法：跳过这一次进度上报
   }
 }
