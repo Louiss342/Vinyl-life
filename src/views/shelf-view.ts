@@ -34,6 +34,15 @@ import {
   resolveDropIndex,
   toggleShelfProp,
 } from '../core/shelf-props';
+import {
+  DEFAULT_SHELF_SORT,
+  SORT_BASES,
+  ShelfSort,
+  pickCustomSort,
+  sortItemLabel,
+  sortShelfEntries,
+  switchSort,
+} from '../core/shelf-sort';
 import { rangeInList, toggleInList } from '../core/multi-select';
 import { collectDroppedFiles, droppedRootName, isAudioFile, isImageFile, notice, prefersReducedMotion } from '../util';
 // 手绘笔触用 roughjs（Excalidraw 内部同款引擎）。只引 SVG 那一支：canvas 渲染器用不上，
@@ -53,33 +62,15 @@ interface ShelfEntry {
   qq: boolean;
 }
 
-type SortKey =
-  | 'title-asc'
-  | 'title-desc'
-  | 'year-desc'
-  | 'year-asc'
-  | 'rating-desc'
-  | 'plays-desc'
-  | 'recent';
 type SourceFilter = 'all' | 'local' | 'netease' | 'qq' | 'collect';
 
 interface ShelfViewState {
   query: string;
-  sort: SortKey;
+  sort: ShelfSort;
   sourceFilter: SourceFilter;
 }
 
 // 用函数而不是常量：语言在设置里切换后，菜单标题要跟着变（常量在模块加载时就定型了）
-const sortOptions = (): [SortKey, string][] => [
-  ['title-asc', t('sort.titleAsc')],
-  ['title-desc', t('sort.titleDesc')],
-  ['year-desc', t('sort.yearDesc')],
-  ['year-asc', t('sort.yearAsc')],
-  ['rating-desc', t('sort.ratingDesc')],
-  ['plays-desc', t('sort.playsDesc')],
-  ['recent', t('sort.recent')],
-];
-
 const filterOptions = (): [SourceFilter, string][] => [
   ['all', t('filter.all')],
   ['local', t('filter.local')],
@@ -140,7 +131,7 @@ export class VinylShelfView extends ItemView {
   private cardEls = new Map<string, HTMLElement>();
   private refreshTimer: number | null = null;
   private lastSnap: PlayerSnapshot | null = null;
-  private state: ShelfViewState = { query: '', sort: 'title-asc', sourceFilter: 'all' };
+  private state: ShelfViewState = { query: '', sort: DEFAULT_SHELF_SORT, sourceFilter: 'all' };
   private toolbarTitle: HTMLElement | null = null;
   private toolbarEl: HTMLElement | null = null;
   private toolbarToggle: HTMLButtonElement | null = null; // 抽屉把手（空墙时没有：固定展开）
@@ -817,52 +808,55 @@ export class VinylShelfView extends ItemView {
       }
       return true;
     });
-    const stats = this.plugin.settings.stats;
-    const plays = (e: ShelfEntry) => stats.albums[e.album.path]?.plays ?? 0;
-    const recent = (e: ShelfEntry) => stats.albums[e.album.path]?.lastPlayedAt ?? 0;
-    const num = (v: string | number | undefined) => (v == null || v === '' ? -1 : Number(v));
-    switch (this.state.sort) {
-      case 'title-asc':
-        list.sort((a, b) => a.album.title.localeCompare(b.album.title, 'zh-CN'));
-        break;
-      case 'title-desc':
-        list.sort((a, b) => b.album.title.localeCompare(a.album.title, 'zh-CN'));
-        break;
-      case 'year-desc':
-        list.sort((a, b) => num(b.album.year) - num(a.album.year));
-        break;
-      case 'year-asc':
-        list.sort((a, b) => num(a.album.year) - num(b.album.year));
-        break;
-      case 'rating-desc':
-        list.sort((a, b) => num(b.album.rating) - num(a.album.rating));
-        break;
-      case 'plays-desc':
-        list.sort((a, b) => plays(b) - plays(a));
-        break;
-      case 'recent':
-        list.sort((a, b) => recent(b) - recent(a));
-        break;
-    }
-    return list;
+    return sortShelfEntries(list, this.state.sort, this.plugin.settings.stats);
   }
 
   // ============ 工具栏菜单 / 弹层 ============
 
   private showSortMenu(ev: MouseEvent) {
+    // 属性列表要弹在排序按钮下面：菜单关闭后事件早已结束，先把按钮元素抓在手里
+    const anchor = ev.currentTarget as HTMLElement | null;
+    const labels = this.plugin.settings.shelfPropLabels;
     const menu = new Menu();
-    for (const [key, label] of sortOptions()) {
+    for (const basis of SORT_BASES) {
       menu.addItem((it) =>
         it
-          .setTitle(label)
-          .setChecked(this.state.sort === key)
+          .setTitle(sortItemLabel(basis, this.state.sort, labels))
+          .setChecked(this.state.sort.basis === basis)
           .onClick(() => {
-            this.state.sort = key;
+            // 自定义依据要先选属性：未选中时弹属性列表；已在自定义上则与固定项一样翻转方向
+            if (basis === 'custom' && this.state.sort.basis !== 'custom') {
+              this.showCustomSortMenu(ev, anchor);
+              return;
+            }
+            this.state.sort = switchSort(this.state.sort, basis);
             this.renderGrid();
           })
       );
     }
     menu.showAtMouseEvent(ev);
+  }
+
+  /** 「自定义排序依据」的属性列表：专辑笔记当前的 frontmatter 属性（按出现次数排序），点一个即按它升序排 */
+  private showCustomSortMenu(ev: MouseEvent, anchor: HTMLElement | null) {
+    const menu = new Menu();
+    const usage = collectShelfPropKeys(this.entries.map((e) => e.album));
+    if (!usage.length) {
+      menu.addItem((it) => it.setTitle(t('sort.noProps')).setDisabled(true));
+    }
+    for (const u of usage) {
+      const label = propLabel(u.key, this.plugin.settings.shelfPropLabels);
+      menu.addItem((it) =>
+        it
+          .setTitle(`${label} · ${tf('props.albumCount', { count: u.count })}`)
+          .onClick(() => {
+            this.state.sort = pickCustomSort(this.state.sort, u.key);
+            this.renderGrid();
+          })
+      );
+    }
+    const rect = anchor?.getBoundingClientRect();
+    menu.showAtPosition(rect ? { x: rect.left, y: rect.bottom } : { x: ev.clientX, y: ev.clientY });
   }
 
   private showFilterMenu(ev: MouseEvent) {

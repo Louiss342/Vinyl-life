@@ -47,8 +47,11 @@ test('i18n：未知语言回落中文，未知键回落 key 本身', () => {
 
 test('i18n：专辑墙用到的键在中英两套里都有且非空', () => {
   const keys = [
-    'sort.titleAsc', 'sort.titleDesc', 'sort.yearDesc', 'sort.yearAsc',
-    'sort.ratingDesc', 'sort.playsDesc', 'sort.recent',
+    'sort.title', 'sort.artist', 'sort.year', 'sort.plays', 'sort.rating',
+    'sort.recent', 'sort.custom', 'sort.customLabel', 'sort.noProps',
+    'sort.dir.oldNew', 'sort.dir.newOld', 'sort.dir.leastMost', 'sort.dir.mostLeast',
+    'sort.dir.lowHigh', 'sort.dir.highLow', 'sort.dir.oldRecent', 'sort.dir.recentOld',
+    'sort.dir.asc', 'sort.dir.desc',
     'filter.all', 'filter.local', 'filter.netease', 'filter.qq', 'filter.collect',
     'shelf.title', 'shelf.search', 'shelf.refresh', 'shelf.sort', 'shelf.filter',
     'shelf.props', 'shelf.importAlbum', 'shelf.importAudio',

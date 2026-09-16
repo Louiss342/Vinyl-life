@@ -434,7 +434,7 @@ export class VinylPlayerView extends ItemView {
   applyLanguage() {
     for (const apply of this.labelEls) apply();
     this.applyQueueLabels();
-    this.picker?.applyLabels(); // 唱片区（页面 2）的文案：标题 / 提示 / 唱片的可读名称
+    this.picker?.applyLabels(); // 唱片区（页面 2）的计数与动作条文案（唱片提示只报专辑名，与语言无关）
     // 文案都由快照决定、由 update 统一维护：切语言时按新语言重放一次即可。
     // 快照必须现取而不是用 lastSnapshot：队列行的来源文案是引擎按当前语言求值的。
     // 引擎缺失时（极简依赖的测试）退回最近一次收到的快照。

@@ -22,14 +22,14 @@ Vinyl Life 把专辑笔记展示成一张张唱片，配有黑胶唱机样式的
 
 ## 专辑墙
 
-![专辑墙：封面卡片排列，正在播放的专辑在墙上高亮，右侧是黑胶播放器](assets/screenshots/album-shelf.webp)
+![专辑墙：封面卡片排列，正在播放的专辑在墙上高亮，右侧是黑胶播放器](assets/screenshots/album-shelf.zh.webp)
 
 专辑以封面卡片排列。鼠标移上去，唱片会从封套里露出来；点击有音源的专辑，会出现唱片从墙上移到唱机的动画。正在播放的专辑会在墙上高亮。
 
 顶部工具栏可以：
 
 - 按专辑名、艺术家或流派搜索。
-- 按标题、年份、评分、播放次数或最近播放排序。
+- 按专辑名称、作者名称、发行日期、播放次数、评分或最近播放排序；再点一次已选中的一项可在顺序与倒序之间切换。也可以挑一个笔记属性作为「自定义排序依据」，同样支持再点翻转。
 - 筛选本地、网易云、QQ 音乐，以及没有音源的收藏专辑。
 - 选择卡片显示哪些笔记属性，拖动调整顺序，也可以修改属性的显示名称。
 - 导入专辑链接或本地音频。
@@ -154,7 +154,7 @@ Vinyl Life/
 3. 重新加载 Obsidian，在「设置 → 第三方插件」中启用 Vinyl Life。
 4. 在命令面板中搜索 Vinyl Life，打开专辑墙，导入一张专辑。
 
-![空态专辑墙上的手绘教程](assets/screenshots/empty-shelf.webp)
+![空态专辑墙上的手绘教程](assets/screenshots/empty-shelf.zh.webp)
 
 第一次打开时，空态教程会圈出两个导入按钮，并指出播放器的位置。
 
@@ -239,14 +239,14 @@ Requires Obsidian 1.13.0 or later, desktop only. The interface can be switched b
 
 ## Album shelf
 
-![The album shelf: cover cards, the playing album highlighted, and the turntable player in the sidebar](assets/screenshots/album-shelf.webp)
+![The album shelf: cover cards, the playing album highlighted, and the turntable player in the sidebar](assets/screenshots/album-shelf.en.webp)
 
 Albums are laid out as cover cards. Hover over one and the record slides out of its sleeve; click an album that has audio and the record animates from the shelf to the turntable. The album that is playing is highlighted on the shelf.
 
 The toolbar at the top lets you:
 
 - Search by album name, artist, or genre.
-- Sort by title, year, rating, play count, or recently played.
+- Sort by album title, artist, release date, play count, rating, or recently played; click the active option again to flip between ascending and descending. You can also pick any note property as a “custom sort”, with the same click-to-flip behavior.
 - Filter by local, NetEase, or QQ Music, as well as collected albums that have no audio.
 - Choose which note properties the cards show, drag to reorder them, and rename how a property is displayed.
 - Import an album link or local audio.
@@ -371,7 +371,7 @@ Vinyl Life/
 3. Reload Obsidian and enable Vinyl Life under Settings → Community plugins.
 4. Search for Vinyl Life in the command palette, open the album shelf, and import an album.
 
-![The hand-drawn tutorial on an empty album shelf](assets/screenshots/empty-shelf.webp)
+![The hand-drawn tutorial on an empty album shelf](assets/screenshots/empty-shelf.en.webp)
 
 The first time you open it, the empty-shelf tutorial rings the two import buttons and points out where the player lives.
 

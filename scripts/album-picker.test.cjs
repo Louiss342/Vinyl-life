@@ -221,6 +221,7 @@ test('渲染：三行摆开，按顺序先填满第一行；正在播放的那�
   );
   assert.equal(tiles(picker).length, 7);
   assert.ok(tiles(picker).every((t) => t.getAttribute('aria-label')), '每张都有可读名称');
+  assert.equal(tileByPath(picker, '专辑/C.md').getAttribute('aria-label'), 'C', '悬停提示只报专辑名（正在播放的那张也一样）');
   assert.equal(tileByPath(picker, '专辑/C.md').hasClass('is-current'), true, '正在播放的那张有高亮');
   assert.equal(tileByPath(picker, '专辑/A.md').hasClass('is-current'), false);
   // 正在播放的排在最前（找起来顺手），行内顺序跟着走
@@ -316,18 +317,19 @@ test('点箱子空白 = 取消选择；Esc 有选中先清空，没选中才返�
   assert.equal(picker.hasSelection(), true, 'Shift+Enter 选中');
 });
 
-test('语言切换：只就地更新计数与唱片可读名，不重建唱片架', () => {
+test('语言切换：就地更新计数，唱片架不重建；唱片的可读名只报专辑名', () => {
   const albums = [entry('专辑/A.md', 'A')];
   const { picker } = makePicker({ albums });
   const tileBefore = tiles(picker)[0];
+  assert.equal(tiles(picker)[0].getAttribute('aria-label'), 'A', '悬停提示只报专辑名，不跟点击语义');
   assert.equal(picker.el.querySelectorAll('.vinyl-picker-bar').length, 0, '纯唱片架不再渲染返回键、标题和提示');
   pickerMod.setLanguage('en');
   picker.applyLabels();
-  assert.ok(tiles(picker)[0].getAttribute('aria-label').includes('Click to switch'));
+  assert.equal(tiles(picker)[0].getAttribute('aria-label'), 'A', '可读名与语言无关');
   assert.equal(tiles(picker)[0], tileBefore, '唱片节点没被重建');
   pickerMod.setLanguage('zh');
   picker.applyLabels();
-  assert.ok(tiles(picker)[0].getAttribute('aria-label').includes('点击换碟'));
+  assert.equal(tiles(picker)[0].getAttribute('aria-label'), 'A');
 });
 
 // ============ C. 接线与样式（源码 / 样式表级）============

@@ -137,6 +137,8 @@ export class AlbumPicker {
     const { album } = entry;
     const tile = row.createEl('button', { cls: 'vinyl-pick' });
     tile.dataset.path = album.path;
+    // 悬停提示只报专辑名（Obsidian 按 aria-label 出提示气泡；点选语义由界面自己说明）
+    tile.setAttribute('aria-label', album.title);
     if (album.path === this.deps.currentPath()) tile.addClass('is-current');
     if (this.selection.includes(album.path)) tile.addClass('is-selected');
 
@@ -161,14 +163,6 @@ export class AlbumPicker {
     this.countEl.textContent = tf('picker.selected', { n: this.selection.length });
     this.enqueueBtn.setAttribute('aria-label', t('picker.enqueue'));
     this.clearBtn.setAttribute('aria-label', t('picker.clear'));
-    // 每张唱片的提示语：正在播放的那张讲「正在播放」，其余讲点击语义（队列模式另说）
-    for (const tile of Array.from(this.track.querySelectorAll<HTMLElement>('.vinyl-pick'))) {
-      const path = tile.dataset.path || '';
-      const entry = this.entries.find((e) => e.album.path === path);
-      const name = entry?.album.title || '';
-      const hint = path === this.deps.currentPath() ? t('picker.current') : t('picker.hint');
-      tile.setAttribute('aria-label', `${name}｜${hint}`);
-    }
     this.actions.toggleClass('is-on', this.selection.length > 0);
   }
 

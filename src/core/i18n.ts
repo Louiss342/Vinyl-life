@@ -10,13 +10,29 @@ export const LANGUAGES: Array<{ value: Lang; label: string }> = [
 
 export const DICT: Record<string, { zh: string; en: string }> = {
   // —— 专辑墙：排序 / 筛选 ——
-  'sort.titleAsc': { zh: '标题 A → Z', en: 'Title A → Z' },
-  'sort.titleDesc': { zh: '标题 Z → A', en: 'Title Z → A' },
-  'sort.yearDesc': { zh: '年份：新 → 旧', en: 'Year: new → old' },
-  'sort.yearAsc': { zh: '年份：旧 → 新', en: 'Year: old → new' },
-  'sort.ratingDesc': { zh: '评分：高 → 低', en: 'Rating: high → low' },
-  'sort.playsDesc': { zh: '播放次数：多 → 少', en: 'Plays: most → least' },
+  // 排序依据名；方向词见 sort.dir.*（A-Z / Z-A 两语言一致，不进词典，见 core/shelf-sort.ts）
+  'sort.title': { zh: '专辑名称', en: 'Album title' },
+  'sort.artist': { zh: '作者名称', en: 'Artist' },
+  'sort.year': { zh: '发行日期', en: 'Release date' },
+  'sort.plays': { zh: '播放次数', en: 'Play count' },
+  'sort.rating': { zh: '评分', en: 'Rating' },
   'sort.recent': { zh: '最近播放', en: 'Recently played' },
+  'sort.custom': { zh: '自定义排序依据', en: 'Custom sort' },
+  'sort.customLabel': { zh: '自定义排序依据：{name}[{dir}]', en: 'Custom: {name}[{dir}]' },
+  'sort.noProps': {
+    zh: '专辑笔记里还没有可排序的属性',
+    en: 'No sortable properties on your album notes yet',
+  },
+  'sort.dir.oldNew': { zh: '早-晚', en: 'Old → New' },
+  'sort.dir.newOld': { zh: '晚-早', en: 'New → Old' },
+  'sort.dir.leastMost': { zh: '少-多', en: 'Least → Most' },
+  'sort.dir.mostLeast': { zh: '多-少', en: 'Most → Least' },
+  'sort.dir.lowHigh': { zh: '低-高', en: 'Low → High' },
+  'sort.dir.highLow': { zh: '高-低', en: 'High → Low' },
+  'sort.dir.oldRecent': { zh: '远-近', en: 'Old → Recent' },
+  'sort.dir.recentOld': { zh: '近-远', en: 'Recent → Old' },
+  'sort.dir.asc': { zh: '升序', en: 'Ascending' },
+  'sort.dir.desc': { zh: '降序', en: 'Descending' },
   'filter.all': { zh: '全部', en: 'All' },
   'filter.local': { zh: '本地音源', en: 'Local audio' },
   'filter.netease': { zh: '网易云', en: 'NetEase' },
@@ -154,12 +170,10 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'player.pickAlbum': { zh: '选取专辑', en: 'Pick an album' },
 
   // —— 唱片区（播放器的另一面：三行唱片架，水平移动视差 + 悬停平放展开）——
-  'picker.hint': { zh: '点击换碟 · Ctrl / ⌘ 多选', en: 'Click to switch · Ctrl / ⌘ to multi-select' },
   'picker.empty': {
     zh: '还没有专辑可以选：先去专辑墙导入几张吧:)',
     en: 'No albums to pick yet — import some from the shelf first :)',
   },
-  'picker.current': { zh: '正在播放', en: 'Now playing' },
   'picker.selected': { zh: '已选 {n} 张', en: '{n} selected' },
   'picker.enqueue': { zh: '加入队列', en: 'Add to queue' },
   'picker.clear': { zh: '取消选择', en: 'Clear selection' },
