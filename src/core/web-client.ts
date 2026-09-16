@@ -14,6 +14,7 @@ import type {
   LoginResponse,
   NeteaseAlbumResponse,
   NeteaseSearchResponse,
+  SearchPage,
   SongUrlResponse,
 } from './api-types';
 
@@ -253,18 +254,29 @@ export class WebClient {
 
   // 搜索（网页版同款 weapi cloudsearch/get/web；会话 Cookie 由 requestUrl 自动携带）。
   // 不用旧的 /api/search/get：那条端点在带 MUSIC_U 时会稳定返回 405「操作频繁」（实测）。
-  async searchAlbums(keywords: string): Promise<NeteaseSearchResponse> {
-    return this.search(keywords, 10);
+  async searchAlbums(keywords: string, page?: SearchPage): Promise<NeteaseSearchResponse> {
+    return this.search(keywords, 10, page);
   }
 
-  async searchSongs(keywords: string): Promise<NeteaseSearchResponse> {
-    return this.search(keywords, 1);
+  async searchSongs(keywords: string, page?: SearchPage): Promise<NeteaseSearchResponse> {
+    return this.search(keywords, 1, page);
   }
 
-  private search(keywords: string, type: number): Promise<NeteaseSearchResponse> {
+  private search(
+    keywords: string,
+    type: number,
+    page?: SearchPage
+  ): Promise<NeteaseSearchResponse> {
     return this.post<NeteaseSearchResponse>(
       '/api/cloudsearch/get/web',
-      { s: keywords, type, limit: 10, offset: 0, total: true, csrf_token: '' },
+      {
+        s: keywords,
+        type,
+        limit: page?.limit ?? 30,
+        offset: page?.offset ?? 0,
+        total: true,
+        csrf_token: '',
+      },
       'weapi'
     );
   }

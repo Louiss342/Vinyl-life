@@ -91,7 +91,14 @@ async function build() {
   // styles.css 尾部，见 assets/fonts/）约 41 KB，手绘笔触引擎 roughjs（与 Excalidraw 同款）约 26 KB。
   // 318 → 348：设置面板「关于」页也走手写体，同一对字体按两处文案重做子集（中文多收 160 多字）
   // —— 字体从 31 KB 涨到 47 KB。两处都是为了把设计稿 1:1 搬到插件里；哪天不要了，把预算调回 260。
-  const MAIN_JS_BUDGET = 348 * 1024;
+  // 348 → 384：播放器改成「立方体两面」（Drawing 2026-09-16 10.26.32）—— 新增唱片区（三行唱片架：
+  // 视差 / 悬停平放展开 / 多选排队，src/views/album-picker.ts）与唱臂几何换算
+  // （src/core/arm-geometry.ts，余弦定理把专辑进度换算成落针距离），styles.css 也多了这一套样式。
+  // 都是设计稿要求的功能代码，没有新依赖；哪天不要唱片区了，把预算调回 348。
+  // （常数此前忘了跟着注释一起改，实际卡在 368；这次改到 384，同时补上这一轮的面板按键样式。）
+  // 384 → 400：导入搜索重做 —— 本地模糊重排（归一化 / 编辑距离近似）、结果池与上游翻页，
+  // 加上弹窗的展开 / 翻页状态机，共约 6 KB。没有新依赖，全是搜索质量本身的代码。
+  const MAIN_JS_BUDGET = 400 * 1024;
   if (sizes['main.js'] > MAIN_JS_BUDGET) {
     throw new Error(
       `main.js 体积 ${(sizes['main.js'] / 1024).toFixed(1)} KB 超出预算 ${MAIN_JS_BUDGET / 1024} KB：` +

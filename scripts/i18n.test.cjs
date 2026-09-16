@@ -52,7 +52,11 @@ test('i18n：专辑墙用到的键在中英两套里都有且非空', () => {
     'filter.all', 'filter.local', 'filter.netease', 'filter.qq', 'filter.collect',
     'shelf.title', 'shelf.search', 'shelf.refresh', 'shelf.sort', 'shelf.filter',
     'shelf.props', 'shelf.importAlbum', 'shelf.importAudio',
+    'shelf.expand', 'shelf.collapse', 'shelf.batchDelete',
     'shelf.empty.title', 'shelf.empty.hint', 'shelf.filtered.title', 'shelf.filtered.hint',
+    'batch.selected', 'batch.selectAll', 'batch.clear', 'batch.delete', 'batch.exit',
+    'batchDelete.title', 'batchDelete.summary', 'batchDelete.more', 'batchDelete.playingHint',
+    'batchDelete.alsoAudio', 'batchDelete.alsoCover', 'batchDelete.coverShared',
     'menu.play', 'menu.openNote', 'menu.importAudio', 'menu.setCover',
     'menu.openNetease', 'menu.openQq', 'menu.deleteAlbum',
   ];
@@ -462,6 +466,11 @@ function fakeEl(tag = 'div') {
     getAnimations: () => [],
     animate: () => ({}),
     closest: () => null,
+    // S 型臂管（player-view 的 buildArmTube）要往臂盒子里挂子节点：补齐与 arm-posture.test.cjs 同款的一面
+    appendChild(child) {
+      el.children.push(child);
+      return child;
+    },
   };
   el.classList = {
     toggle: (n, on) => el.toggleClass(n, on),
@@ -522,6 +531,8 @@ function playerModule() {
     },
     console,
     Buffer,
+    // 臂管是内联 SVG：真机经 document.createElementNS 建（见 player-view 的 svgEl）
+    document: { createElementNS: (_ns, tag) => fakeEl(tag) },
   });
   playerBundle = module.exports;
   return playerBundle;
@@ -562,42 +573,54 @@ test('播放器：切语言后 applyLanguage 就地更新按钮提示与头部�
   const mod = playerModule();
   mod.setLanguage('zh');
   const { view, root } = makePlayerView(mod);
-  view.update(snap()); // 首帧建壳（zh）
+  const queue = [{ source: 'local-vault', path: 'a.mp3', title: 'A', duration: 65 }];
+  // 取碟中（读数区已撤掉，这里只要求不炸、且播放键提示在位）
+  view.update(snap({ queue, index: 0, status: 'loading' }));
   const all = collect(root);
   const hasLabel = (v) => all.some((e) => e.getAttribute('aria-label') === v);
   const hasText = (v) => all.some((e) => e.textContent === v);
 
   // 提示只走 aria-label（Obsidian 的原生样式化提示）；再设 title 会叠出第二个浏览器原生气泡
-  const noteBtn = all.find((e) => e.getAttribute('aria-label') === '写点什么吧:)');
-  assert.ok(noteBtn, '建壳时「写点什么」的提示应为中文');
+  const noteBtn = all.find((e) => e.getAttribute('aria-label') === '给「A」写点什么吧:)');
+  assert.ok(noteBtn, '「写点什么吧」的提示应为中文（在专辑名那一栏的最后）');
   assert.equal(noteBtn.getAttribute('title'), null, '追加感想钮不得再设 title');
-  assert.ok(hasLabel('上一首') && hasLabel('播放 / 暂停') && hasLabel('下一首'), '控制钮提示');
+  assert.ok(hasLabel('选取专辑'), '「选取专辑」钮（翻到页面 2）');
+  assert.ok(hasLabel('播放 / 暂停'), '唱盘上的播放键提示（⏮ ⏭ 已按设计稿删除）');
   assert.ok(hasLabel('单次播放整张专辑'), '播放模式钮提示就是当前模式名（不再缀「点击切换」）');
-  assert.ok(hasLabel('恢复发行顺序'), '恢复顺序钮提示');
-  assert.ok(hasText('黑胶播放器'), '头部标题');
-  assert.ok(hasText('空队列'), '空队列提示');
+  assert.equal(hasText('♪ 正在取碟…'), false, '唱盘上的读数区已按用户要求撤掉（不再有取碟中文案）');
 
   const vinylBefore = view.els.vinyl;
-  const headerBefore = view.els.headerTitle;
+  const playBtnBefore = view.els.deckPlayBtn;
+  const pickBefore = view.els.pickBtn;
   mod.setLanguage('en');
   view.applyLanguage();
 
-  assert.ok(hasLabel('Previous track') && hasLabel('Play / pause') && hasLabel('Next track'));
+  assert.ok(hasLabel('Pick an album'), '选取专辑 → Pick an album');
+  assert.ok(hasLabel('Play / pause'), '播放键提示跟着语言换');
   assert.ok(hasLabel('Play the album once'), '模式钮提示跟着语言换');
-  assert.ok(hasLabel('Restore release order'), '恢复发行顺序 → Restore release order');
-  assert.equal(noteBtn.getAttribute('aria-label'), 'Write something :)');
+  assert.equal(noteBtn.getAttribute('aria-label'), 'Write something for “A” :)');
   assert.equal(noteBtn.getAttribute('title'), null, '切语言也不该多出 title');
-  // 标题文字在里层 span 里（外层是 marquee 容器）——假 DOM 的 textContent 不聚合子节点，所以读里层
-  assert.equal(view.els.headerTitleText.textContent, 'Vinyl player', '头部标题跟着换');
-  assert.equal(view.els.headerTitle.getAttribute('title'), 'Vinyl player', '头部 tooltip 也跟着换');
-  assert.ok(hasText('Empty queue'), '空队列 → Empty queue');
   assert.equal(view.els.vinyl, vinylBefore, '就地改文案：转盘节点没被换掉（旋转动画不被打断）');
-  assert.equal(view.els.headerTitle, headerBefore, '壳只建一次：节点身份不变');
+  assert.equal(view.els.deckPlayBtn, playBtnBefore, '壳只建一次：节点身份不变');
+  assert.equal(view.els.pickBtn, pickBefore, '头部宽键也是原地改文案，不重建节点');
 
   mod.setLanguage('zh');
   view.applyLanguage();
-  assert.equal(noteBtn.getAttribute('aria-label'), '写点什么吧:)', '切回中文仍是原文案');
-  assert.equal(view.els.headerTitleText.textContent, '黑胶播放器');
+  assert.equal(noteBtn.getAttribute('aria-label'), '给「A」写点什么吧:)', '切回中文仍是原文案');
+});
+
+test('播放器：空队列时不给「写点什么」（没有专辑名那一栏可挂）', () => {
+  const mod = playerModule();
+  mod.setLanguage('zh');
+  const { view, root } = makePlayerView(mod);
+  view.update(snap());
+  const all = collect(root);
+  assert.ok(all.some((e) => e.textContent === '空队列'), '空队列提示照旧');
+  assert.equal(
+    all.some((e) => String(e.getAttribute('aria-label') || '').includes('写点什么')),
+    false,
+    '列表里没有专辑就不该出现这个按键'
+  );
 });
 
 test('播放器：队列行的拖拽提示随语言就更新（不重建队列行）', () => {
@@ -621,7 +644,7 @@ test('播放器：队列行的拖拽提示随语言就更新（不重建队列�
   assert.equal(row.getAttribute('title'), '拖拽调整顺序');
 });
 
-test('播放器：切语言后音质读数与来源角标按新语言重算（不重建节点）', () => {
+test('播放器：切语言后队列的来源角标按新语言重算（不重建节点）', () => {
   const mod = playerModule();
   mod.setLanguage('zh');
   const queue = [
@@ -641,23 +664,18 @@ test('播放器：切语言后音质读数与来源角标按新语言重算（�
   };
   const { view } = makePlayerView(mod, engine);
   view.update(engine.snapshot());
-  assert.equal(view.els.qualityEl.textContent, '网易云 · 较高');
   assert.equal(view.queueBadges[0].textContent, '网易云');
   assert.equal(view.queueBadges[1].textContent, '本地');
 
-  const qualityEl = view.els.qualityEl;
   const badge = view.queueBadges[0];
   mod.setLanguage('en');
   view.applyLanguage();
-  assert.equal(view.els.qualityEl.textContent, 'NetEase · Higher', '读数按新语言重算');
   assert.equal(badge.textContent, 'NetEase', '队列角标就地改文本');
-  assert.equal(view.els.qualityEl, qualityEl, '读数节点没被换掉');
   assert.equal(view.queueBadges[0], badge, '角标节点没被重建');
 
   mod.setLanguage('zh');
   view.applyLanguage();
-  assert.equal(view.els.qualityEl.textContent, '网易云 · 较高', '切回中文复原');
-  assert.equal(badge.textContent, '网易云');
+  assert.equal(badge.textContent, '网易云', '切回中文复原');
 });
 
 // ============ 命令面板瘦身 + 插入此刻正在听（驱动 main.ts 真实代码） ============

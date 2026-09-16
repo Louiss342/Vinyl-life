@@ -33,6 +33,10 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'shelf.props': { zh: '卡片属性', en: 'Card properties' },
   'shelf.importAlbum': { zh: '导入专辑', en: 'Import album' },
   'shelf.importAudio': { zh: '导入本地音频', en: 'Import local audio' },
+  // 抽屉把手（常态下工具栏只剩它）：展开 / 收起读屏提示
+  'shelf.expand': { zh: '展开工具栏', en: 'Expand toolbar' },
+  'shelf.collapse': { zh: '收起工具栏', en: 'Collapse toolbar' },
+  'shelf.batchDelete': { zh: '批量删除', en: 'Batch delete' },
   'shelf.empty.title': { zh: '还没有专辑笔记', en: 'No album notes yet' },
   'shelf.empty.hint': {
     zh: '新建笔记并写入 frontmatter：tags: [album] + cover / artist / year… 即可上墙；也可用工具栏「导入」从网易云或本地音频起步。',
@@ -70,6 +74,32 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'shelf.filtered.title': { zh: '没有符合条件的专辑', en: 'No albums match' },
   'shelf.filtered.hint': { zh: '调整搜索词或筛选条件试试', en: 'Try a different search or filter.' },
 
+  // —— 专辑墙：批量删除（选择模式 / 底部动作条 / 确认弹窗）——
+  'batch.selected': { zh: '已选 {n} 张', en: '{n} selected' },
+  'batch.selectAll': { zh: '全选', en: 'Select all' },
+  'batch.clear': { zh: '清空选择', en: 'Clear selection' },
+  'batch.delete': { zh: '删除所选', en: 'Delete selected' },
+  'batch.exit': { zh: '退出批量删除', en: 'Exit batch delete' },
+  'batchDelete.title': { zh: '批量删除专辑', en: 'Delete albums' },
+  'batchDelete.summary': {
+    zh: '将要删除以下 {n} 张专辑的笔记：',
+    en: 'Notes for these {n} album(s) will be deleted:',
+  },
+  'batchDelete.more': { zh: '……等共 {n} 张', en: '…and {n} in total' },
+  'batchDelete.playingHint': {
+    zh: '其中包含正在播放的专辑，删除后将停止播放。',
+    en: 'One of them is playing — deleting stops playback.',
+  },
+  'batchDelete.alsoAudio': {
+    zh: '同时删除本地音频（{n} 个）',
+    en: 'Also delete local audio ({n})',
+  },
+  'batchDelete.alsoCover': { zh: '同时删除封面（{n} 张）', en: 'Also delete covers ({n})' },
+  'batchDelete.coverShared': {
+    zh: '部分封面图被其他专辑引用，不会删除',
+    en: 'Some cover images are used by other albums and are kept',
+  },
+
   // —— 卡片属性弹层 ——
   'props.shown': { zh: '已显示（拖拽调整顺序）', en: 'Shown (drag to reorder)' },
   'props.nonePicked': { zh: '未选择任何属性：卡片只显示标题。', en: 'No properties picked: cards show the title only.' },
@@ -99,12 +129,6 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'src.netease': { zh: '网易云', en: 'NetEase' },
   'src.qq': { zh: 'QQ音乐', en: 'QQ Music' },
   'src.local': { zh: '本地', en: 'Local' },
-  // 与 settings.quality* 区分：那组是设置面板的选项文案（较高带「（默认）」），这里是读数用的档位名
-  'quality.standard': { zh: '标准', en: 'Standard' },
-  'quality.higher': { zh: '较高', en: 'Higher' },
-  'quality.exhigh': { zh: '极高', en: 'Extra high' },
-  'quality.lossless': { zh: '无损', en: 'Lossless' },
-
   // —— 通用（跨视图复用的小词 / 分隔符） ——
   'common.cancel': { zh: '取消', en: 'Cancel' },
   'common.delete': { zh: '删除', en: 'Delete' },
@@ -120,19 +144,26 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'player.next': { zh: '下一首', en: 'Next track' },
   'player.volume': { zh: '音量', en: 'Volume' },
   'player.seek': { zh: '歌曲进度', en: 'Track position' },
-  'player.appendNote': {
-    zh: '写点什么吧:)',
-    en: 'Write something :)',
+  'player.noteAlbum': {
+    zh: '给「{name}」写点什么吧:)',
+    en: 'Write something for “{name}” :)',
   },
-  'player.loading': { zh: '♪ 正在取碟…', en: '♪ Loading album…' },
   'player.emptyQueue': { zh: '空队列', en: 'Empty queue' },
   'player.dragToReorder': { zh: '拖拽调整顺序', en: 'Drag to reorder' },
-  'player.restoreOriginal': { zh: '恢复发行顺序', en: 'Restore release order' },
-  'player.restoreDone': { zh: '已恢复专辑发行顺序', en: 'Album release order restored' },
-  'player.restoreLocalUnsupported': {
-    zh: '本地专辑按文件名顺序播放，不支持恢复发行顺序',
-    en: 'Local albums play in file-name order; restoring is not supported',
+  // 「选取专辑」= 播放器翻到唱片区（设计稿：页面 1 做立方体左转，转到页面 2）
+  'player.pickAlbum': { zh: '选取专辑', en: 'Pick an album' },
+
+  // —— 唱片区（播放器的另一面：三行唱片架，水平移动视差 + 悬停平放展开）——
+  'picker.hint': { zh: '点击换碟 · Ctrl / ⌘ 多选', en: 'Click to switch · Ctrl / ⌘ to multi-select' },
+  'picker.empty': {
+    zh: '还没有专辑可以选：先去专辑墙导入几张吧:)',
+    en: 'No albums to pick yet — import some from the shelf first :)',
   },
+  'picker.current': { zh: '正在播放', en: 'Now playing' },
+  'picker.selected': { zh: '已选 {n} 张', en: '{n} selected' },
+  'picker.enqueue': { zh: '加入队列', en: 'Add to queue' },
+  'picker.clear': { zh: '取消选择', en: 'Clear selection' },
+  'picker.queued': { zh: '已加入队列：{n} 张专辑', en: 'Queued {n} album(s)' },
 
   // —— 导入弹窗：专辑导入（网易云 / QQ 音乐） ——
   'import.title': { zh: '导入专辑', en: 'Import album' },
@@ -146,7 +177,21 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     zh: '正在同时搜索网易云音乐和 QQ 音乐…',
     en: 'Searching NetEase and QQ Music…',
   },
-  'import.searchFound': { zh: '找到 {n} 个专辑结果', en: 'Found {n} album result(s)' },
+  'import.searchFound': { zh: '找到 {n} 张专辑', en: 'Found {n} album(s)' },
+  // 已在库中的专辑不再出现在结果里：隐去了多少要说一声，不然用户会以为搜索漏了
+  'import.searchFoundHidden': {
+    zh: '找到 {n} 张（{m} 张已在库中，已隐去）',
+    en: 'Found {n} ({m} already in your library, hidden)',
+  },
+  'import.searchAllImported': {
+    zh: '搜到的 {n} 张专辑都已在库中，没有再要导入的了',
+    en: 'All {n} matches are already in your library',
+  },
+  // 结果池与翻页：先本地展开（不花网络），展开完了再向上游要下一页
+  'import.showMore': { zh: '显示更多（还有 {n} 张）', en: 'Show more ({n} left)' },
+  'import.loadMore': { zh: '加载更多', en: 'Load more' },
+  'import.loadingMore': { zh: '正在加载…', en: 'Loading…' },
+  'import.allShown': { zh: '已显示全部 {n} 张', en: 'All {n} shown' },
   // 搜索结果导入后不跳转（批量导入的前提）：每导一张就报一次进度
   'import.batchProgress': {
     zh: '已导入 {n} 张专辑，可以继续导入下一张',
@@ -520,6 +565,7 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'settings.deckWalnut': { zh: '胡桃木', en: 'Walnut' },
   'settings.deckShell': { zh: '贝壳白', en: 'Shell white' },
   'settings.deckBlack': { zh: '哑光黑', en: 'Matte black' },
+  'settings.deckCoral': { zh: '珊瑚红', en: 'Coral' },
   'settings.spinSpeed': { zh: '转盘转速', en: 'Turntable speed' },
   'settings.spinSpeedDesc': { zh: '播放时唱片一圈的时间', en: 'Time for one record revolution while playing' },
   'settings.spinSlow': { zh: '慢', en: 'Slow' },
@@ -530,7 +576,6 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'settings.sub.netease': { zh: '网易云', en: 'NetEase' },
   'settings.sub.qq': { zh: 'QQ 音乐', en: 'QQ Music' },
   'settings.loginStatus': { zh: '登录状态', en: 'Sign-in status' },
-  'settings.loginStatusDesc': { zh: '账号与网关连通性', en: 'Account and gateway connectivity' },
   'settings.checkingLogin': { zh: '检测登录态…', en: 'Checking the sign-in state…' },
   'settings.checkFailed': { zh: '登录态检测失败：{msg}', en: 'Sign-in check failed: {msg}' },
   'settings.loggedIn': { zh: '已登录', en: 'Signed in' },
@@ -616,10 +661,11 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   },
   'notice.importFailed': { zh: '导入失败：{msg}', en: 'Import failed: {msg}' },
   'notice.albumDeleted': { zh: '已删除专辑「{title}」', en: 'Deleted album "{title}"' },
+  'notice.albumsDeleted': { zh: '已删除 {n} 张专辑', en: 'Deleted {n} album(s)' },
   'notice.albumDeletedAssets': { zh: '（含 {n} 项本地文件）', en: ' (including {n} local file(s))' },
-  'notice.noPlayingAlbum': {
-    zh: '当前没有正在播放的专辑（先播放一张专辑再追加感想）',
-    en: 'No album is playing right now (play one first, then append your thoughts)',
+  'notice.noAlbumNote': {
+    zh: '找不到这张专辑的笔记（可能已被删除或改名）',
+    en: 'The note for this album is gone (deleted or renamed)',
   },
   'notice.appended': { zh: '已追加到「{name}」', en: 'Appended to "{name}"' },
   // 插入此刻正在听：行文案（插进当前笔记，语法随语言变 → 用 tf 占位符拼）
@@ -669,15 +715,11 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     en: 'Album queue mode is on: clicking an album queues it instead of switching',
   },
   'player.queueModeOff': {
-    zh: '专辑队列模式已关闭：点专辑会立即换碟',
-    en: 'Album queue mode is off: clicking an album switches to it immediately',
+    zh: '专辑队列模式已关闭：点专辑会立即换碟（已排入列表的专辑保持不动）',
+    en: 'Album queue mode is off: clicking an album switches to it immediately (queued albums stay)',
   },
   'player.queueRemoveAlbum': { zh: '从队列移除「{name}」', en: 'Remove “{name}” from the queue' },
   'player.queueDragAlbum': { zh: '拖拽调整专辑顺序', en: 'Drag to reorder albums' },
-  'player.queueClearOthers': {
-    zh: '清空后面的专辑（保留当前这张）',
-    en: 'Clear the queued albums (keep the current one)',
-  },
   'notice.queuedAlbum': { zh: '已加入队列：{name}', en: 'Queued: {name}' },
 
   // —— 登录 / 凭据 / 网关错误（core/auth, qq-auth, credential-file, netease, server-client, qq, web-client）——

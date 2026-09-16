@@ -302,6 +302,34 @@ const EMPTY_MUSICU = () => json({
   req_song: { code: 0, data: { body: { song: { list: [] } } } },
 });
 
+test('QQ 搜索：翻页参数要同时传给两个端点（musicu 的 page_num / 经典端点的 p）', async () => {
+  let musicu = null;
+  const g = gateway({
+    search: (payload) => {
+      musicu = payload;
+      return EMPTY_MUSICU();
+    },
+    classic: () => json({ code: 0, data: { album: { list: [] }, song: { list: [] } } }),
+  });
+  const result = await g.call('GET', '/api/qq/search?keywords=叶惠美&page=3');
+  assert.equal(result.requiresLogin, false);
+  assert.equal(musicu.req_album.param.page_num, 3);
+  assert.equal(musicu.req_song.param.page_num, 3);
+  assert.equal(
+    musicu.req_album.param.num_per_page,
+    30,
+    '页大小要和插件侧的 SEARCH_PAGE_SIZE 对齐，否则第二页会漏掉或重复'
+  );
+  const classic = g.requests
+    .filter((r) => r.url.includes('client_search_cp'))
+    .map((r) => new URL(r.url));
+  assert.ok(classic.length >= 2, '经典端点（专辑 / 单曲）都要打');
+  for (const url of classic) {
+    assert.equal(url.searchParams.get('p'), '3', 'page 要映射成经典端点的 p');
+    assert.equal(url.searchParams.get('n'), '30');
+  }
+});
+
 test('QQ 搜索：musicu 匿名返空 → 经典端点兜底，搜得到就不再要求登录', async () => {
   const g = gateway({
     search: EMPTY_MUSICU,

@@ -27,12 +27,17 @@ export interface AlbumSearchCandidate {
   trackCount?: number;
   matchedBy: AlbumMatchKind;
   matchedTrack?: string;
-  importedFilePath?: string;
+  /** 本轮本地重排的相关度（0..100）。只给剪尾和测试看，界面不展示这个数 */
+  score?: number;
 }
 
 export interface AlbumSearchResult {
   items: AlbumSearchCandidate[];
   warnings: Array<{ source: MusicSource; message: string }>;
+  /** 命中但已在库中、被隐去的条数：状态行靠它解释「怎么比记忆里少」 */
+  hiddenImported: number;
+  /** 上游还有没有下一页：界面靠它决定「加载更多」还要不要发请求 */
+  hasMore: boolean;
 }
 
 export interface AlbumDiscoveryContext {
@@ -162,28 +167,166 @@ function dedupe(items: AlbumSearchCandidate[]): AlbumSearchCandidate[] {
   return [...byKey.values()];
 }
 
-function score(item: AlbumSearchCandidate, query: string): number {
-  const q = query.toLocaleLowerCase();
-  const title = item.title.toLocaleLowerCase();
-  const artists = item.artists.join(' / ').toLocaleLowerCase();
-  const track = (item.matchedTrack || '').toLocaleLowerCase();
-  if (title === q) return 100;
-  if (title.startsWith(q)) return 80;
-  if (artists === q) return 70;
-  if (track === q) return 60;
-  if (title.includes(q)) return 50;
-  if (artists.includes(q)) return 40;
-  return item.matchedBy === 'album' ? 20 : 10;
+// ============ 本地相关度（模糊重排） ============
+// 上游只按自己的索引给结果：拼写差一两个字、词序颠倒、只记得标题后半截的查询，
+// 它要么把对的那张排到很后面（前 10 条里根本没有），要么干脆塞一堆沾边的充数。
+// 拿到更大的候选池后，本地按「文本上有多像」重排一遍，才能真正把对的捞上来。
+// 分档（也是剪尾阈值的依据）：
+//   ≥60 确有文本关联：标题 / 艺人 / 歌名整体命中，或分词全中
+//   30..59 勉强关联：分词中了一部分，或拼写差一两个字（编辑距离近似）
+//   <30 看不出关联：只是上游觉得沾边
+
+const SPLIT_RE = /[\s\p{P}\p{S}]+/u;
+const FOLD_RE = /[\s\p{P}\p{S}]+/gu;
+
+/** 折叠：NFKC（全角→半角、兼容字符归位）+ 小写 + 去空白标点，用于「是否相等 / 是否包含」的比对。
+ *  中文没有大小写，但中英混排、全角括号、书名号在曲名里很常见，折一下能省掉一堆假阴性。 */
+function fold(value: string): string {
+  return String(value || '').normalize('NFKC').toLocaleLowerCase().replace(FOLD_RE, '');
 }
 
-function markImported(app: App, items: AlbumSearchCandidate[]): void {
-  const imported = new Map<string, string>();
+function tokenize(value: string): string[] {
+  return String(value || '').normalize('NFKC').toLocaleLowerCase().split(SPLIT_RE).filter(Boolean);
+}
+
+/** 有界编辑距离：超过预算立刻收工（模糊只看「够不够近」，不关心具体差多少）。 */
+function editDistance(a: string, b: string, max: number): number {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let prev: number[] = [];
+  for (let j = 0; j <= b.length; j++) prev[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    const cur: number[] = [i];
+    let cheapest = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+      if (cur[j] < cheapest) cheapest = cur[j];
+    }
+    if (cheapest > max) return max + 1;
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+/** 容错预算：一个词能错几个字。中文单字信息量大，不能按长度比例放大 —— 两个字的词错一个就是另一个词。 */
+function typoBudget(length: number): number {
+  if (length <= 2) return 0;
+  if (length <= 5) return 1;
+  if (length <= 10) return 2;
+  return 3;
+}
+
+/** 相似度（0..1）：编辑距离折算；超出容错预算即 0（宁可不算，也别把不相干的算成相近）。 */
+function similarity(a: string, b: string): number {
+  const longest = Math.max(a.length, b.length);
+  const budget = typoBudget(longest);
+  if (!longest || !budget) return 0;
+  const distance = editDistance(a, b, budget);
+  return distance > budget ? 0 : 1 - distance / longest;
+}
+
+/** 词级模糊命中：整串近似，或字段里存在一段长度相近的近似片段
+ *（「叶慧美」要能命中《叶惠美 2003 演唱会》这种带尾巴的标题）。 */
+function fuzzyHit(token: string, field: string): boolean {
+  const budget = typoBudget(token.length);
+  if (!field || !budget) return false;
+  if (field.includes(token)) return true;
+  if (similarity(token, field) > 0) return true;
+  if (field.length > 48) return false; // 长文案不做滑窗：不值得为它把每次搜索拖慢
+  for (let i = 0; i + token.length <= field.length; i++) {
+    if (editDistance(token, field.slice(i, i + token.length), budget) <= budget) return true;
+  }
+  return false;
+}
+
+function scoreCandidate(item: AlbumSearchCandidate, query: string): number {
+  const q = fold(query);
+  if (!q) return 0;
+  const title = fold(item.title);
+  const artist = fold(item.artists.join(' '));
+  const track = fold(item.matchedTrack || '');
+  const fields = [title, artist, track].filter(Boolean);
+  const parts = tokenize(query);
+  const multi = parts.length > 1;
+  // ① 整体命中：相等 > 前缀 > 包含。歌名要单独给高分：搜歌名找专辑是主要用法之一，
+  //    而专辑标题里压根不会有歌名（「晴天」→《叶惠美》），只能靠歌曲命中把它捞上来。
+  //    多词查询里「整串嵌进标题」要打折：它会奖励《周杰伦《叶惠美》吉他翻唱版》这种
+  //    把查询词整个嵌住的名字，而用户多半在找专辑本身 —— 多词查询的分词命中（②）才是真信号。
+  if (title && title === q) return 100;
+  if (track && track === q) return 96;
+  if (artist && artist === q) return 90;
+  if (title.startsWith(q)) return multi ? 70 : 88;
+  if (track.startsWith(q)) return multi ? 68 : 84;
+  if (title.includes(q)) return multi ? 66 : 80;
+  if (track.includes(q)) return multi ? 64 : 76;
+  if (artist.includes(q)) return 70;
+  // ② 分词：多词查询（「周杰伦 叶惠美」「jay chou」）不分先后，全中才算强命中。
+  //    其中「有一个词正好就是歌手名」再加一档：这是「专辑名 + 歌手」的典型写法，
+  //    靠它才能把翻唱版、同名合辑挡在后面
+  if (multi) {
+    const hits = parts.filter((part) => fields.some((field) => fuzzyHit(part, field))).length;
+    if (hits === parts.length) return parts.some((part) => part === artist) ? 74 : 66;
+    if (hits > 1) return 46;
+    if (hits === 1) return 34;
+  }
+  // ③ 整串近似：拼写差一两个字。上限压在 60 以下 —— 剪尾的「确有关联」线是 60，
+  //    光靠近似不该够到那条线（否则一条近似命中就能把整池的兜底项全剪掉）。
+  //    标题 / 歌名上的近似比歌手名上的可信：「叶慧美」要找的是专辑，不是名字像的那个歌手
+  const bestName = Math.max(similarity(q, title), similarity(q, track));
+  if (bestName > 0) return Math.round(30 + bestName * 28);
+  const bestArtist = similarity(q, artist);
+  if (bestArtist > 0) return Math.round(24 + bestArtist * 20);
+  // ④ 本地看不出关联，只剩上游的排序信息
+  return 12;
+}
+
+/** 剪尾：池子里只要有一条名副其实的命中（≥60），就把「看不出关联」的（<30）整段去掉。
+ *  上游对模糊查询会塞一堆勉强沾边的结果，留着它们不光难看，还会把真想要的那张挤下去。 */
+const CUT_FLOOR = 30;
+const CUT_KEEP = 60;
+
+function cutTail(ranked: AlbumSearchCandidate[]): AlbumSearchCandidate[] {
+  if (!ranked.some((item) => (item.score || 0) >= CUT_KEEP)) return ranked;
+  return ranked.filter((item) => (item.score || 0) >= CUT_FLOOR);
+}
+
+function rank(pool: AlbumSearchCandidate[], query: string): AlbumSearchCandidate[] {
+  for (const item of pool) item.score = scoreCandidate(item, query);
+  // 稳定排序：同分保持「上游给的先后」（跨页也是先来先得）——上游的相关度里带着它自己的热度信息，
+  // 拿它当平手的次序，比随便排一个要强
+  return [...pool].sort((a, b) => (b.score || 0) - (a.score || 0));
+}
+
+// ============ 已在库中：直接从结果里隐去 ============
+// 需求：已经导入过的专辑不再出现在搜索结果里。索引是现算的（不是搜索时打快照），
+// 所以刚导入一张、或者删掉一张笔记，下一次搜索立刻就能反映出来。
+//
+// 判定分两层：
+//   ① 来源 id（neteaseId / qqId）—— 权威，但只管自己那个平台
+//   ② 「标题 + 艺人」指纹 —— 两个平台的目录高度重合，同一张专辑两边都搜得到；
+//      只认 id 的话，刚从网易云导完，QQ 那版还挂在结果里，点下去就是第二张重复笔记
+//  ② 的两边都必须非空，且是折叠后的完全相等（不做模糊）：宁可漏认一张，也不能把别的专辑认成同一张。
+//  笔记的标题就是笔记文件名，用户改过名（「叶惠美 (2003)」）时指纹对不上 —— 那就只剩 ① 兜着。
+//  拼接用换行当分隔符：折叠已经把空白全去掉了，标题 / 艺人里再出现换行的可能性为零，
+//  于是「叶惠美 + 周杰伦」与「叶惠 + 美周杰伦」不会拼成同一个指纹（用空格或斜杠就会有这种歧义）
+function nameKey(title: unknown, artist: unknown): string {
+  const t = fold(text(title));
+  const a = fold(text(artist));
+  return t && a ? `${t}\n${a}` : '';
+}
+
+function libraryIndex(app: App): { ids: Set<string>; names: Set<string> } {
+  const ids = new Set<string>();
+  const names = new Set<string>();
   for (const file of findAlbumNotes(app)) {
     const album = getAlbumInfo(app, file);
-    if (album?.neteaseId != null) imported.set(`netease:${album.neteaseId}`, file.path);
-    if (album?.qqId) imported.set(`qq:${album.qqId}`, file.path);
+    if (!album) continue;
+    if (album.neteaseId != null) ids.add(`netease:${album.neteaseId}`);
+    if (album.qqId) ids.add(`qq:${album.qqId}`);
+    const name = nameKey(album.title, album.artist);
+    if (name) names.add(name);
   }
-  for (const item of items) item.importedFilePath = imported.get(item.key);
+  return { ids, names };
 }
 
 // ============ 搜索节流 ============
@@ -196,7 +339,6 @@ const CACHE_TTL = 60_000;
 const MIN_INTERVAL = 600;
 const COOLDOWN = 20_000;
 
-const cache = new Map<string, { at: number; items: AlbumSearchCandidate[] }>();
 const cooldownUntil: Record<MusicSource, number> = { netease: 0, qq: 0 };
 let lastDispatchAt = 0;
 
@@ -217,72 +359,206 @@ function cooldownWarning(source: MusicSource): AlbumSearchResult['warnings'][num
 
 const SOURCES: MusicSource[] = ['netease', 'qq'];
 
-/** 聚合搜索：双源并行，任一来源失败时仍返回另一来源的结果。 */
+// ============ 结果池 & 翻页 ============
+// 「只有二十条」的解法不是把上限调大一点，而是让池子能一直长：一页 30 条/类型/来源，
+// 首屏只画一部分，剩下的本地展开；展开完了再按 offset 问上游要下一页，并进同一个池子重排。
+// 池子按 query 存（就是原来那份搜索缓存，只是多长了几页），TTL 内同一个词不再打网。
+
+/** 每类每源一页要多少条：上游给得太少会把对的排到页外，给得太多是在招限流 */
+export const SEARCH_PAGE_SIZE = 30;
+const SESSION_TTL = CACHE_TTL;
+const MAX_SESSIONS = 6;
+
+interface SearchSession {
+  at: number;
+  /** 去重后的原始池（含已在库中的 —— 隐去发生在返回前，删掉笔记重搜同一个词能立刻回来） */
+  pool: AlbumSearchCandidate[];
+  /** 下一页从哪开始（网易云是 offset；QQ 换算成页码，见 pageOf） */
+  offset: number;
+  /** 已经确认翻到底的来源 */
+  exhausted: Set<MusicSource>;
+  warnings: AlbumSearchResult['warnings'];
+  /** 本轮有来源报错：同一个词再搜要重打网络（网络刚恢复时，压在头上的旧结果会骗人） */
+  dirty: boolean;
+}
+
+const sessions = new Map<string, SearchSession>();
+
+function trimSessions(): void {
+  while (sessions.size > MAX_SESSIONS) {
+    const oldest = sessions.keys().next().value;
+    if (oldest == null) return;
+    sessions.delete(oldest);
+  }
+}
+
+function emptyResult(): AlbumSearchResult {
+  return { items: [], warnings: [], hiddenImported: 0, hasMore: false };
+}
+
+/** 池子 → 展示列表：本地重排 → 剪尾 → 隐去已在库中的 */
+function present(app: App, query: string, session: SearchSession): AlbumSearchResult {
+  const ranked = cutTail(rank(session.pool, query));
+  const library = libraryIndex(app);
+  const items = ranked.filter((item) => {
+    if (library.ids.has(item.key)) return false;
+    const name = nameKey(item.title, item.artists.join(' '));
+    return !(name && library.names.has(name));
+  });
+  return {
+    items,
+    warnings: session.warnings,
+    hiddenImported: ranked.length - items.length,
+    hasMore: SOURCES.some((source) => !session.exhausted.has(source)),
+  };
+}
+
+interface SourcePage {
+  items: AlbumSearchCandidate[];
+  /** 归一化之前上游给了多少条：0 就说明这个来源没有下一页了 */
+  raw: number;
+}
+
+/** QQ 的翻页是页码不是 offset：两端点的页大小都是 SEARCH_PAGE_SIZE（见 server/qq.js），除一下即可 */
+function pageOf(offset: number): number {
+  return Math.floor(offset / SEARCH_PAGE_SIZE) + 1;
+}
+
+async function fetchSource(
+  ctx: AlbumDiscoveryContext,
+  source: MusicSource,
+  query: string,
+  offset: number
+): Promise<SourcePage> {
+  if (source === 'qq') {
+    const body = await ctx.qq.search(query, pageOf(offset));
+    const raw = (body.data?.albums?.length || 0) + (body.data?.songs?.length || 0);
+    return { items: normalizeQqSearch(body), raw };
+  }
+  const page = { limit: SEARCH_PAGE_SIZE, offset };
+  const [albums, songs] = await Promise.all([
+    ctx.client.searchAlbums(query, page),
+    ctx.client.searchSongs(query, page),
+  ]);
+  return {
+    items: normalizeNeteaseSearch(albums, songs),
+    raw: (albums.result?.albums?.length || 0) + (songs.result?.songs?.length || 0),
+  };
+}
+
+/** 并进池子：同 key 去重（专辑命中比单曲命中信息全），返回新增条数 */
+function mergeInto(pool: AlbumSearchCandidate[], incoming: AlbumSearchCandidate[]): number {
+  const byKey = new Map(pool.map((item) => [item.key, item]));
+  let added = 0;
+  for (const item of incoming) {
+    const previous = byKey.get(item.key);
+    if (!previous) {
+      pool.push(item);
+      byKey.set(item.key, item);
+      added++;
+      continue;
+    }
+    if (previous.matchedBy === 'track' && item.matchedBy === 'album') {
+      Object.assign(previous, item);
+    }
+  }
+  return added;
+}
+
+/** 拉一页（每源各一次）并并进池子。失败的来源照旧记警告 + 冷却，不影响另一个来源。 */
+async function loadPage(
+  ctx: AlbumDiscoveryContext,
+  query: string,
+  session: SearchSession
+): Promise<void> {
+  const targets = SOURCES.filter(
+    (source) => !session.exhausted.has(source) && Date.now() >= cooldownUntil[source]
+  );
+  // 已经没有可要的东西（都翻到底了 / 都在冷却）：一个请求都不发，也不动池子与页码。
+  // 冷却中的来源还是要留个说法，否则用户会把「没发请求」当成「没有结果」。
+  if (!targets.length) {
+    session.warnings = SOURCES.filter((source) => !session.exhausted.has(source)).map(cooldownWarning);
+    return;
+  }
+  await waitForSlot();
+  const attempts = targets.map((source) => ({
+    source,
+    run: () => fetchSource(ctx, source, query, session.offset),
+  }));
+
+  const warnings: AlbumSearchResult['warnings'] = [];
+  const settled = await Promise.allSettled(attempts.map((attempt) => attempt.run()));
+  settled.forEach((result, i) => {
+    const { source } = attempts[i];
+    if (result.status === 'rejected') {
+      if (isRateLimited(result.reason)) cooldownUntil[source] = Date.now() + COOLDOWN;
+      warnings.push({
+        source,
+        message: text((result.reason as Error | undefined)?.message || result.reason),
+      });
+      session.dirty = true;
+      return;
+    }
+    const { items, raw } = result.value;
+    const added = mergeInto(session.pool, items);
+    // 「这个来源还有没有下一页」：网易云的 offset 翻页是准的（给少于要的即到底）；
+    // QQ 那边经典端点对页大小有夹取，只有「这一页没带来新东西」才可靠 —— 两条一起用，谁先到算谁
+    if (raw === 0 || added === 0 || (source === 'netease' && raw < SEARCH_PAGE_SIZE)) {
+      session.exhausted.add(source);
+    }
+  });
+  const attempted = new Set(attempts.map((attempt) => attempt.source));
+  for (const source of SOURCES) {
+    // 到底了的来源不解释：那是「没有更多」，不是「被限流」
+    if (attempted.has(source) || session.exhausted.has(source)) continue;
+    if (Date.now() < cooldownUntil[source]) warnings.push(cooldownWarning(source));
+  }
+  session.warnings = warnings;
+  session.offset += SEARCH_PAGE_SIZE;
+  session.at = Date.now();
+}
+
+/** 首屏搜索：池子里没有这个词（或上一轮带错、已过期）时重打网络，否则直接复用池子。 */
 export async function discoverAlbums(
   ctx: AlbumDiscoveryContext,
   rawQuery: string
 ): Promise<AlbumSearchResult> {
-  const query = rawQuery.trim();
-  if (!query) return { items: [], warnings: [] };
+  const query = String(rawQuery || '').trim();
+  if (!query) return emptyResult();
 
   const key = query.toLocaleLowerCase();
-  const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < CACHE_TTL) {
-    // 命中缓存也要重算「已导入」：刚导完一张再搜同一个词，按钮得跟着变成「打开」
-    markImported(ctx.app, hit.items);
-    return { items: hit.items, warnings: [] };
+  const cached = sessions.get(key);
+  if (cached && Date.now() - cached.at < SESSION_TTL && !cached.dirty) {
+    return present(ctx.app, query, cached);
   }
+  // 过期 / 上一轮带错的：池子和页码一起重建，别把脏页码带到这一轮
+  const session: SearchSession = {
+    at: Date.now(),
+    pool: [],
+    offset: 0,
+    exhausted: new Set(),
+    warnings: [],
+    dirty: false,
+  };
+  // 池子建起来之后才登记：先登记的话，连按两次回车时第二次会命中一个还没有内容的池子，
+  // 于是「搜到了」和「没搜到」同时出现在屏幕上（后者还盖着前者）
+  await loadPage(ctx, query, session);
+  sessions.set(key, session);
+  trimSessions();
+  return present(ctx.app, query, session);
+}
 
-  await waitForSlot();
-
-  const attempts: Array<{ source: MusicSource; run: () => Promise<AlbumSearchCandidate[]> }> = [];
-  if (Date.now() >= cooldownUntil.netease) {
-    attempts.push({
-      source: 'netease',
-      run: async () => {
-        const [albums, songs] = await Promise.all([
-          ctx.client.searchAlbums(query),
-          ctx.client.searchSongs(query),
-        ]);
-        return normalizeNeteaseSearch(albums, songs);
-      },
-    });
-  }
-  if (Date.now() >= cooldownUntil.qq) {
-    attempts.push({
-      source: 'qq',
-      run: async () => normalizeQqSearch(await ctx.qq.search(query)),
-    });
-  }
-
-  const warnings: AlbumSearchResult['warnings'] = [];
-  const items: AlbumSearchCandidate[] = [];
-  const settled = await Promise.allSettled(attempts.map((attempt) => attempt.run()));
-  settled.forEach((result, i) => {
-    const { source } = attempts[i];
-    if (result.status === 'fulfilled') {
-      items.push(...result.value);
-      return;
-    }
-    if (isRateLimited(result.reason)) cooldownUntil[source] = Date.now() + COOLDOWN;
-    warnings.push({
-      source,
-      message: text((result.reason as Error | undefined)?.message || result.reason),
-    });
-  });
-  const attempted = new Set(attempts.map((attempt) => attempt.source));
-  for (const source of SOURCES) {
-    if (!attempted.has(source) && Date.now() < cooldownUntil[source]) {
-      warnings.push(cooldownWarning(source));
-    }
-  }
-
-  const unique = dedupe(items)
-    .sort((a, b) => score(b, query) - score(a, query))
-    .slice(0, 20);
-  markImported(ctx.app, unique);
-  // 只缓存「两个来源都正常回来」的结果：带警告的结果缓存下来的话，
-  // 用户在网络恢复后重搜同一个词，会被 60 秒的旧结果按住，看起来像是还没修好
-  if (!warnings.length) cache.set(key, { at: Date.now(), items: unique });
-  return { items: unique, warnings };
+/** 「加载更多」：把上游更深处的一页拉进池子，再按同一套逻辑重排后返回整个池子。
+ *  池子已经翻到底（或有来源在冷却）时不发请求，如实返回现有的池子。 */
+export async function loadMoreAlbums(
+  ctx: AlbumDiscoveryContext,
+  rawQuery: string
+): Promise<AlbumSearchResult> {
+  const query = String(rawQuery || '').trim();
+  if (!query) return emptyResult();
+  const session = sessions.get(query.toLocaleLowerCase());
+  // 会话已被挤掉 / 过期：当作重新搜一次（此时池子是空的，能给出完整的一页）
+  if (!session) return discoverAlbums(ctx, query);
+  await loadPage(ctx, query, session);
+  return present(ctx.app, query, session);
 }

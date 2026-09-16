@@ -56,12 +56,12 @@ test('长文本可读性：专辑墙卡片与播放器顶部标题共用同一�
   assert.match(read('src/views/shelf-view.ts'), /vinyl-shelf-card-title vinyl-marquee/, '卡片标题要挂 marquee 类');
   assert.match(
     read('src/views/player-view.ts'),
-    /vinyl-player-header-title vinyl-marquee/,
-    '播放器顶部专辑名要挂 marquee 类'
+    /vinyl-order-album vinyl-marquee/,
+    'Vinyl order 行末尾的专辑名要挂 marquee 类（设计稿：专辑名归那一栏的最后）'
   );
   assert.match(
     read('src/views/player-view.ts'),
-    /headerTitleText\.textContent = headerText/,
+    /orderAlbumText\.textContent = orderAlbum/,
     '更新的必须是里层文字节点（改外层会把 marquee 结构冲掉）'
   );
 });

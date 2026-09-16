@@ -17,6 +17,28 @@ export type HandoffState = 'idle' | 'handoff' | 'playing';
 
 const LIFT_OFF_MS = 700;
 
+/**
+ * 唱片离墙动画（点击交接、排入列表共用同一串关键帧）：A 拾取 → B 离墙。
+ * 关键帧取 CSS 变量（--vinyl-disc-{rest,lift,off}），方向随「黑胶动画方向」设置变化；
+ * 终点与 CSS 隐藏态（.is-playing / .is-queued .vinyl-shelf-disc）同源，靠 fill:forwards 保持
+ * —— 动画起点又与磁盘当时的探出位相同，所以状态类同一帧落地也不会触发 transition 抢戏。
+ * 动画挂在卡片上（cardEl.__vinylLift）：渲染刷新时随 DOM 一起消亡，回位时由调用方 cancel。
+ */
+export function animateDiscLiftOff(cardEl: HTMLElement, discEl: HTMLElement): Animation {
+  const lift = discEl.animate(
+    [
+      // A 拾取（0–370ms）：从探出位抽出 + 轻微放大 + 摆正
+      { transform: discTransform(discEl, 'rest'), opacity: '1', offset: 0 },
+      { transform: discTransform(discEl, 'lift'), opacity: '1', offset: 0.53 },
+      // B 离墙（370–700ms）：继续离场 + 缩小 + 淡出
+      { transform: discTransform(discEl, 'off'), opacity: '0', offset: 1 },
+    ],
+    { duration: LIFT_OFF_MS, easing: 'cubic-bezier(0.33, 1, 0.68, 1)', fill: 'forwards' }
+  );
+  cardEl.__vinylLift = lift;
+  return lift;
+}
+
 export class HandoffController {
   private state: HandoffState = 'idle';
 
@@ -39,38 +61,10 @@ export class HandoffController {
     // 减少动态效果：跳过拾取动画（交接流程照走，只是不做那串位移）
     if (cardEl && discEl && !prefersReducedMotion()) {
       cardEl.addClass('is-handing-off');
-      // 关键帧取 CSS 变量（--vinyl-disc-{rest,lift,off}）：
-      //   终点与 CSS 隐藏态（.is-playing .vinyl-shelf-disc）同源，播放中由 fill:forwards 保持；
-      //   换专辑时 shelf-view cancel 后由 transition 回位；方向随「黑胶动画方向」设置变化。
-      const lift = discEl.animate(
-        [
-          // A 拾取（0–370ms）：从探出位抽出 + 轻微放大 + 摆正
-          {
-            transform: discTransform(discEl, 'rest'),
-            opacity: '1',
-            offset: 0,
-          },
-          {
-            transform: discTransform(discEl, 'lift'),
-            opacity: '1',
-            offset: 0.53,
-          },
-          // B 离墙（370–700ms）：继续离场 + 缩小 + 淡出
-          {
-            transform: discTransform(discEl, 'off'),
-            opacity: '0',
-            offset: 1,
-          },
-        ],
-        {
-          duration: LIFT_OFF_MS,
-          easing: 'cubic-bezier(0.33, 1, 0.68, 1)',
-          fill: 'forwards',
-        }
+      // 换专辑时 shelf-view 取消这条动画，唱片经 CSS transition 回位
+      animateDiscLiftOff(cardEl, discEl).addEventListener('finish', () =>
+        cardEl.removeClass('is-handing-off')
       );
-      lift.addEventListener('finish', () => cardEl.removeClass('is-handing-off'));
-      // 挂在卡片上：渲染刷新时随 DOM 一起消亡，无需手动回收
-      cardEl.__vinylLift = lift;
     }
 
     // C 落盘前：先打开/聚焦播放器（未打开时先 revealLeaf）

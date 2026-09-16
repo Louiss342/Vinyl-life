@@ -266,7 +266,7 @@ test('source labels cover all three active sources', () => {
   assert.equal(sourceLabel('qq'), 'QQ音乐');
 });
 
-test('来源角标 / 音质档文案随语言切换（切 en 出英文，切回 zh 复原）', () => {
+test('来源角标文案随语言切换（切 en 出英文，切回 zh 复原）', () => {
   // track / queue 与 i18n 必须同包：外层实例切不动 bundle 里的那一份
   const mod = loadBundle(['src/core/track.ts', 'src/core/queue.ts']);
   const qq = { source: 'qq', id: 'x', duration: 1, title: 'x' };
@@ -278,10 +278,6 @@ test('来源角标 / 音质档文案随语言切换（切 en 出英文，切回 
   assert.equal(mod.trackSourceLabel(ne), '网易云');
   assert.equal(mod.trackSourceLabel(local), '本地');
   assert.equal(mod.sourceLabel('qq'), 'QQ音乐');
-  assert.equal(mod.qualityText('standard'), '标准');
-  assert.equal(mod.qualityText('higher'), '较高');
-  assert.equal(mod.qualityText('exhigh'), '极高');
-  assert.equal(mod.qualityText('lossless'), '无损');
 
   mod.setLanguage('en');
   assert.equal(mod.trackSourceLabel(qq), 'QQ Music');
@@ -292,16 +288,9 @@ test('来源角标 / 音质档文案随语言切换（切 en 出英文，切回 
     mod.trackSourceLabel(qq),
     '队列来源文案与角标同源（一处改两处生效）'
   );
-  assert.equal(mod.qualityText('standard'), 'Standard');
-  assert.equal(mod.qualityText('higher'), 'Higher');
-  assert.equal(mod.qualityText('exhigh'), 'Extra high');
-  assert.equal(mod.qualityText('lossless'), 'Lossless');
-  assert.equal(mod.qualityText('jymaster'), 'jymaster', '未知档位仍原样透传，不进词典');
-  assert.equal(mod.qualityText(undefined), '', '本地音轨无档位');
 
   mod.setLanguage('zh');
   assert.equal(mod.trackSourceLabel(qq), 'QQ音乐', '切回中文复原');
-  assert.equal(mod.qualityText('lossless'), '无损');
 });
 
 test('引擎快照的来源文案按当前语言求值（不在建队列那一刻定型）', () => {

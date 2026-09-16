@@ -1,6 +1,7 @@
-// 实际音质读数回归：档位文案 + 引擎快照透出 + 播放器读数文案。
-// 关注点：请求「无损」而接口只给「较高」时，读数要显示实际拿到的档位（这才是会员档位的可见证据）；
-// 本地音轨无档位概念，只显示来源。
+// 实际音质档回归：引擎快照里透出的是「接口实际给的档位」而不是请求的档位。
+// 关注点：请求「无损」而接口只给「较高」时，快照必须报「较高」（会员档位的证据）；
+// 本地音轨无档位概念，换队列即复位。
+// 注：播放器上那块「来源 · 档位」读数区已按用户要求撤掉，这里只盯引擎侧的数据。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -97,31 +98,6 @@ function setup(overrides = {}) {
   return { mod, engine: new mod.PlaybackEngine(deps) };
 }
 
-test('文案：档位映射 + 未知名透传 + 空值', () => {
-  const { mod } = setup();
-  assert.equal(mod.qualityText('lossless'), '无损');
-  assert.equal(mod.qualityText('exhigh'), '极高');
-  assert.equal(mod.qualityText('higher'), '较高');
-  assert.equal(mod.qualityText('standard'), '标准');
-  assert.equal(mod.qualityText('jymaster'), 'jymaster', '未知档位原样显示，不吞信息');
-  assert.equal(mod.qualityText(undefined), '');
-});
-
-test('读数：队列/来源/档位三种组合', () => {
-  const { mod } = setup();
-  const base = { queue: [{}], status: 'playing', index: 0, currentTime: 0, duration: 0, volume: 1 };
-  assert.equal(
-    mod.qualityReadout({ ...base, sourceLabel: '网易云', quality: 'higher' }),
-    '网易云 · 较高'
-  );
-  assert.equal(mod.qualityReadout({ ...base, sourceLabel: '本地' }), '本地', '本地无档位');
-  assert.equal(
-    mod.qualityReadout({ ...base, queue: [], sourceLabel: '网易云', quality: 'lossless' }),
-    '',
-    '空队列不显示'
-  );
-});
-
 test('引擎：请求无损、实际较高 → 快照透出实际档位', async () => {
   const { mod, engine } = setup();
   engine.setQueue(
@@ -135,7 +111,7 @@ test('引擎：请求无损、实际较高 → 快照透出实际档位', async 
   const s = engine.snapshot();
   assert.equal(s.status, 'playing');
   assert.equal(s.quality, 'higher', '应为接口实际返回的档位，而非请求的 lossless');
-  assert.equal(mod.qualityReadout(s), '网易云 · 较高');
+  assert.equal(s.sourceLabel, '网易云');
 });
 
 test('引擎：QQ 档位同样透出', async () => {
@@ -147,10 +123,12 @@ test('引擎：QQ 档位同样透出', async () => {
     'qq'
   );
   await engine.playIndex(0);
-  assert.equal(mod.qualityReadout(engine.snapshot()), 'QQ音乐 · 标准');
+  const s = engine.snapshot();
+  assert.equal(s.quality, 'standard');
+  assert.equal(s.sourceLabel, 'QQ音乐');
 });
 
-test('引擎：本地音轨无档位；换队列 / 清空后读数复位', async () => {
+test('引擎：本地音轨无档位；换队列即复位', async () => {
   const { mod, engine } = setup();
   engine.setQueue(
     [{ source: 'netease', id: 1, title: 'a', duration: 100 }],
@@ -171,8 +149,9 @@ test('引擎：本地音轨无档位；换队列 / 清空后读数复位', async
   assert.equal(engine.snapshot().quality, undefined, '换队列即复位');
   await engine.playIndex(0);
   assert.equal(engine.snapshot().quality, undefined);
-  assert.equal(mod.qualityReadout(engine.snapshot()), '本地');
+  assert.equal(engine.snapshot().sourceLabel, '本地');
 
   engine.clear();
-  assert.equal(mod.qualityReadout(engine.snapshot()), '');
+  assert.equal(engine.snapshot().quality, undefined);
+  assert.equal(engine.snapshot().sourceLabel, '');
 });

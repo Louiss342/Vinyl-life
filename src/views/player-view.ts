@@ -1,28 +1,46 @@
-// 播放器视图：转盘 + 旋转唱片 + 直线唱臂（不播放归位支架 / 播放落针并随进度内移）；
-//   设备面板（.vinyl-deck，胡桃木 / 贝壳白 / 哑光黑三套配色）：金属圆钮控制、红色填充进度轨、丝印品牌行；
-//   音量 = 阶梯电平表（点哪一格，那格（含）之前全亮），进度条点即定位、拖动跟手（见 bindPointerScrub）；
-//   换碟 = 头部圆钮弹 Menu。
+// 播放器视图：页面 1 = 转盘播放器（自上而下：按键卡 / 翻转区 / Vinyl order 行 / 队列）。
+//   卡① .vinyl-player-header 按键卡：「选取专辑」宽键（只留图标）占一半，队列模式 / 播放模式各占四分之一（2:1:1）；
+//     没有标题行 —— 专辑名归 Vinyl order 行末尾（播放错误由引擎的 Notice 弹窗报出）；
+//   翻转区 ②+③ .vinyl-flip：唱机卡 + 唱放条合并为「一张卡」（用户要求），整张左转 90°，
+//     背面是唱片区（三行唱片架，见 album-picker）。
+//     只有这一区翻面——按键卡、Vinyl order、队列都留在板上不动（用户要求「其他不要变」）。
+//     唱机卡 .vinyl-deck（四套配色：胡桃木 / 贝壳白 / 哑光黑 / 珊瑚红）：横向 1.3 : 1 转盘，唱片偏左、
+//     唱针在右上（几何真值见 core/arm-geometry，单位 = 转盘高）；姿态 1 = 未播放/暂停归位支架，
+//     姿态 2 = 播放中落针，唱针到圆心的「距离」表示专辑进度；左下角长方形播放 / 暂停键（键面 = 手写体字标）；
+//     唱放条 .vinyl-amp：两行控制条（版式照设计不动）—— 上单曲进度轨（点即定位、拖动跟手，
+//     见 bindPointerScrub）、下音量电平表；整体压高到与按键卡同档（用户要求）。
+//     合并成一张卡的落法：面板材质 / 落影改挂翻转面，接缝两条描边去掉、内边距补回，
+//     尺寸逐像素不变（见 styles.css 的「②③ 合并成一张卡」）。
+//   点「选取专辑」→ 翻转区转到唱片区；在唱片区点一张专辑 → 转回唱机卡并换碟。
+//   翻转区的两个面都必须保持 overflow: visible —— 可滚动 + 3D 变换会让 Blink 的命中测试整面失效
+//   （「返回键点不到」就是这么来的），滚动因此交给各自的滚动层（队列挂板、唱片区自己带箱子）。
 // 增量渲染：壳只建一次，状态更新只改目标节点——旋转动画不被打断。
 import { ItemView, WorkspaceLeaf, setIcon } from 'obsidian';
 import type VinylLifePlugin from '../main';
 import type { PlayerSnapshot } from '../core/player-state';
 import type { Track } from '../core/track';
 import type { PlayMode } from '../core/player-state';
-import { trackSourceLabel, trackSourceClass, qualityText } from '../core/track';
+import { trackSourceLabel, trackSourceClass } from '../core/track';
 import { fmtTime, notice, prefersReducedMotion } from '../util';
 import { SPIN_SPEEDS } from '../core/disc-motion';
 import { DECK_STYLES, RECORD_COLORS, deckClass, recordClass } from '../core/appearance';
 import { coverChain } from '../core/cover-url';
-import { resolveAlbumCover } from '../core/album-index';
+import { resolveAlbumCover, findAlbumNotes, getAlbumInfo, detectAlbumSources } from '../core/album-index';
+import type { AlbumInfo } from '../core/album-index';
+import { ARM_PARK_ANGLE, albumProgress, armAngleForProgress, armPosture } from '../core/arm-geometry';
 import { t, tf } from '../core/i18n';
 import { onMarqueeOver, onMarqueeOut } from './marquee';
+import { AlbumPicker } from './album-picker';
+import type { PickerEntry } from './album-picker';
 
 export const PLAYER_VIEW_TYPE = 'vinyl-player';
 
 interface PlayerEls {
-  headerTitle: HTMLElement;
-  /** 标题里真正装文字的那一层（marquee 动的是它，不是外层容器） */
-  headerTitleText: HTMLElement;
+  /** 翻转区（②+③）：正面 = 唱机卡 + 唱放卡，背面 = 唱片区，共用这一个 3D 容器 */
+  flip: HTMLElement;
+  flipInner: HTMLElement;
+  /** 「选取专辑」：翻转区的开关（图标键，点一下转到唱片区 / 再点转回来） */
+  pickBtn: HTMLButtonElement;
   /** 播放模式按钮（单次 / 循环 / 随机）：队列模式下作用于整条列表 */
   playModeBtn: HTMLButtonElement;
   discOuter: HTMLElement;
@@ -33,25 +51,16 @@ interface PlayerEls {
   progressSlider: HTMLInputElement;
   progressRail: HTMLElement;
   timeEl: HTMLElement;
-  prevBtn: HTMLButtonElement;
-  playBtn: HTMLButtonElement;
-  nextBtn: HTMLButtonElement;
+  /** 唱盘左下角的播放 / 暂停键（设计稿：长方形；页面 1 里唯一的播放键） */
+  deckPlayBtn: HTMLButtonElement;
   volSlider: HTMLInputElement;
   volSegments: HTMLElement[];
   queueTitle: HTMLElement;
+  /** Vinyl order 行末尾的当前专辑名（设计稿：「(专辑名)」在那一栏的最后） */
+  orderAlbum: HTMLElement;
   queueBox: HTMLElement;
-  /** 专辑队列模式开关（顶部，「选择专辑」左边） */
+  /** 专辑队列模式开关（顶部，「选取专辑」右边） */
   queueModeBtn: HTMLButtonElement;
-  /** 「清空后面的专辑」（Vinyl order 行） */
-  clearQueueBtn: HTMLButtonElement;
-  qualityEl: HTMLElement;
-}
-
-// 实际音质读数文案：队列就绪才显示；在线源带档位，本地源只显示来源
-export function qualityReadout(s: PlayerSnapshot): string {
-  if (!s.queue.length || !s.sourceLabel) return '';
-  const q = qualityText(s.quality);
-  return q ? `${s.sourceLabel} · ${q}` : s.sourceLabel;
 }
 
 /** 三种播放模式的图标（Obsidian 的 lucide 图标名） */
@@ -69,8 +78,9 @@ export function modeLabelKey(mode: PlayMode, queueMode: boolean): string {
 }
 
 const VOLUME_SEGMENT_COUNT = 24;
-const VOLUME_SEGMENT_MIN_HEIGHT = 7;
-const VOLUME_SEGMENT_HEIGHT_RANGE = 7;
+// 唱放卡压到两行 38px（行高 14，见 styles.css 的 .vinyl-amp）：格子按设计比例收小（5~10px，2 : 1）
+const VOLUME_SEGMENT_MIN_HEIGHT = 5;
+const VOLUME_SEGMENT_HEIGHT_RANGE = 5;
 /** 抬手 seek 之后压住进度轨的时长：引擎把目标位置报回来之前不许回写（timeupdate 节流 400ms） */
 const SEEK_HOLD_MS = 900;
 /** 保持期的「引擎已到位」容差（占全长比例）：够了就把轨道交还给引擎 */
@@ -120,7 +130,7 @@ export function bindPointerScrub(
     onDragStart?: () => void;
     /** 抬手或被系统收走，都会走到这里（收尾只做一次） */
     onEnd?: () => void;
-    /** 命中几何，缺省用 hit 自己：进度条要按内缩 7px 的轨道算，点哪滑块中心就落在哪 */
+    /** 命中几何，缺省用 hit 自己：进度条要按内缩半个滑块（6px）的轨道算，点哪滑块中心就落在哪 */
     geometry?: () => { left: number; width: number };
   }
 ): void {
@@ -201,12 +211,61 @@ export function resolveQueueDropIndex(from: number, target: number, after: boole
   return from < to ? to - 1 : to;
 }
 
-// 唱臂角度（deg，与 styles.css 的 .vinyl-turntable-arm 几何配套）：
-//   停放 = 归位到唱臂支架卡口（唱针离开唱片）；
-//   播放 = 唱针落在导入槽（外圈 ≈0.96R），随播放向内圈导出槽（≈0.40R，停在标签外）缓移。
-const ARM_PARKED = -100;
-const ARM_OUTER = -76;
-const ARM_INNER = -46;
+// 唱臂角度的换算全部在 core/arm-geometry（姿态 1 = 停放角；姿态 2 = 专辑进度 → 唱针到圆心距离 →
+// 余弦定理反解旋转角）。视图只负责把算出来的角度写进 --vinyl-arm-angle。
+
+// —— 唱臂图形：S 型臂管（内联 SVG）——
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/** SVG 元素小工厂（内联图形用；Obsidian 的 DOM 扩展只覆盖 HTML 元素，SVG 走原生命名空间） */
+function svgEl<K extends keyof SVGElementTagNameMap>(
+  tag: K,
+  attrs: Record<string, string>
+): SVGElementTagNameMap[K] {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  return el;
+}
+
+/** S 型唱臂的臂管（用户点名要的形态，参考 Technics 的 S 臂）。
+ *  形状照用户给的实拍图（Technics SL-1200 黑臂）重画：**一条朝盘外拱起的、连续的弓**——
+ *  从转轴出发先与臂轴平行，中段鼓到最大（约 11% 臂长），再收回中心线进唱头。
+ *  怎么来的：把参考图里臂管的中心线逐行描出来（黑色管身 vs 红漆 / 金属底，逐行取暗像素带中点），
+ *  归一化到「转轴 → 唱针」的弦上，再做最小二乘拟合两条三次贝塞尔（残差 ~2-7 单位）。
+ *  归一化后的剖面（弦长 = 1）：0 → 0.09(@0.15) → 0.20(@0.3) → 0.29(@0.45) → 峰 0.33(@0.5)
+ *  → 0.17(@0.7) → 0.09(@0.83) → 0（@1）；换算到本画布 = 峰高 110 单位。
+ *  局部坐标：x 沿臂、原点在转轴、y 向下（+y = 朝唱片圆心那一侧，所以外拱是 −y）。
+ *  为什么远端必须回到 (1000, 100)：几何真值（唱针位置）是臂盒子「远端中点」
+ *  （见 core/arm-geometry 与测试台 measuredStylus），图形怎么弯都行，端点不能在别处。
+ *  viewBox 1000×240：x 仍是一整条臂长（等比缩放，管壁粗细不随尺寸变），y 的窗口取 [−20, 220]、
+ *  以 100 为中心 —— 元件垂直居中挂上去（见 styles.css 的 .vinyl-arm-tube），所以中心线必须落在窗口正中；
+ *  曲线的 y 在 [−10, 100]，加描边与落影仍在窗口内，不会被画布裁掉。
+ *  改这几个数要一起看：末端切线（≈ +3°）与唱头转角（−10°，见 styles.css 的 .vinyl-arm-head）。 */
+function buildArmTube(): SVGElement {
+  const svg = svgEl('svg', {
+    class: 'vinyl-arm-tube',
+    viewBox: '0 -20 1000 240',
+    'aria-hidden': 'true',
+    focusable: 'false',
+  });
+  const defs = svgEl('defs', {});
+  const sheen = svgEl('linearGradient', { id: 'vinyl-arm-sheen', x1: '0', y1: '0', x2: '0', y2: '1' });
+  sheen.appendChild(svgEl('stop', { offset: '0', 'stop-color': '#f4f5f7' }));
+  sheen.appendChild(svgEl('stop', { offset: '0.48', 'stop-color': '#c9cbd2' }));
+  sheen.appendChild(svgEl('stop', { offset: '1', 'stop-color': '#87898f' }));
+  defs.appendChild(sheen);
+  svg.appendChild(defs);
+  // 臂管轴线：起点贴住枢轴（x=0，被枢轴座盖住），中段外拱 110 单位，远端精确回到 (1000, 100) —— 唱头挂在那里
+  const tube = 'M 0 100 C 240 100 330 -10 490 -10 C 670 -10 710 85.5 1000 100';
+  const stroke = (extra: Record<string, string>) =>
+    svgEl('path', { d: tube, fill: 'none', 'stroke-linecap': 'round', ...extra });
+  // 落影 → 管身（银）→ 顶面高光：三层描边堆出圆管的体积感
+  svg.appendChild(stroke({ stroke: 'rgba(0, 0, 0, 0.32)', 'stroke-width': '16', transform: 'translate(0 7)' }));
+  svg.appendChild(stroke({ stroke: 'url(#vinyl-arm-sheen)', 'stroke-width': '15' }));
+  svg.appendChild(stroke({ stroke: 'rgba(255, 255, 255, 0.72)', 'stroke-width': '3.5', transform: 'translate(0 -4)' }));
+  return svg;
+}
 
 export class VinylPlayerView extends ItemView {
   private plugin: VinylLifePlugin;
@@ -214,18 +273,21 @@ export class VinylPlayerView extends ItemView {
   private els: PlayerEls | null = null;
   private renderedQueue: Track[] | null = null;
   private queueRows: HTMLElement[] = [];
-  /** 段容器（多专辑时画出来的分组）：切语言要按它重写段头提示 */
-  private segmentEls: Array<{ el: HTMLElement; seg: { start: number; count: number; albumTitle: string; albumPath: string } }> = [];
+  /** 段容器（多专辑时画出来的分组）+ 段头：切语言要按它们重写段头提示 */
+  private segmentEls: Array<{ el: HTMLElement; head: HTMLElement; seg: { start: number; count: number; albumTitle: string; albumPath: string } }> = [];
   // 队列行右侧的来源角标（文案随语言变；行不重建，切语言时按 renderedQueue 就地重写）
   private queueBadges: HTMLElement[] = [];
+  /** 段头里的小按钮（写感想 / 移除整段）：切语言时按段就地重写 aria-label */
+  private segmentBtns: Array<{ note: HTMLElement; remove: HTMLElement | null; seg: { albumTitle: string; albumPath: string } }> = [];
   /** 封面候选链的签名（链内容变化才换图；链见 core/cover-url.coverChain） */
   private currentCoverSig: string | null = null;
   private coverChain: string[] = [];
   private lastAlbumPath: string | null = null;
   private lastSpinning = false;
   private lastArmAngle = NaN;
-  private playIcon: 'play' | 'pause' | '' = '';
-  private lastReadout = '';
+  /** 唱臂姿态（park / record）：只在变化时写类，避免每帧动 DOM */
+  private lastPosture: 'park' | 'record' | null = null;
+  private playLit = false;
   // 最近一次收到的快照（切语言时优先向引擎现取一份；仅引擎缺失的极简依赖下用它兜底）
   private lastSnapshot: PlayerSnapshot | null = null;
   // 随语言变的标签登记（见 bindLabel）：壳只建一次，切语言时不能重建 DOM 兜底
@@ -236,13 +298,23 @@ export class VinylPlayerView extends ItemView {
   // 条件更新缓存（值不变不写 DOM，减少样式失效与 :has() 重算）
   private lastRatio = -1;
   private lastTimeText = '';
-  private lastHeaderText = '';
   private lastVol = -1;
   /** 进度条被按住拖动中：手指说了算，快照不许回写轨道与读数（见 update 的 seekOwned） */
   private seeking = false;
   /** 抬手 seek 之后的目标值 + 保持期限：等引擎到位再交还控制权（见 SEEK_HOLD_MS） */
   private seekHold: { ratio: number; index: number; until: number } | null = null;
   private onVisibility = () => this.syncVisibility();
+  /** 唱片区（页面 2）：三行唱片架。第一次翻到这一面时才建（懒建），此后常驻 */
+  private picker: AlbumPicker | null = null;
+  /** 页面 2 那个面（唱片区挂在这里） */
+  private pickerFace: HTMLElement | null = null;
+  /** 当前显示的是哪一面（'player' = 唱机卡那面，'picker' = 唱片区那面） */
+  private face: 'player' | 'picker' = 'player';
+  /** 翻转区半深（px）：= 区宽 / 2，随尺寸变化重算（见 syncFlipDepth） */
+  private flipRO: ResizeObserver | null = null;
+  /** Vinyl order 行末尾的专辑名（随当前曲目变，值不变不写 DOM） */
+  private orderAlbumText: HTMLElement | null = null;
+  private lastOrderAlbum = '';
   // 队列拖拽态：dragging 抑制拖拽尾巴上的 click（见 endQueueDrag），dragFrom 是被拖行的下标
   private dragging = false;
   /** 整段拖拽中的来源段（与行拖拽互斥，避免两套拖拽同时生效） */
@@ -288,6 +360,11 @@ export class VinylPlayerView extends ItemView {
     // 顶部专辑名的悬停滚动：委托挂在 contentEl（标题文字随播放状态变，逐次挂监听会漏）
     this.registerDomEvent(this.contentEl, 'pointerover', (ev) => onMarqueeOver(ev));
     this.registerDomEvent(this.contentEl, 'pointerout', (ev) => onMarqueeOut(ev));
+    // 翻转区的半深跟着宽度走（translateZ 不认百分比，只能在尺寸变化时写一次 CSS 变量）
+    this.flipRO = new ResizeObserver(() => this.syncFlipDepth());
+    this.flipRO.observe(this.contentEl);
+    // Esc：在唱片区按一下回播放器（焦点在别处也管用，见 onEscape）
+    this.registerDomEvent(this.contentEl, 'keydown', (ev) => this.onEscape(ev));
     // 性能：仅在「真的看不见」时暂停转盘旋转（窗口不可见 / 视图未渲染），判据见 syncVisibility
     this.registerEvent(this.app.workspace.on('active-leaf-change', this.onVisibility));
     document.addEventListener('visibilitychange', this.onVisibility);
@@ -299,7 +376,37 @@ export class VinylPlayerView extends ItemView {
       this.unsub();
       this.unsub = null;
     }
+    this.flipRO?.disconnect();
+    this.flipRO = null;
     document.removeEventListener('visibilitychange', this.onVisibility);
+  }
+
+  /** 翻转区半深 = 区宽 / 2（+ 反向缩放系数：抵消透视放大，静止的一面永远是 1:1）。
+   *  顺带给唱片区算行高（--vinyl-pick-h）：除去分隔线与少量内边距后三等分。 */
+  private syncFlipDepth() {
+    const els = this.els;
+    if (!els) return;
+    const w = els.flip.clientWidth;
+    if (!(w > 0)) return;
+    const depth = w / 2;
+    const perspective = this.flipPerspective();
+    els.flip.style.setProperty('--vinyl-flip-depth', `${depth.toFixed(1)}px`);
+    els.flip.style.setProperty('--vinyl-flip-perspective', `${perspective}px`);
+    // 透视会把处在 z = depth 平面上的一面放大 P/(P−depth)，静止时用反向 scale 拉回 1:1
+    els.flipInner.style.setProperty('--vinyl-flip-counter', ((perspective - depth) / perspective).toFixed(4));
+    if (this.picker) {
+      const h = els.flip.clientHeight;
+      if (h > 0) {
+        const pickH = Math.max(60, Math.min(108, Math.floor((h - 12) / 3)));
+        this.picker.el.style.setProperty('--vinyl-pick-h', `${pickH}px`);
+      }
+    }
+  }
+
+  /** 透视距离：随容器宽度走（窄侧栏里 1200px 会显得很夸张，宽面板里 1200px 又太平） */
+  private flipPerspective(): number {
+    const w = this.els?.flip.clientWidth || 360;
+    return Math.round(Math.max(900, Math.min(2400, w * 3.4)));
   }
 
   // 转盘停转的判据只有两种「真的看不见」：窗口不可见（最小化 / 切到别的应用）、本视图没被渲染
@@ -327,15 +434,12 @@ export class VinylPlayerView extends ItemView {
   applyLanguage() {
     for (const apply of this.labelEls) apply();
     this.applyQueueLabels();
-    // 头部标题（专辑名 / 取碟中 / 错误提示）与音质读数（来源 · 档位）都由快照决定、由 update 统一维护：
-    // 把这两处按语言缓存的值清掉，再按新语言重放一次，文案即重算。
-    // 快照必须现取而不是用 lastSnapshot：来源文案是引擎按当前语言求值的，而切语言不产生引擎广播，
-    // 手里的旧快照会把旧语言的来源钉在读数上（暂停中尤其明显——没有播放进度事件来纠正它）。
+    this.picker?.applyLabels(); // 唱片区（页面 2）的文案：标题 / 提示 / 唱片的可读名称
+    // 文案都由快照决定、由 update 统一维护：切语言时按新语言重放一次即可。
+    // 快照必须现取而不是用 lastSnapshot：队列行的来源文案是引擎按当前语言求值的。
     // 引擎缺失时（极简依赖的测试）退回最近一次收到的快照。
     const snap = this.plugin.engine ? this.plugin.engine.snapshot() : this.lastSnapshot;
     if (snap) {
-      this.lastHeaderText = '';
-      this.lastReadout = '';
       this.update(snap);
     }
   }
@@ -350,19 +454,15 @@ export class VinylPlayerView extends ItemView {
         'aria-label',
         t(modeLabelKey(this.lastPlayMode || 'once', this.plugin.settings.queueMode))
       );
-      els.clearQueueBtn.setAttribute('aria-label', t('player.queueClearOthers'));
     }
-    for (const { el, seg } of this.segmentEls) {
-      const head = el.querySelector<HTMLElement>('.vinyl-queue-segment-head');
-      if (head) head.setAttribute('title', t('player.queueDragAlbum'));
-      const removeBtn = el.querySelector<HTMLElement>('.vinyl-queue-segment-remove');
-      if (removeBtn) {
-        removeBtn.setAttribute(
-          'aria-label',
-          tf('player.queueRemoveAlbum', { name: seg.albumTitle || seg.albumPath })
-        );
-      }
+    // 段头：拖拽提示 / 写感想（每个专辑一个）/ 移除整段
+    for (const { note, remove, seg } of this.segmentBtns) {
+      const name = seg.albumTitle || seg.albumPath;
+      note.setAttribute('aria-label', tf('player.noteAlbum', { name }));
+      if (remove) remove.setAttribute('aria-label', tf('player.queueRemoveAlbum', { name }));
     }
+    // 段头可拖拽（整段排序）的提示：只有多专辑时才真能拖，但文案写在头上不碍事
+    for (const { head } of this.segmentEls) head.setAttribute('title', t('player.queueDragAlbum'));
     for (const row of this.queueRows) row.setAttribute('title', t('player.dragToReorder'));
     if (this.emptyQueueEl) this.emptyQueueEl.textContent = t('player.emptyQueue');
     // 来源角标走 trackSourceLabel（随语言变）：行不重建，按当前队列就地重写文本
@@ -380,98 +480,76 @@ export class VinylPlayerView extends ItemView {
     c.empty();
     c.addClass('vinyl-player');
 
-    // 头部：标题 + 换碟圆钮
-    const header = c.createDiv({ cls: 'vinyl-player-header' });
-    // 顶部专辑名：放不下时悬停滚动（与专辑墙卡片同一套 .vinyl-marquee 机制）
-    const headerTitle = header.createDiv({ cls: 'vinyl-player-header-title vinyl-marquee' });
-    const headerTitleText = headerTitle.createSpan({
-      cls: 'vinyl-marquee-text',
-      text: t('player.title'),
+    // 滚动层（板）：内边距与纵向滚动都挂在这层 —— 所有不参与翻面的内容（按键卡 / 队列）都建在板上
+    const board = c.createDiv({ cls: 'vinyl-board' });
+
+    // 卡①：顶部三枚键（设计稿 2 : 1 : 1 —— 选取专辑占一半，两个模式开关各占四分之一）。
+    // 专辑名不占这张卡 —— 设计稿把它放在 Vinyl order 那一栏的最后（见下面的 orderAlbum）。
+    const header = board.createDiv({ cls: 'vinyl-player-header' });
+    // 选取专辑：翻转区的开关（只留图标 —— 用户不要文字；再点一下转回唱机卡）
+    const pickBtn = header.createEl('button', { cls: 'vinyl-btn-wide vinyl-pick-album' });
+    setIcon(pickBtn, 'disc-3');
+    this.bindLabel(() => {
+      pickBtn.setAttribute('aria-label', t('player.pickAlbum'));
     });
-    // 专辑队列模式开关（默认关）：开着时点专辑墙上的专辑是排队，不是换碟。
-    // 必须建在「选择专辑」之前 —— 顶部这一行的顺序就是创建顺序。
-    const queueModeBtn = header.createEl('button', { cls: 'vinyl-btn vinyl-btn-small' });
+    pickBtn.addEventListener('click', () => this.flipTo(this.face === 'picker' ? 'player' : 'picker'));
+    // 专辑队列模式开关（默认关）：开着时点专辑（唱片区 / 专辑墙）是排队，不是换碟
+    const queueModeBtn = header.createEl('button', { cls: 'vinyl-btn-mode vinyl-queue-mode' });
     setIcon(queueModeBtn, 'list-plus');
     queueModeBtn.addEventListener('click', () => this.toggleQueueMode());
     // 播放模式：单次 → 循环 → 随机 循环切换（队列模式下作用于整条列表，见 modeLabelKey）
-    const playModeBtn = header.createEl('button', { cls: 'vinyl-btn vinyl-btn-small' });
+    const playModeBtn = header.createEl('button', { cls: 'vinyl-btn-mode vinyl-play-mode' });
     setIcon(playModeBtn, PLAY_MODE_ICON.once);
     playModeBtn.addEventListener('click', () => this.cyclePlayMode());
 
-    // 设备面板（配色见 .vinyl-deck 与 .is-deck-*）
-    const deck = c.createDiv({ cls: 'vinyl-deck' });
+    // 翻转区（②+③）：只有这一区翻面（左转 90°）—— 正面 = 唱机卡 + 唱放卡，背面 = 唱片区。
+    // 按键卡、Vinyl order、队列都留在板上不动（用户要求「其他不要变」）。
+    const flip = board.createDiv({ cls: 'vinyl-flip' });
+    const flipInner = flip.createDiv({ cls: 'vinyl-flip-inner' });
+    const deckFace = flipInner.createDiv({ cls: 'vinyl-flip-face is-deck' });
+    const crateFace = flipInner.createDiv({ cls: 'vinyl-flip-face is-crate' });
 
-    // 转盘：外层 discOuter 承接入场动画，内层 vinyl 承载 CSS 旋转（分离互不冲突）
+    // 卡②：唱机（设计稿：横向长方形唱机）。配色见 .vinyl-deck 与 .is-deck-*（四套面板配色）
+    const deck = deckFace.createDiv({ cls: 'vinyl-deck' });
+    // 转盘分成两层（用户要「毛毡垫再大」）：盘面层允许垫子 / 唱片长到转盘盒外面去
+    // （竖向溢出到面板的内边距里），只按盒宽裁 —— 唱片的入场仍从盒左缘滑进来；唱臂层照旧整盒裁。
+    // 两层都是绝对定位的覆盖层，不影响布局；几何真值仍以 .vinyl-turntable 的盒子为准（见 core/arm-geometry）。
     const turntable = deck.createDiv({ cls: 'vinyl-turntable' });
-    turntable.createDiv({ cls: 'vinyl-turntable-platter' });
-    const discOuter = turntable.createDiv({ cls: 'vinyl-turntable-disc' });
+    const padLayer = turntable.createDiv({ cls: 'vinyl-turntable-pad' });
+    padLayer.createDiv({ cls: 'vinyl-turntable-platter' });
+    const discOuter = padLayer.createDiv({ cls: 'vinyl-turntable-disc' });
     const vinyl = discOuter.createDiv({ cls: 'vinyl-turntable-vinyl is-empty' });
     const label = vinyl.createDiv({ cls: 'vinyl-turntable-label' });
     const labelImg = label.createEl('img', { attr: { alt: '' }, cls: 'vinyl-hidden' });
     const labelEmpty = label.createDiv({ cls: 'vinyl-turntable-label-empty', text: '♪' });
-    // 唱臂：配重 + 枢轴 + 唱头（直线臂）+ 唱臂支架（不播放时唱头落在这个卡口上）
-    const arm = turntable.createDiv({ cls: 'vinyl-turntable-arm' });
+    // 唱臂：配重 + S 型臂管（内联 SVG）+ 枢轴 + 唱头；另一枚是唱臂支架（不播放时唱头落在卡口上）。
+    // 绘制顺序：臂管夹在枢轴与唱头之间 —— 管子从枢轴座底下钻出来（见 styles.css 的 .vinyl-arm-tube）。
+    // 臂盒子会甩到转盘盒外（转轴在 94%、臂长 49%），所以单独套一层裁剪层。
+    const armLayer = turntable.createDiv({ cls: 'vinyl-turntable-clip' });
+    const arm = armLayer.createDiv({ cls: 'vinyl-turntable-arm' });
     arm.createDiv({ cls: 'vinyl-arm-counterweight' });
+    arm.appendChild(buildArmTube());
     arm.createDiv({ cls: 'vinyl-arm-pivot' });
     arm.createDiv({ cls: 'vinyl-arm-head' });
     turntable.createDiv({ cls: 'vinyl-arm-rest' });
     turntable.createDiv({ cls: 'vinyl-turntable-spindle' });
 
-    // 音量表：参考手绘稿的阶梯矩形，增加格数并收敛高度变化。
-    // 它就当一根长得不一样的调节条用：点到哪一格，那一格（含）之前全亮。
-    const volRow = deck.createDiv({ cls: 'vinyl-vol-row' });
-    const volMeter = volRow.createDiv({ cls: 'vinyl-volume-meter' });
-    const volBars = volMeter.createDiv({ cls: 'vinyl-volume-bars' });
-    const volSegments = Array.from({ length: VOLUME_SEGMENT_COUNT }, (_, i) => {
-      const segment = volBars.createSpan({ cls: 'vinyl-volume-segment' });
-      const level = Math.round((i / (VOLUME_SEGMENT_COUNT - 1)) * VOLUME_SEGMENT_HEIGHT_RANGE);
-      segment.style.setProperty('--segment-height', `${VOLUME_SEGMENT_MIN_HEIGHT + level}px`);
-      segment.style.setProperty('--segment-i', String(i)); // 阶梯波浪的次序（见 styles.css）
-      return segment;
-    });
-    const volSlider = volMeter.createEl('input', {
-      attr: { type: 'range', min: '0', max: '100' },
-      cls: 'vinyl-range-input vinyl-volume-input',
-    });
-    this.bindLabel(() => volSlider.setAttribute('aria-label', t('player.volume')));
-    const applyVolume = (ratio: number) => {
-      const r = clampRatio(ratio);
-      setVolumeSegments(volSegments, r);
-      volSlider.value = String(Math.round(r * 100));
-      this.plugin.engine.setVolume(r);
-    };
-    bindPointerScrub(volMeter, volSlider, {
-      onScrub: applyVolume,
-      // 拖起来才摘掉阶梯波浪的延迟：点一下（跳格）要那串波浪，拖动则一格都不许滞后
-      onDragStart: () => volMeter.addClass('is-scrubbing'),
-      onEnd: () => volMeter.removeClass('is-scrubbing'),
-    });
-    // 键盘（Tab + 方向键）仍走原生 range 的 input —— 指针已经被 pointer-events: none 让开
-    volSlider.addEventListener('input', () => applyVolume(Number(volSlider.value) / 100));
-
-    // 控制圆钮组
-    const controls = deck.createDiv({ cls: 'vinyl-controls' });
-    const prevBtn = controls.createEl('button', { cls: 'vinyl-btn' });
-    const playBtn = controls.createEl('button', { cls: 'vinyl-btn vinyl-btn-primary' });
-    const nextBtn = controls.createEl('button', { cls: 'vinyl-btn' });
-    setIcon(prevBtn, 'skip-back');
-    setIcon(playBtn, 'play');
-    setIcon(nextBtn, 'skip-forward');
-    this.bindLabel(() => prevBtn.setAttribute('aria-label', t('player.prev')));
-    this.bindLabel(() => playBtn.setAttribute('aria-label', t('player.playPause')));
-    this.bindLabel(() => nextBtn.setAttribute('aria-label', t('player.next')));
-    prevBtn.addEventListener('click', () => {
-      void this.plugin.engine.prev();
-    });
-    playBtn.addEventListener('click', () => {
+    // 唱机左下角的播放 / 暂停键（设计稿：长方形，不是圆钮；位置 / 键面见 styles.css 的 .vinyl-deck-play）。
+    // 页面 1 里就这一枚播放键（原先的 ⏮ ▶ ⏭ 圆钮已按设计稿删除）。
+    const deckPlayBtn = turntable.createEl('button', { cls: 'vinyl-deck-play' });
+    // 键面 = 手写体的字标（用户要求：不要那颗三角；第五轮缩成「V-L」这个品牌缩写，不折行）；
+    // 播放状态靠点亮 / 未点亮（见 styles.css 的 .is-playing）—— 字标本身就是这枚键的样子。
+    deckPlayBtn.createSpan({ cls: 'vinyl-deck-play-mark', text: 'V-L' });
+    this.bindLabel(() => deckPlayBtn.setAttribute('aria-label', t('player.playPause')));
+    deckPlayBtn.addEventListener('click', () => {
       void this.plugin.engine.toggle();
     });
-    nextBtn.addEventListener('click', () => {
-      void this.plugin.engine.next();
-    });
+
+    // 卡③：唱放（两行控制条：上进度轨、下音量，版式与设计一致；面板材质与唱机卡共用，见 styles.css）
+    const amp = deckFace.createDiv({ cls: 'vinyl-amp' });
 
     // 歌曲进度：原生 range 只负责键盘，自绘轨道的填充与滑块共用同一坐标系（点即定位）。
-    const progress = deck.createDiv({ cls: 'vinyl-progress' });
+    const progress = amp.createDiv({ cls: 'vinyl-progress' });
     const progressControl = progress.createDiv({ cls: 'vinyl-seek-control' });
     const progressRail = progressControl.createDiv({ cls: 'vinyl-seek-rail' });
     progressRail.createDiv({ cls: 'vinyl-seek-fill' });
@@ -531,36 +609,47 @@ export class VinylPlayerView extends ItemView {
       commitSeek(ratio);
     });
 
-    // 丝印品牌行 + 实际音质读数（源 · 档位，如「网易云 · 较高」；本地音轨只显示来源）
-    const brandRow = deck.createDiv({ cls: 'vinyl-deck-brand-row' });
-    brandRow.createDiv({ cls: 'vinyl-deck-brand', text: 'Vinyl Life' });
-    const qualityEl = brandRow.createDiv({ cls: 'vinyl-quality' });
+    // 音量表：参考手绘稿的阶梯矩形，增加格数并收敛高度变化。
+    // 它就当一根长得不一样的调节条用：点到哪一格，那一格（含）之前全亮。
+    const volRow = amp.createDiv({ cls: 'vinyl-vol-row' });
+    const volMeter = volRow.createDiv({ cls: 'vinyl-volume-meter' });
+    const volBars = volMeter.createDiv({ cls: 'vinyl-volume-bars' });
+    const volSegments = Array.from({ length: VOLUME_SEGMENT_COUNT }, (_, i) => {
+      const segment = volBars.createSpan({ cls: 'vinyl-volume-segment' });
+      const level = Math.round((i / (VOLUME_SEGMENT_COUNT - 1)) * VOLUME_SEGMENT_HEIGHT_RANGE);
+      segment.style.setProperty('--segment-height', `${VOLUME_SEGMENT_MIN_HEIGHT + level}px`);
+      segment.style.setProperty('--segment-i', String(i)); // 阶梯波浪的次序（见 styles.css）
+      return segment;
+    });
+    const volSlider = volMeter.createEl('input', {
+      attr: { type: 'range', min: '0', max: '100' },
+      cls: 'vinyl-range-input vinyl-volume-input',
+    });
+    this.bindLabel(() => volSlider.setAttribute('aria-label', t('player.volume')));
+    const applyVolume = (ratio: number) => {
+      const r = clampRatio(ratio);
+      setVolumeSegments(volSegments, r);
+      volSlider.value = String(Math.round(r * 100));
+      this.plugin.engine.setVolume(r);
+    };
+    bindPointerScrub(volMeter, volSlider, {
+      onScrub: applyVolume,
+      // 拖起来才摘掉阶梯波浪的延迟：点一下（跳格）要那串波浪，拖动则一格都不许滞后
+      onDragStart: () => volMeter.addClass('is-scrubbing'),
+      onEnd: () => volMeter.removeClass('is-scrubbing'),
+    });
+    // 键盘（Tab + 方向键）仍走原生 range 的 input —— 指针已经被 pointer-events: none 让开
+    volSlider.addEventListener('input', () => applyVolume(Number(volSlider.value) / 100));
 
-    // Vinyl order 行：标题 + ✎ 追加感想 + ↺ 恢复发行顺序
-    const orderRow = c.createDiv({ cls: 'vinyl-order-row' });
+    // Vinyl order 行：标题 + 当前专辑名（设计稿：专辑名跟在那一栏的最后）。
+    // 清空队列 / 恢复发行顺序两个按键及其功能已按设计稿删除；「写点什么吧」移到每个专辑名行里（见 renderQueue）。
+    const orderRow = board.createDiv({ cls: 'vinyl-order-row' });
     const queueTitle = orderRow.createDiv({ cls: 'vinyl-queue-title' });
-    // 清空后面的专辑（保留当前这张）：只在队列里不止一张专辑时有意义
-    const clearQueueBtn = orderRow.createEl('button', { cls: 'vinyl-btn vinyl-btn-small' });
-    setIcon(clearQueueBtn, 'list-x');
-    clearQueueBtn.addEventListener('click', () => {
-      this.plugin.engine.keepCurrentAlbum();
-      notice(t('player.queueClearOthers'));
-    });
-    const noteBtn = orderRow.createEl('button', { cls: 'vinyl-btn vinyl-btn-small' });
-    setIcon(noteBtn, 'pencil');
-    // 只设 aria-label：Obsidian 自己会按它渲染样式化提示，再设 title 会同时弹出浏览器原生提示（两个气泡）
-    this.bindLabel(() => noteBtn.setAttribute('aria-label', t('player.appendNote')));
-    noteBtn.addEventListener('click', () => {
-      void this.plugin.appendListeningNote();
-    });
-    // 恢复按钮始终显示（本地专辑也显示：点按只提示不支持，见 restoreOrder）
-    const restoreBtn = orderRow.createEl('button', { cls: 'vinyl-btn vinyl-btn-small' });
-    setIcon(restoreBtn, 'undo-2');
-    // 同上：只留 aria-label，避免「Obsidian 提示 + 原生 title 提示」叠成两个气泡
-    this.bindLabel(() => restoreBtn.setAttribute('aria-label', t('player.restoreOriginal')));
-    restoreBtn.addEventListener('click', () => this.restoreOrder());
+    const orderAlbum = orderRow.createDiv({ cls: 'vinyl-order-album vinyl-marquee' });
+    const orderAlbumText = orderAlbum.createSpan({ cls: 'vinyl-marquee-text' });
+    this.orderAlbumText = orderAlbumText;
 
-    const queueBox = c.createDiv({ cls: 'vinyl-queue' });
+    const queueBox = board.createDiv({ cls: 'vinyl-queue' });
     // 队列点击委托（重建不丢监听）。拖拽与点击共存：拖拽中 / 拖拽刚收尾的 click 一律不当切歌，
     // 否则手一松就会被拖拽尾巴上的 click 切到别的曲子
     queueBox.addEventListener('click', (ev) => {
@@ -600,8 +689,9 @@ export class VinylPlayerView extends ItemView {
     });
 
     this.els = {
-      headerTitle,
-      headerTitleText,
+      flip,
+      flipInner,
+      pickBtn,
       queueModeBtn,
       playModeBtn,
       discOuter,
@@ -612,33 +702,109 @@ export class VinylPlayerView extends ItemView {
       progressSlider,
       progressRail,
       timeEl,
-      prevBtn,
-      playBtn,
-      nextBtn,
+      deckPlayBtn,
       volSlider,
       volSegments,
       queueTitle,
+      orderAlbum,
       queueBox,
-      clearQueueBtn,
-      qualityEl,
     };
+    // 唱片区先只留个空面：懒建（第一次翻过去才扫专辑，打开播放器不必为它扫全库）
+    this.pickerFace = crateFace;
+    this.syncFlipDepth();
     return this.els;
   }
 
-  // 「恢复发行顺序」（Vinyl order 行的 ↺ 按钮）：
-  //   本地专辑按扫出来的文件名顺序播放，那本身就是它的「原有顺序」→ 只提示，不做任何事；
-  //   在线专辑交给引擎就地排回原始顺序（不重新联网取专辑），并清掉存过的自定义顺序。
-  //   队列来源看当前曲目（snapshot().current?.source）；还没开始播（index = -1）时退到队首曲目，
-  //   否则「打开本地专辑但没点播放」会误走在线分支，把本地队列也重排一遍。
-  private restoreOrder() {
-    const snap = this.plugin.engine.snapshot();
-    const source = snap.current?.source || snap.queue[0]?.source;
-    if (source === 'local-vault' || source === 'local-external') {
-      notice(t('player.restoreLocalUnsupported'));
+  // ============ 立方体两面（页面 1 / 页面 2）============
+
+  /** 翻转区翻面：左转 = rotateY(-90deg)（只有②③卡片这一区转，两面跟着转；减小动效时直接到位） */
+  private flipTo(face: 'player' | 'picker') {
+    const els = this.els;
+    if (!els || this.face === face) return;
+    this.face = face;
+    if (face === 'picker' && !this.picker) {
+      // 第一次翻到唱片区才建（并从此常驻：展开态 / 滚动位置在来回翻面时保留）
+      this.picker = new AlbumPicker({
+        app: this.plugin.app,
+        load: () => this.loadPickerEntries(),
+        currentPath: () => this.lastSnapshot?.albumNotePath || undefined,
+        switchTo: (album) => void this.pickAlbum(album),
+        enqueue: (albums) => void this.enqueueAlbums(albums),
+        back: () => this.flipTo('player'),
+      });
+      this.pickerFace?.appendChild(this.picker.el);
+      this.syncFlipDepth(); // 新出现的唱片区按翻转区高算行高（--vinyl-pick-h）
+    }
+    if (face === 'picker') this.picker?.render(); // 每次翻过去都重扫一遍专辑（刚导入的立刻能看到）
+    els.flip.toggleClass('is-crate', face === 'picker');
+    els.flip.toggleClass('is-reduced', prefersReducedMotion());
+    els.pickBtn.toggleClass('is-active', face === 'picker');
+  }
+
+  /** 键盘：在唱片区按 Esc 回播放器（焦点不在唱片箱里时也管用 —— 箱内由唱片区自己处理并阻止冒泡）。 */
+  private onEscape(ev: KeyboardEvent) {
+    if (ev.key !== 'Escape' || this.face !== 'picker') return;
+    ev.preventDefault();
+    if (this.picker?.hasSelection()) {
+      this.picker.clearSelection(); // 有选中先清空，再按一次才回去
       return;
     }
-    this.plugin.engine.restoreOriginalOrder();
-    notice(t('player.restoreDone'));
+    this.flipTo('player');
+  }
+
+  /** 唱片区用：扫描专辑集合（与专辑墙同一套：笔记 → 专辑信息 → 音源角标） */
+  private loadPickerEntries(): PickerEntry[] {
+    const app = this.plugin.app;
+    if (!app) return []; // 极简测试依赖下没有 app：唱片区画空态
+    return findAlbumNotes(app)
+      .map((f) => getAlbumInfo(app, f, { coverFolder: this.plugin.settings.coverFolder }))
+      .filter((a): a is AlbumInfo => !!a)
+      .map((album) => {
+        const src = detectAlbumSources(app, album);
+        return { album, local: src.local, netease: src.netease, qq: src.qq };
+      })
+      .sort((a, b) => a.album.title.localeCompare(b.album.title, 'zh-CN'));
+  }
+
+  /** 唱片区点一张专辑 = 快速换碟：翻回页面 1 → 取碟（播放与否交设置里的「自动播放」）。
+   *  队列模式下不换碟，点一张 = 排一张（与专辑墙同一语义，也留在唱片区方便接着选）。 */
+  private async pickAlbum(album: AlbumInfo) {
+    if (this.plugin.settings.queueMode) {
+      const res = await this.plugin.engine.enqueueAlbum(album);
+      if (res.tracks.length) notice(tf('notice.queuedAlbum', { name: album.title }));
+      return;
+    }
+    // 纯收藏（无任何音源）：与专辑墙一致 —— 打开笔记并提示，不换碟
+    const src = detectAlbumSources(this.plugin.app, album);
+    if (!src.local && !src.netease && !src.qq) {
+      const leaf = this.plugin.app.workspace.getLeaf(false);
+      await leaf.openFile(album.file);
+      notice(t('card.noSource'));
+      return;
+    }
+    // 已经是这张（且队列还在）→ 只翻回去，不重新取碟
+    if (this.lastSnapshot?.albumNotePath === album.path && this.lastSnapshot.queue.length) {
+      this.flipTo('player');
+      return;
+    }
+    this.flipTo('player');
+    try {
+      await this.plugin.engine.loadAlbum(album);
+    } catch (e) {
+      console.warn('[vinyl] 唱片区换碟失败', e);
+    }
+  }
+
+  /** 唱片区多选后「加入队列」：按点选顺序逐张排队（顺序不能乱，故串行 await）。
+   *  队列为空时第一张按普通换碟处理（引擎语义）。 */
+  private async enqueueAlbums(albums: AlbumInfo[]) {
+    const before = this.plugin.engine.snapshot().queue.length;
+    for (const album of albums) {
+      await this.plugin.engine.enqueueAlbum(album);
+    }
+    const after = this.plugin.engine.snapshot().queue.length;
+    // 一张都没排进去（都没音源）时引擎已经各自弹过提示，这里不再重复
+    if (after > before) notice(tf('picker.queued', { n: albums.length }));
   }
 
   // ============ 增量更新 ============
@@ -659,8 +825,8 @@ export class VinylPlayerView extends ItemView {
 
     // 队列（引用变化才重建；当前高亮走 class 切换）
     if (s.queue !== this.renderedQueue) this.rebuildQueue(els, s);
-    // 队列模式开关 / 清空按钮的可见性（设置改了、段数变了都要跟着走）
-    this.syncQueueControls(s.segments.length);
+    // 队列模式开关的当前状态（设置改了、切了开关都要跟着走）
+    this.syncQueueControls();
     // 播放模式按钮：图标随模式变，非默认（单次）时给个高亮色
     if (s.playMode !== this.lastPlayMode) {
       this.lastPlayMode = s.playMode;
@@ -668,30 +834,6 @@ export class VinylPlayerView extends ItemView {
       els.playModeBtn.toggleClass('is-active', s.playMode !== 'once');
     }
     this.queueRows.forEach((row, i) => row.classList.toggle('is-current', i === s.index));
-
-    // 头部（错误并入标题行；值不变不写 DOM）
-    const headerText =
-      s.status === 'error' && s.error
-        ? `⚠ ${s.error}`
-        : s.status === 'loading'
-          ? t('player.loading')
-          : s.albumTitle
-            ? `♪ ${s.albumTitle}`
-            : t('player.title');
-    if (headerText !== this.lastHeaderText) {
-      this.lastHeaderText = headerText;
-      els.headerTitleText.textContent = headerText;
-      els.headerTitle.setAttribute('title', s.albumTitle || t('player.title'));
-      els.headerTitle.toggleClass('is-error', s.status === 'error' && !!s.error);
-    }
-
-    // 实际音质读数（值不变不写 DOM；极高 / 无损给品牌红点缀）
-    const readout = qualityReadout(s);
-    if (readout !== this.lastReadout) {
-      this.lastReadout = readout;
-      els.qualityEl.textContent = readout;
-      els.qualityEl.toggleClass('is-hq', s.quality === 'lossless' || s.quality === 'exhigh');
-    }
 
     // 转盘状态（旋转动画只切 class，不重建节点）
     const spinning = s.status === 'playing';
@@ -736,26 +878,47 @@ export class VinylPlayerView extends ItemView {
       els.timeEl.textContent = timeText;
     }
 
-    // 唱臂姿态（真实唱机关系，见 ARM_* 常量）：不播放归位支架；播放落针并沿侧 A 单调内移。
-    // 取「曲序 + 本曲进度」而非单曲进度：整面唱片上唱针只进不退，换曲不跳回外圈。
-    // loading 也保持落针，避免换曲瞬间唱臂来回摆。
-    const onRecord = (s.status === 'playing' || s.status === 'loading') && s.queue.length > 0;
-    let armAngle = ARM_PARKED;
-    if (onRecord) {
-      const trackRatio = dur > 0 ? Math.min(1, Math.max(0, s.currentTime / dur)) : 0;
-      const sideRatio = Math.min(1, (s.index + trackRatio) / Math.max(1, s.queue.length));
-      armAngle = ARM_OUTER + sideRatio * (ARM_INNER - ARM_OUTER);
+    // 唱臂姿态（设计稿）：未播放专辑 / 暂停 = 姿态 1（归位支架）；
+    // 播放专辑 = 姿态 2（落针），且唱针到唱片圆心的「距离」= 专辑进度（换算见 core/arm-geometry）。
+    // loading（换曲取址的间隙）保持落针，避免唱臂在换曲时来回摆。
+    const posture = armPosture(s.status, s.queue.length);
+    if (posture !== this.lastPosture) {
+      this.lastPosture = posture;
+      els.arm.toggleClass('is-parked', posture === 'park');
     }
-    if (Math.abs(armAngle - this.lastArmAngle) > 0.05) {
+    const armAngle =
+      posture === 'park'
+        ? ARM_PARK_ANGLE
+        : armAngleForProgress(
+            albumProgress({
+              queue: s.queue,
+              index: s.index,
+              albumNotePath: s.albumNotePath,
+              currentTime: s.currentTime,
+              duration: dur,
+            })
+          );
+    // 判据写成「不小于等于」而不是「大于」：首帧 lastArmAngle 是 NaN，用 > 比较永远为假，
+    // 打开视图时正在播放的话唱臂会停在 CSS 默认角上（要等 400ms 后的下一次快照才动）。
+    if (!(Math.abs(armAngle - this.lastArmAngle) <= 0.05)) {
       this.lastArmAngle = armAngle;
       els.arm.style.setProperty('--vinyl-arm-angle', `${armAngle.toFixed(2)}deg`);
     }
 
-    // 播放圆钮图标（状态变化才换）
-    const wantIcon: 'play' | 'pause' = s.status === 'playing' ? 'pause' : 'play';
-    if (wantIcon !== this.playIcon) {
-      this.playIcon = wantIcon;
-      setIcon(els.playBtn, wantIcon);
+    // Vinyl order 行末尾的当前专辑名（设计稿：「专辑名」在那一栏最后；空队列不占位）
+    const orderAlbum = s.albumTitle || '';
+    if (orderAlbum !== this.lastOrderAlbum) {
+      this.lastOrderAlbum = orderAlbum;
+      if (this.orderAlbumText) this.orderAlbumText.textContent = orderAlbum;
+      els.orderAlbum.toggleClass('vinyl-hidden', !orderAlbum);
+    }
+
+    // 播放键的点亮状态（状态变化才写）：唱机左下角那一枚长方形键，键面是「Vinyl」字标，
+    // 播放中点亮、暂停 / 未播放是暗的（图标已按用户要求撤掉）
+    const lit = s.status === 'playing';
+    if (lit !== this.playLit) {
+      this.playLit = lit;
+      els.deckPlayBtn.toggleClass('is-playing', lit);
     }
 
     // 音量（分段电平表；值不变不写。拖动中的本地写入与这里算出的格子一致，回写是幂等的）
@@ -792,7 +955,7 @@ export class VinylPlayerView extends ItemView {
   }
 
   private rebuildQueue(els: PlayerEls, s: PlayerSnapshot) {
-    // 「Vinyl order」是丝印品牌式的固定英文标签（与 'Vinyl Life' 同款）：中英同形，
+    // 「Vinyl order」是丝印品牌式的固定英文标签（与唱机键上的手写体字标同款）：中英同形，
     // 建 i18n 键会撞上「中英不得逐字相同」的词典测试，故保持硬编码。
     els.queueTitle.textContent = 'Vinyl order';
     // 段数变多 = 刚排入新专辑 → 记下来，画完闪一下（只在已经渲染过之后才比较）
@@ -801,8 +964,9 @@ export class VinylPlayerView extends ItemView {
     this.renderQueue(s, grew);
   }
 
-  /** 按「专辑分段」画队列：一段 = 一张专辑（头部 + 它的曲目行）。
-   *  只有一段时不画头部，保持单专辑队列原来的样子。 */
+  /** 按「专辑分段」画队列：一段 = 一张专辑（专辑名行 + 它的曲目行）。
+   *  专辑名行 = 段头：写感想（每个专辑一个）/ 移除整段（只有一张时不给）/ 整段拖拽。
+   *  设计稿：单专辑队列也画段头 —— 「写点什么吧」被搬到专辑名那一栏的最后，只有画出来才够得着。 */
   private renderQueue(s: PlayerSnapshot, flashLast = false) {
     const els = this.els;
     if (!els) return;
@@ -812,6 +976,7 @@ export class VinylPlayerView extends ItemView {
     this.queueBadges = [];
     this.emptyQueueEl = null;
     this.segmentEls = [];
+    this.segmentBtns = [];
     this.renderedQueue = s.queue;
 
     this.renderedSegmentCount = s.segments.length;
@@ -820,24 +985,41 @@ export class VinylPlayerView extends ItemView {
       this.applyQueueLabels();
       return;
     }
-    // 打乱模式下列表已被混排：按「段」分组失去意义（同一张专辑会碎成十几小段，
-    // 每段挂一个重复标题与一个 ✕ 只会误导），所以只画平铺的行
+    // 打乱模式下列表已被混排：按「段」分组失去意义（同一张专辑碎成十几小段，每段挂一个重复标题
+    // 只会误导），故只画平铺的行 + 一条「现在播的是哪张」的行（写感想按钮得有落脚处）
+    if (s.playMode === 'shuffle') {
+      const currentSeg = s.segments.find((x) => x.current);
+      if (currentSeg) {
+        const head = box.createDiv({ cls: 'vinyl-queue-segment-head is-solo' });
+        head.createDiv({
+          text: currentSeg.albumTitle || currentSeg.albumPath,
+          cls: 'vinyl-queue-segment-title',
+        });
+        this.segmentBtns.push({ note: this.pushSegmentNote(head, currentSeg), remove: null, seg: currentSeg });
+      }
+    }
     const multi = s.segments.length > 1 && s.playMode !== 'shuffle';
     for (const seg of s.segments) {
       const segEl = box.createDiv({ cls: 'vinyl-queue-segment' });
       segEl.dataset.start = String(seg.start);
       if (seg.current) segEl.addClass('is-current');
-      if (multi) {
+      if (s.playMode !== 'shuffle') {
         const head = segEl.createDiv({ cls: 'vinyl-queue-segment-head' });
         head.createDiv({ text: seg.albumTitle || seg.albumPath, cls: 'vinyl-queue-segment-title' });
-        const removeBtn = head.createEl('button', { cls: 'clickable-icon vinyl-queue-segment-remove' });
-        setIcon(removeBtn, 'x');
-        removeBtn.addEventListener('click', (ev) => {
-          ev.stopPropagation();
-          this.plugin.engine.removeRange(seg.start, seg.count);
-        });
-        this.bindSegmentDrag(head, seg);
-        this.segmentEls.push({ el: segEl, seg });
+        // 写点什么吧：搬到专辑名那一栏的最后（每个专辑一个，只要列表里有它）
+        const note = this.pushSegmentNote(head, seg);
+        let removeBtn: HTMLButtonElement | null = null;
+        if (multi) {
+          removeBtn = head.createEl('button', { cls: 'clickable-icon vinyl-queue-segment-remove' });
+          setIcon(removeBtn, 'x');
+          removeBtn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            this.plugin.engine.removeRange(seg.start, seg.count);
+          });
+          this.bindSegmentDrag(head, seg);
+        }
+        this.segmentEls.push({ el: segEl, head, seg });
+        this.segmentBtns.push({ note, remove: removeBtn, seg });
       }
       for (let i = seg.start; i < seg.start + seg.count; i++) {
         const track = s.queue[i];
@@ -867,6 +1049,21 @@ export class VinylPlayerView extends ItemView {
       }
     }
     this.applyQueueLabels(); // 行拖拽提示 / 来源角标统一在这里按当前语言写（切语言时由 applyLanguage 重放）
+  }
+
+  /** 段头末尾的「写点什么吧:)」小按键：给这一段那张专辑追加一条感想。
+   *  只设 aria-label（Obsidian 按它渲染样式化提示，再设 title 会叠出两个气泡）；
+   *  按钮在段头里 stopPropagation —— 段头可拖拽，点按钮不该被当成抓取。 */
+  private pushSegmentNote(head: HTMLElement, seg: { albumPath: string; albumTitle: string }): HTMLElement {
+    const btn = head.createEl('button', { cls: 'clickable-icon vinyl-queue-segment-note' });
+    setIcon(btn, 'pencil');
+    btn.setAttribute('aria-label', tf('player.noteAlbum', { name: seg.albumTitle || seg.albumPath }));
+    btn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      void this.plugin.appendListeningNote(seg.albumPath);
+    });
+    btn.addEventListener('pointerdown', (ev) => ev.stopPropagation()); // 别从按钮上起拖整段
+    return btn;
   }
 
   /** 整段拖拽（跨专辑排序）：只认段头作落点，段内单曲拖拽仍走 bindQueueDrag */
@@ -915,13 +1112,12 @@ export class VinylPlayerView extends ItemView {
     target.addClass(after ? 'is-drop-after' : 'is-drop-before');
   }
 
-  /** 队列模式开关与「清空后面的专辑」的当前状态。
+  /** 队列模式开关的当前状态。
    *  update() 与主动改设置的路径都要调 —— 只在 update() 里写的话，刚点完开关会看到状态滞后。 */
-  private syncQueueControls(segmentCount: number) {
+  private syncQueueControls() {
     const els = this.els;
     if (!els) return;
     els.queueModeBtn.toggleClass('is-active', this.plugin.settings.queueMode);
-    els.clearQueueBtn.toggleClass('vinyl-hidden', segmentCount <= 1);
   }
 
   /** 播放模式按钮：切到下一档并弹一条提示（模式名随「队列模式」讲专辑还是讲列表） */
@@ -933,14 +1129,14 @@ export class VinylPlayerView extends ItemView {
     this.applyQueueLabels();
   }
 
-  /** 专辑队列模式开关：改设置 + 提示；关掉时把队列收缩回当前专辑（用户定的语义） */
+  /** 专辑队列模式开关：关掉时队列立即收敛到当前播放专辑。 */
   private toggleQueueMode() {
     const on = !this.plugin.settings.queueMode;
     this.plugin.settings.queueMode = on;
+    if (!on) this.plugin.engine.retainCurrentAlbum();
     void this.plugin.saveSettings();
-    if (!on) this.plugin.engine.keepCurrentAlbum();
     notice(t(on ? 'player.queueModeOn' : 'player.queueModeOff'));
-    this.syncQueueControls(this.renderedSegmentCount);
+    this.syncQueueControls();
     this.applyQueueLabels();
   }
 
@@ -1020,17 +1216,34 @@ export class VinylPlayerView extends ItemView {
     this.endSegmentDrag();
   }
 
-  // 落盘入场（交接 C 阶段）：唱片滑入转盘
+  // 落盘入场（交接 C 阶段）：唱片从左侧飞入转盘（用户要求）。
+  // 三条硬约束：
+  //   ① 动画只碰 transform —— 唱片的居中在 CSS 里用的是独立的 translate 属性（见 styles.css 的
+  //      .vinyl-turntable-disc）。两者写在同一处的话，动画一开就把居中顶掉：唱片会从「左上角对齐
+  //      圆心的位置」冒出来、结束时再跳回圆心（老版就是这么坏的）。
+  //   ② 起手位置要整张在转盘盒外（> 100% 自身宽），否则会看见它凭空出现在盘面上；转盘盒
+  //      overflow: hidden 负责裁掉外面那一段 —— 从盘边滑出来才是「飞入」。
+  //   ③ 缓动分段：长距离段用接近匀速的强减速曲线（起手有速度、中段顺），末段自己收住，
+  //      落地时只留一点点点回弹（scale 1.015 → 1 + 角度归零）。
+  // 内层的唱片旋转（CSS 动画）与外层的这一段互不干扰：两个不同的元素。
   private playEntrance(els: PlayerEls) {
-    els.discOuter.getAnimations().forEach((a) => a.cancel());
+    els.discOuter.getAnimations().forEach((a) => a.cancel()); // 换碟比动画快：先掐掉上一段
     if (prefersReducedMotion()) return; // 减少动态效果：不播入场位移
     els.discOuter.animate(
       [
-        { transform: 'scale(0.3) rotate(-30deg)', opacity: '0' },
-        { transform: 'scale(1.02) rotate(0deg)', opacity: '1', offset: 0.72 },
-        { transform: 'scale(1) rotate(0deg)', opacity: '1' },
+        {
+          transform: 'translateX(-142%) rotate(-26deg) scale(0.9)',
+          offset: 0,
+          easing: 'cubic-bezier(0.25, 0.8, 0.3, 1)', // 起手有速度、一路减速
+        },
+        {
+          transform: 'translateX(-12%) rotate(-2.2deg) scale(1.015)',
+          offset: 0.68,
+          easing: 'cubic-bezier(0.35, 0, 0.25, 1)', // 末段：减速落定
+        },
+        { transform: 'translateX(0) rotate(0deg) scale(1)', offset: 1 },
       ],
-      { duration: 360, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' }
+      { duration: 600, easing: 'linear' } // 分段缓动：每段由该段的 easing 说了算
     );
   }
 
@@ -1038,7 +1251,9 @@ export class VinylPlayerView extends ItemView {
     els.vinyl.classList.remove('is-spinning', 'is-paused');
     els.vinyl.classList.add('is-empty');
     // 唱臂归位到支架（显式写死：CSS 变量可能停在播放中的角度上）
-    els.arm.style.setProperty('--vinyl-arm-angle', `${ARM_PARKED}deg`);
-    this.lastArmAngle = ARM_PARKED;
+    els.arm.style.setProperty('--vinyl-arm-angle', `${ARM_PARK_ANGLE.toFixed(2)}deg`);
+    this.lastArmAngle = ARM_PARK_ANGLE;
+    els.arm.addClass('is-parked');
+    this.lastPosture = 'park';
   }
 }

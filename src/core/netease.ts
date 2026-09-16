@@ -2,7 +2,7 @@
 // 对外方法与 ServerClient 同构，queue / engine / import 无需感知路由细节。
 import { ServerClient, SongUrlResult } from './server-client';
 import { WebClient } from './web-client';
-import type { NeteaseAlbumResponse, NeteaseSearchResponse } from './api-types';
+import type { NeteaseAlbumResponse, NeteaseSearchResponse, SearchPage } from './api-types';
 import { t } from './i18n';
 
 export class NeteaseService {
@@ -42,28 +42,28 @@ export class NeteaseService {
     return this.gateway.songUrl(id, level);
   }
 
-  async searchAlbums(keywords: string): Promise<NeteaseSearchResponse> {
+  async searchAlbums(keywords: string, page?: SearchPage): Promise<NeteaseSearchResponse> {
     if (await this.web.isLoggedIn()) {
       try {
-        return await this.web.searchAlbums(keywords);
+        return await this.web.searchAlbums(keywords, page);
       } catch {
         // 网页会话通道失败 → 落到下面的网关兜底
       }
     }
     await this.ensureGatewayReady();
-    return this.gateway.searchAlbums(keywords);
+    return this.gateway.searchAlbums(keywords, page);
   }
 
-  async searchSongs(keywords: string): Promise<NeteaseSearchResponse> {
+  async searchSongs(keywords: string, page?: SearchPage): Promise<NeteaseSearchResponse> {
     if (await this.web.isLoggedIn()) {
       try {
-        return await this.web.searchSongs(keywords);
+        return await this.web.searchSongs(keywords, page);
       } catch {
         // 网页会话通道失败 → 落到下面的网关兜底
       }
     }
     await this.ensureGatewayReady();
-    return this.gateway.searchSongs(keywords);
+    return this.gateway.searchSongs(keywords, page);
   }
 
   async fetchCover(url: string): Promise<ArrayBuffer> {

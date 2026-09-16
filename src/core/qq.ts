@@ -81,8 +81,12 @@ export class QqService {
     return this.getJson<QqAlbumResponse>('/api/qq/album', { id: mid });
   }
 
-  async search(keywords: string): Promise<QqSearchResponse> {
-    const body = await this.getJson<QqSearchResponse>('/api/qq/search', { keywords });
+  /** QQ 侧按页码翻页（不是 offset）：页大小固定在网关侧，客户端只报第几页 */
+  async search(keywords: string, page = 1): Promise<QqSearchResponse> {
+    const body = await this.getJson<QqSearchResponse>('/api/qq/search', {
+      keywords,
+      page: String(page),
+    });
     if (body.requiresLogin) throw new Error(t('import.qqSearchLoginRequired'));
     return body;
   }

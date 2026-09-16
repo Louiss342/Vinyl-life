@@ -47,10 +47,11 @@ export function trackKey(t: Track): string {
   }
 }
 
-// —— 队列顺序（纯函数：不碰引擎状态，便于单测与持久化复用）——
+// —— 队列顺序（纯函数：不碰引擎状态，便于单测）——
 
 /** 队列重排内核：把 from 处的元素移到结果数组的 to 位（to = 结果下标，先移除再插入）。
- *  越界（from / to 不在 0..length-1）返回原数组副本；任何情况下都不改原数组。 */
+ *  越界（from / to 不在 0..length-1）返回原数组副本；任何情况下都不改原数组。
+ *  只作用于本次会话：拖拽结果不落盘、下次播这张专辑仍是发行顺序。 */
 export function reorderTracks(tracks: Track[], from: number, to: number): Track[] {
   const next = [...tracks];
   if (!Number.isInteger(from) || !Number.isInteger(to)) return next;
@@ -60,22 +61,6 @@ export function reorderTracks(tracks: Track[], from: number, to: number): Track[
   const [moved] = next.splice(from, 1);
   next.splice(to, 0, moved);
   return next;
-}
-
-/** 按持久化的 trackKey 顺序重排队列。
- *  不在 orderKeys 里的曲目（新增 / 改名 / 换了音源）按原相对顺序排在后面——绝不能丢；
- *  orderKeys 里已不存在的键（曲目被删）直接跳过。 */
-export function applyTrackOrder(tracks: Track[], orderKeys: string[]): Track[] {
-  const rest = [...tracks];
-  if (!Array.isArray(orderKeys) || !orderKeys.length) return rest;
-  const out: Track[] = [];
-  for (const key of orderKeys) {
-    if (typeof key !== 'string' || !key) continue;
-    const i = rest.findIndex((t) => trackKey(t) === key);
-    if (i < 0) continue; // 顺序里的曲目已不在队列中
-    out.push(rest.splice(i, 1)[0]);
-  }
-  return out.concat(rest);
 }
 
 /** 播放源显示名（三个来源的唯一出处：队列角标与播放器读数共用）。
@@ -100,24 +85,4 @@ export function trackSourceClass(t: Track): 'is-local' | 'is-net' | 'is-qq' {
 
 export function isLocalTrack(t: Track): boolean {
   return t.source === 'local-vault' || t.source === 'local-external';
-}
-
-// 在线音源「实际拿到」的音质档（接口返回 level，可能低于请求档）→ 显示文案；
-// 本地音轨无此概念（按原文件播放），返回空串。
-// 档位文案不建常量表缓存：那是模块加载期定型，切语言后读数不会变，故在调用时查词典。
-export function qualityText(level?: string): string {
-  if (!level) return '';
-  switch (level) {
-    case 'standard':
-      return t('quality.standard');
-    case 'higher':
-      return t('quality.higher');
-    case 'exhigh':
-      return t('quality.exhigh');
-    case 'lossless':
-      return t('quality.lossless');
-    default:
-      // 未知档位原样显示，不吞信息
-      return level;
-  }
 }

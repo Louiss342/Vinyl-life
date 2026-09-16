@@ -31,6 +31,9 @@ const MUSICU_URL = 'https://u.y.qq.com/cgi-bin/musicu.fcg';
 const ALBUM_URL = 'https://c.y.qq.com/v8/fcg-bin/fcg_v8_album_info_cp.fcg';
 // 经典网页搜索（t=0 单曲 / t=8 专辑）：匿名可用，做 musicu 的兜底（见 classicSearch）
 const CLASSIC_SEARCH_URL = 'https://c.y.qq.com/soso/fcgi-bin/client_search_cp';
+// 搜索结果一页多少条（musicu 的 num_per_page / 经典端点的 n）。插件侧按同样的页大小换算页码 ——
+// 两边必须一致，否则第 2 页会从半截开始漏掉或重复（album-discovery 的 SEARCH_PAGE_SIZE）。
+const QQ_SEARCH_PAGE = 30;
 const LYRIC_URL = 'https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg';
 const OAUTH_URL = 'https://graph.qq.com/oauth2.0/authorize';
 const LOGIN_JUMP_URL = 'https://graph.qq.com/oauth2.0/login_jump';
@@ -784,13 +787,13 @@ function registerQqRoutes(deps) {
   // 经典网页搜索端点（y.qq.com 网页版在用）。与 musicu 的关键差别：**匿名可用** ——
   // musicu 在未登录（或登录态失效）时不报错、只静默返回空列表，用户看到的是「请先登录 QQ 音乐」，
   // 而导入专辑其实只需要元信息。参数分组照端点实测结果给，别混用（new_json 会改列表字段）。
-  async function classicSearch(keywords, jar) {
+  async function classicSearch(keywords, jar, page) {
     const fetchKind = async (t, kind, extra) => {
       const qs = new URLSearchParams({
         w: keywords,
         format: 'json',
-        p: '1',
-        n: '10',
+        p: String(page),
+        n: String(QQ_SEARCH_PAGE),
         t: String(t),
         platform: 'yqq.json',
         needNewCode: '0',
@@ -827,12 +830,15 @@ function registerQqRoutes(deps) {
   route('GET', '/api/qq/search', async ({ query }) => {
     const keywords = String((query && query.keywords) || '').trim().slice(0, 100);
     if (!keywords) return { code: 0, data: { albums: [], songs: [] } };
+    // 页码翻页（客户端只报第几页）：musicu 用 page_num、经典端点用 p，两边页大小都取 QQ_SEARCH_PAGE。
+    // 插件侧按「offset / 页大小 + 1」换算页码，改这里要同步 album-discovery 的 SEARCH_PAGE_SIZE。
+    const page = Math.max(1, Math.floor(Number((query && query.page) || 1)) || 1);
     const common = {
       remoteplace: 'txt.yqq.center',
       searchid: String(Date.now()),
       query: keywords,
-      page_num: 1,
-      num_per_page: 10,
+      page_num: page,
+      num_per_page: QQ_SEARCH_PAGE,
       highlight: 0,
     };
     const jar = readJar();
@@ -865,7 +871,7 @@ function registerQqRoutes(deps) {
     let searched = albums.length > 0 || songs.length > 0;
     if (!searched) {
       try {
-        const classic = await classicSearch(keywords, jar);
+        const classic = await classicSearch(keywords, jar, page);
         albums = classic.albums;
         songs = classic.songs;
         searched = classic.ok;

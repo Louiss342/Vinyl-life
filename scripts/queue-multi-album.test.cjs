@@ -1,4 +1,4 @@
-// 多专辑队列（专辑队列模式）回归：分段 / 追加 / 移除整段 / 只留当前专辑 / 整段重排 / 播报归属。
+// 多专辑队列（专辑队列模式）回归：分段 / 追加 / 移除整段 / 整段重排 / 播报归属。
 // 引擎测试的套路同 queue-order.test.cjs：真 TS → esbuild → node:vm（假 Audio），不需要 Obsidian。
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -180,6 +180,23 @@ test('追加：不动当前播放，只把新专辑接在队尾', async () => {
   assert.equal(engine.segments().length, 2);
 });
 
+test('关闭队列模式：只保留当前正在播放的专辑，播放身份与状态不变', async () => {
+  const { engine } = makeEngine();
+  engine.setQueue([tr(1, A), tr(2, A)], A, 'A 专辑', 'netease');
+  await engine.appendAlbum([tr(3, B), tr(4, B)], B, 'B 专辑', 'netease');
+  await engine.appendAlbum([tr(5, C)], C, 'C 专辑', 'netease');
+  await engine.playIndex(3);
+
+  engine.retainCurrentAlbum();
+
+  const snap = engine.snapshot();
+  assert.deepEqual([...snap.queue].map((x) => x.title), ['T3', 'T4']);
+  assert.equal(snap.index, 1, '当前曲在保留段内的相对位置不变');
+  assert.equal(snap.current.title, 'T4');
+  assert.equal(snap.status, 'playing');
+  assert.deepEqual(segShape(engine), [[B, 0, 2, true]]);
+});
+
 test('追加：队列本来是空的 → 按普通换碟处理（设置允许时才自动播）', async () => {
   const idle = makeEngine();
   await idle.engine.appendAlbum([tr(1, A)], A, 'A 专辑', 'netease');
@@ -218,42 +235,6 @@ test('移除整段：删别人不动播放；删到自己这段就顺延', async
   assert.equal(empty.queue.length, 0);
   assert.equal(empty.index, -1);
   assert.equal(empty.status, 'idle');
-});
-
-test('只留当前专辑：队列收缩成当前段，下标重算', async () => {
-  const { engine } = makeEngine();
-  engine.setQueue([tr(1, A), tr(2, A)], A, 'A 专辑', 'netease');
-  await engine.appendAlbum([tr(3, B), tr(4, B)], B, 'B 专辑', 'netease');
-  await engine.appendAlbum([tr(5, C)], C, 'C 专辑', 'netease');
-  await engine.playIndex(2); // B 段第一首
-
-  engine.keepCurrentAlbum();
-  const s = engine.snapshot();
-  assert.equal(s.queue.length, 2, '只剩 B 段');
-  assert.deepEqual(segShape(engine), [[B, 0, 2, true]]);
-  assert.equal(s.index, 0, '下标按段内位置重算');
-  assert.equal(s.current.title, 'T3');
-  assert.equal(s.status, 'playing', '音频不动，继续播');
-});
-
-test('只留当前专辑（打乱之后）：按专辑路径保留全部曲目，不是按「段」', async () => {
-  const { engine } = makeEngine({ random: () => 0 });
-  engine.setQueue([tr(1, A), tr(2, A)], A, 'A 专辑', 'netease');
-  await engine.appendAlbum([tr(3, B), tr(4, B)], B, 'B 专辑', 'netease');
-  await engine.playIndex(1); // 当前在 A 段
-  engine.cyclePlayMode();
-  engine.cyclePlayMode(); // → shuffle：A/B 交错，段会碎成好几截
-
-  assert.ok(engine.segments().length > 2, '前提：打乱后确实碎成多段');
-  engine.keepCurrentAlbum(); // 关开关 / 清空后面的专辑走的都是它
-  const s = engine.snapshot();
-  assert.equal(s.queue.length, 2, 'A 的两首都要留下（不是只留碎出来的那一截）');
-  assert.deepEqual(
-    [...new Set(s.queue.map((x) => x.albumNotePath))],
-    [A],
-    '只剩当前专辑'
-  );
-  assert.equal(s.current.title, 'T2', '当前曲目仍是同一首');
 });
 
 test('整段重排：跨专辑拖动整段，当前曲目仍然是同一首', async () => {

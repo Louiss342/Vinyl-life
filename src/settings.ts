@@ -89,9 +89,6 @@ export interface VinylSettings {
   playMode: PlayMode;
   /** 播放统计（次数/最近播放，仅存本插件 data.json，不写笔记） */
   stats: VinylStats;
-  /** 每张专辑记住自己的自定义队列顺序（专辑笔记路径 → trackKey 顺序）。
-   *  只影响「下次播这张专辑时的排列」，不是「重启后恢复整条队列」 */
-  queueOrder: Record<string, string[]>;
 }
 
 export const DEFAULT_SETTINGS: VinylSettings = {
@@ -116,21 +113,7 @@ export const DEFAULT_SETTINGS: VinylSettings = {
   shelfProps: [...DEFAULT_SHELF_PROPS],
   shelfPropLabels: {},
   stats: EMPTY_STATS,
-  queueOrder: {},
 };
-
-/** data.json → queueOrder。脏数据一律丢弃：非对象容器 / 非数组值 / 数组里的非字符串项；
- *  返回全新对象（不与 DEFAULT_SETTINGS 共享引用，防就地改写污染默认值）。 */
-export function normalizeQueueOrder(raw: unknown): Record<string, string[]> {
-  const out: Record<string, string[]> = {};
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
-  for (const [albumPath, keys] of Object.entries(raw as Record<string, unknown>)) {
-    if (!albumPath || !Array.isArray(keys)) continue;
-    const clean = keys.filter((k): k is string => typeof k === 'string' && !!k);
-    if (clean.length) out[albumPath] = clean; // 空顺序 = 没存过，不留空壳
-  }
-  return out;
-}
 
 /** data.json → lastPlayback。脏数据一律丢弃（缺字段 / 类型不对 / 负数位置）；没有有效记录返回 undefined。 */
 export function normalizeLastPlayback(raw: unknown): LastPlayback | undefined {
@@ -239,6 +222,7 @@ const DECK_LABEL_KEYS: Record<DeckStyle, string> = {
   walnut: 'settings.deckWalnut',
   shell: 'settings.deckShell',
   black: 'settings.deckBlack',
+  coral: 'settings.deckCoral',
 };
 
 const RECORD_LABEL_KEYS: Record<RecordColor, string> = {
@@ -643,9 +627,10 @@ export class VinylSettingTab extends PluginSettingTab {
   // ============ 登录状态行 ============
 
   /** 状态行：控件区放状态文案，行渲染后异步回填 —— 先渲染设置项再取状态，
-   *  两个平台并行检测，避免一个慢源阻塞另一个。 */
+   *  两个平台并行检测，避免一个慢源阻塞另一个。
+   *  行说明（账号与网关连通性）刻意不写：状态就在控件区，再来一行只是重复。 */
   private statusRow(parent: HTMLElement, platform: 'netease' | 'qq'): void {
-    row(parent, t('settings.loginStatus'), t('settings.loginStatusDesc'), (s) => {
+    row(parent, t('settings.loginStatus'), '', (s) => {
       s.settingEl.addClass('vinyl-auth-setting');
       const el = s.controlEl.createDiv({ cls: 'vinyl-auth-status' });
       if (platform === 'netease') {
@@ -693,14 +678,14 @@ export class VinylSettingTab extends PluginSettingTab {
           : t('settings.notLoggedIn'),
       cls: 'vinyl-auth-primary',
     });
-    el.createSpan({
-      text: st.loggedIn
-        ? `Cookie ${(st.cookieBytes / 1024).toFixed(1)} KB`
-        : st.serverOk
-          ? t('settings.gatewayOk')
-          : t('settings.gatewayDown'),
-      cls: 'vinyl-auth-meta',
-    });
+    // 已登录就只留账号徽标：Cookie 体积是排查用的诊断值，不进用户界面。
+    // 未登录才补一行网关状态 —— 登录失败时它能回答「是不是网关没起来」。
+    if (!st.loggedIn) {
+      el.createSpan({
+        text: st.serverOk ? t('settings.gatewayOk') : t('settings.gatewayDown'),
+        cls: 'vinyl-auth-meta',
+      });
+    }
   }
 
   /** QQ 音乐登录态回填（同上）。 */
@@ -735,14 +720,13 @@ export class VinylSettingTab extends PluginSettingTab {
           : t('settings.notLoggedIn'),
       cls: 'vinyl-auth-primary',
     });
-    el.createSpan({
-      text: st.loggedIn
-        ? `Cookie ${(st.cookieBytes / 1024).toFixed(1)} KB`
-        : st.serverOk
-          ? t('settings.gatewayOk')
-          : t('settings.gatewayDown'),
-      cls: 'vinyl-auth-meta',
-    });
+    // 与网易云同一取舍：登录后不再报 Cookie 体积，只在未登录时报网关状态。
+    if (!st.loggedIn) {
+      el.createSpan({
+        text: st.serverOk ? t('settings.gatewayOk') : t('settings.gatewayDown'),
+        cls: 'vinyl-auth-meta',
+      });
+    }
   }
 
   /** 登录状态只用结构化类表达，不把对号 / 叉号写进可见文案。 */

@@ -7,7 +7,6 @@ import {
   VinylSettingTab,
   normalizeLastPlayback,
   normalizePlayMode,
-  normalizeQueueOrder,
   normalizeVolume,
 } from './settings';
 import { ServerManager } from './core/server-manager';
@@ -53,7 +52,8 @@ import {
 } from './import';
 import { AlbumImportModal, LocalImportModal } from './views/import-modal';
 import { DeleteAlbumModal } from './views/delete-album-modal';
-import { collectAlbumDeleteTargets, deleteAlbumAssets } from './delete';
+import { DeleteBatchModal } from './views/delete-batch-modal';
+import { collectAlbumBatchDeleteTargets, deleteAlbumBatchAssets } from './delete';
 import { setLanguage, t, tf } from './core/i18n';
 import { ensureStats, recordTrackPlay } from './core/stats';
 import { Track, trackKey } from './core/track';
@@ -137,11 +137,6 @@ export default class VinylLifePlugin extends Plugin {
       settings: () => this.settings,
       onTrackPlay: (track, albumPath, albumTitle) =>
         this.recordPlay(track, albumPath, albumTitle),
-      // 队列自定义顺序：读设置（没存过 = undefined，按原顺序播）/ 拖拽后写入并防抖落盘 /
-      // 「恢复发行顺序」后删掉该专辑的条目（下一步再播这张专辑即回到自然顺序）
-      savedOrder: (albumPath) => this.settings.queueOrder[albumPath],
-      onQueueOrderChange: (albumPath, keys) => this.rememberQueueOrder(albumPath, keys),
-      onQueueOrderClear: (albumPath) => this.forgetQueueOrder(albumPath),
       // 播放模式是持久设置：引擎启动时读一次，之后由引擎自己维护
       playMode: () => this.settings.playMode,
     });
@@ -236,8 +231,6 @@ export default class VinylLifePlugin extends Plugin {
     // 且浅拷贝会让设置与 DEFAULT_SETTINGS 共享引用（push 即污染默认值）；归一化同时完成旧 boolean 结构迁移
     this.settings.shelfProps = normalizeShelfProps(data?.shelfProps);
     this.settings.shelfPropLabels = normalizeShelfPropLabels(data?.shelfPropLabels);
-    // 队列自定义顺序：非对象 / 非字符串数组一律丢弃（data.json 可能被手改或来自旧版本）
-    this.settings.queueOrder = normalizeQueueOrder(data?.queueOrder);
     // 音量与上次播放位置：脏数据一律回落（data.json 可能被手改或来自旧版本）
     this.settings.volume = normalizeVolume(data?.volume);
     this.settings.lastPlayback = normalizeLastPlayback(data?.lastPlayback);
@@ -472,32 +465,52 @@ export default class VinylLifePlugin extends Plugin {
     new DeleteAlbumModal(this.app, this, album).open();
   }
 
-  // 执行删除：连带资产（可选）→ 笔记 → 统计 → 播放态复位
-  async deleteAlbum(album: AlbumInfo, opts: { audio: boolean; cover: boolean }) {
-    const targets = collectAlbumDeleteTargets(this.app, album);
-    const removed = await deleteAlbumAssets(this.app, targets, opts);
-    // 笔记可能已被外部删除/改名（卡片是快照）→ 存在才删，其余清理照旧
-    if (this.app.vault.getAbstractFileByPath(album.path) instanceof TFile) {
-      await this.app.fileManager.trashFile(album.file);
+  // 专辑墙「批量删除」入口（选择模式 → 确认弹窗）；onDeleted 供视图在删完后退出选择模式
+  openDeleteAlbums(albums: AlbumInfo[], onDeleted?: () => void) {
+    new DeleteBatchModal(this.app, this, albums, onDeleted).open();
+  }
+
+  // 执行删除：连带资产（可选）→ 笔记 → 统计 → 播放态复位。
+  // 单张与批量共用这一条路径：批量时同批专辑互相视为「不存在」，
+  // 它们共用的音频目录才不会被误判成「还有别张在用」而留下（见 collectAlbumBatchDeleteTargets）。
+  async deleteAlbums(albums: AlbumInfo[], opts: { audio: boolean; cover: boolean }) {
+    if (!albums.length) return;
+    const targets = collectAlbumBatchDeleteTargets(this.app, albums);
+    const removed = await deleteAlbumBatchAssets(this.app, targets, opts);
+    let statsChanged = false;
+    for (const album of albums) {
+      // 笔记可能已被外部删除/改名（卡片是快照）→ 存在才删，其余清理照旧
+      if (this.app.vault.getAbstractFileByPath(album.path) instanceof TFile) {
+        await this.app.fileManager.trashFile(album.file);
+      }
+      if (this.settings.stats.albums[album.path]) {
+        delete this.settings.stats.albums[album.path];
+        statsChanged = true;
+      }
     }
-    if (this.settings.stats.albums[album.path]) {
-      delete this.settings.stats.albums[album.path];
-      await this.saveSettings();
-    }
-    if (this.engine.snapshot().albumNotePath === album.path) this.engine.clear();
+    if (statsChanged) await this.saveSettings();
+    const current = this.engine.snapshot().albumNotePath;
+    if (current && albums.some((a) => a.path === current)) this.engine.clear();
+    const assets = removed ? tf('notice.albumDeletedAssets', { n: removed }) : '';
     notice(
-      tf('notice.albumDeleted', { title: album.title }) +
-        (removed ? tf('notice.albumDeletedAssets', { n: removed }) : '')
+      albums.length === 1
+        ? tf('notice.albumDeleted', { title: albums[0].title }) + assets
+        : tf('notice.albumsDeleted', { n: albums.length }) + assets
     );
   }
 
-  // 感想联动：在播放中的专辑笔记正文末尾追加时间戳条目并定位光标
-  async appendListeningNote() {
+  async deleteAlbum(album: AlbumInfo, opts: { audio: boolean; cover: boolean }) {
+    await this.deleteAlbums([album], opts);
+  }
+
+  // 感想联动：在目标专辑笔记正文末尾追加时间戳条目并定位光标。
+  // albumPath 缺省 = 正在播放的那张（命令面板等旧入口）；队列里每张专辑的小按钮会传自己的路径。
+  async appendListeningNote(albumPath?: string) {
     const snap = this.engine.snapshot();
-    const albumPath = snap.albumNotePath;
-    const file = albumPath ? this.app.vault.getAbstractFileByPath(albumPath) : null;
+    const target = albumPath || snap.albumNotePath;
+    const file = target ? this.app.vault.getAbstractFileByPath(target) : null;
     if (!(file instanceof TFile)) {
-      notice(t('notice.noPlayingAlbum'));
+      notice(t('notice.noAlbumNote'));
       return;
     }
     const d = new Date();
@@ -505,7 +518,10 @@ export default class VinylLifePlugin extends Plugin {
     const ts = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(
       d.getHours()
     )}:${pad(d.getMinutes())}`;
-    const line = tf('note.listeningLine', { ts, title: snap.current?.title ?? '' });
+    // 行里的曲名只有「正在播这张专辑」时才有意义；否则退回专辑名（笔记文件名即专辑名）
+    const playingThis = !!snap.albumNotePath && snap.albumNotePath === target;
+    const title = playingThis ? snap.current?.title ?? '' : file.basename;
+    const line = tf('note.listeningLine', { ts, title });
     const content = await this.app.vault.read(file);
     const newContent = content.trimEnd() + (content.trim() ? '\n\n' : '') + line + '\n';
     await this.app.vault.modify(file, newContent);
@@ -551,23 +567,6 @@ export default class VinylLifePlugin extends Plugin {
       track.title
     );
     this.scheduleStatsSave();
-  }
-
-  /** 队列拖拽重排后的持久化写入口（按专辑笔记路径记顺序；与统计共用 5 秒防抖落盘） */
-  rememberQueueOrder(albumPath: string, orderKeys: string[]) {
-    if (!albumPath) return;
-    this.settings.queueOrder = { ...this.settings.queueOrder, [albumPath]: [...orderKeys] };
-    this.scheduleStatsSave(); // saveSettings 会落整份设置，不必另起定时器
-  }
-
-  /** 「恢复发行顺序」后的持久化写入口：删掉该专辑存过的自定义顺序（与统计共用 5 秒防抖落盘）。
-   *  没存过条目就直接返回（不白写盘）；本地专辑走不到这里（视图侧已按来源拦下）。 */
-  forgetQueueOrder(albumPath: string) {
-    if (!albumPath || !(albumPath in this.settings.queueOrder)) return;
-    const rest = { ...this.settings.queueOrder };
-    delete rest[albumPath];
-    this.settings.queueOrder = rest;
-    this.scheduleStatsSave(); // saveSettings 会落整份设置，不必另起定时器
   }
 
   private statsSaveTimer: number | null = null;

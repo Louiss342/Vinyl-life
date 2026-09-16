@@ -19,6 +19,17 @@ export function sourceLabel(s: ActiveSource): string {
   return sourceName(s);
 }
 
+/** 队列里排着的专辑（去重；正在播的那张也在其中）。
+ *  专辑墙靠它决定哪些唱片该「离墙」：进了列表的专辑，墙上就不该还摆着 ——
+ *  退出列表模式（队列收敛回当前专辑）时集合缩小，被移出的那几张走放回动画（见 shelf-view.updatePlaying）。 */
+export function queuedAlbumPaths(queue: Track[]): Set<string> {
+  const paths = new Set<string>();
+  for (const track of queue) {
+    if (track.albumNotePath) paths.add(track.albumNotePath);
+  }
+  return paths;
+}
+
 export interface BuildQueueResult {
   tracks: Track[];
   resolvedSource: QueueSource;

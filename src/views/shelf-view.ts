@@ -1,5 +1,7 @@
 // 专辑墙视图（自绘 ItemView）：
-//   工具栏：标题计数 / 搜索（防抖）/ 刷新 / 排序 / 音源筛选 / 卡片属性 / 导入专辑 / 导入本地音频
+//   工具栏：悬浮圆角长条 + 抽屉 —— 常态只有「专辑墙（N 张）」把手，点开才露出
+//   搜索（防抖）/ 刷新 / 排序 / 音源筛选 / 卡片属性 / 批量删除 / 导入专辑 / 导入本地音频
+//   批量删除：进入选择模式后点卡片勾选（Shift 连选），底部动作条确认删除（Esc 退出）
 //   点击卡片 = 黑胶交接；拖拽音频入库；播放中卡片高亮 + 唱片离墙。
 import {
   ItemView,
@@ -21,6 +23,8 @@ import {
   hasAlbumTag,
 } from '../core/album-index';
 import { DISC_DIRECTIONS, discTransform } from '../core/disc-motion';
+import { queuedAlbumPaths } from '../core/queue';
+import { animateDiscLiftOff } from '../animation/handoff';
 import { RECORD_COLORS, recordClass } from '../core/appearance';
 import {
   collectShelfPropKeys,
@@ -30,6 +34,7 @@ import {
   resolveDropIndex,
   toggleShelfProp,
 } from '../core/shelf-props';
+import { rangeInList, toggleInList } from '../core/multi-select';
 import { collectDroppedFiles, droppedRootName, isAudioFile, isImageFile, notice, prefersReducedMotion } from '../util';
 // 手绘笔触用 roughjs（Excalidraw 内部同款引擎）。只引 SVG 那一支：canvas 渲染器用不上，
 // 直接引包入口会把它一起打进来（实测多 2 KB）。线宽 / 虚线等公共参数见 hand-drawn.ts。
@@ -138,6 +143,20 @@ export class VinylShelfView extends ItemView {
   private state: ShelfViewState = { query: '', sort: 'title-asc', sourceFilter: 'all' };
   private toolbarTitle: HTMLElement | null = null;
   private toolbarEl: HTMLElement | null = null;
+  private toolbarToggle: HTMLButtonElement | null = null; // 抽屉把手（空墙时没有：固定展开）
+  private drawerOpen = false; // 抽屉：常态收起（只露计数），点一下弹出任务栏
+  private drawerForced = false; // 空墙：抽屉固定展开（教程要指着导入按钮），把手退化成纯标题
+  // 批量删除（选择模式）：点卡片 = 选 / 取消选，Shift = 连选，Esc 退出
+  private batch: { active: boolean; selection: string[]; anchor: string } = {
+    active: false,
+    selection: [],
+    anchor: '',
+  };
+  private batchBtn: HTMLElement | null = null; // 工具栏里的「批量删除」入口
+  private batchBarEl: HTMLElement | null = null; // 底部动作条
+  private batchCountEl: HTMLElement | null = null;
+  private batchAllBtn: HTMLButtonElement | null = null; // 全选 / 清空（同一枚，文案与图标随状态换）
+  private batchDeleteBtn: HTMLButtonElement | null = null;
   private gridHost: HTMLElement | null = null;
   private importGroupEl: HTMLElement | null = null; // 工具栏最后两个按钮（导入专辑 / 导入本地音频）
   private propsPopover: HTMLElement | null = null;
@@ -251,13 +270,20 @@ export class VinylShelfView extends ItemView {
   /** 键盘等价：卡片上 Enter / 空格 = 点击（role=button 的常规语义）。
    *  卡片内部没有输入控件，所以不用区分按在卡片里的哪个位置。 */
   private onShelfKeydown(ev: KeyboardEvent) {
-    if (ev.key !== 'Enter' && ev.key !== ' ' && ev.key !== 'Spacebar') return;
-    const el = ev.target as HTMLElement | null;
-    if (!el || typeof el.closest !== 'function') return;
-    const card = el.closest<HTMLElement>('.vinyl-shelf-card');
-    if (!card) return;
-    ev.preventDefault(); // 空格默认会滚动面板
-    card.click();
+    if (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Spacebar') {
+      const el = ev.target as HTMLElement | null;
+      if (!el || typeof el.closest !== 'function') return;
+      const card = el.closest<HTMLElement>('.vinyl-shelf-card');
+      if (!card) return;
+      ev.preventDefault(); // 空格默认会滚动面板
+      card.click();
+      return;
+    }
+    // 选择模式：Esc 退出（与播放器唱片区同一处手势，别让用户找半天出口）
+    if (ev.key === 'Escape' && this.batch.active) {
+      ev.preventDefault();
+      this.exitBatch();
+    }
   }
 
   private scheduleRefresh() {
@@ -303,9 +329,20 @@ export class VinylShelfView extends ItemView {
     c.addClass('vinyl-shelf');
     this.applyAppearance();
     this.cardEls.clear();
+    // 工具栏 / 动作条的元素随旧 DOM 一起没了：先把引用清掉，免得重建间隙里的回调摸到 detached 节点
+    this.toolbarEl = null;
+    this.toolbarToggle = null;
+    this.toolbarTitle = null;
+    this.batchBtn = null;
+    this.batchBarEl = null;
+    this.batchCountEl = null;
+    this.batchAllBtn = null;
+    this.batchDeleteBtn = null;
     this.renderToolbar(c);
     this.gridHost = c.createDiv({ cls: 'vinyl-shelf-grid-host' });
     this.renderGrid();
+    this.renderBatchBar(c);
+    this.syncBatch(); // 重建后再把选择模式的整体状态铺回去（卡片是新 DOM）
   }
 
   /** 卡片属性变更后的就地刷新（main.refreshShelfProps 广播给所有专辑墙视图）：
@@ -331,10 +368,36 @@ export class VinylShelfView extends ItemView {
     );
   }
 
+  // 工具栏 = 悬浮圆角长条 + 抽屉（样式见 styles.css 的「专辑墙视图」段）：
+  //   常态只有一枚「专辑墙（N 张）⌄」把手，点开才露出搜索 / 各功能按钮（任务栏）。
+  //   空墙例外：教程那张图上虚线箭头指着导入按钮，抽屉固定展开，把手退化成纯标题。
   private renderToolbar(c: HTMLElement) {
     const bar = c.createDiv({ cls: 'vinyl-shelf-toolbar' });
     this.toolbarEl = bar; // 教程层要量它的高度（窄视图工具栏换行时别被压住）
-    this.toolbarTitle = bar.createDiv({ cls: 'vinyl-shelf-toolbar-title' });
+    this.drawerForced = !this.entries.length;
+    if (this.drawerForced || this.drawerOpen) bar.addClass('is-open');
+
+    // 抽屉把手：标题计数（+ 展开态雪佛龙）。forceOpen 时是 div —— 没有可点的东西，别做成假按钮。
+    // 箭头是横向的：抽屉朝右铺开，收起时朝右（点它向右展开），展开后转 180° 朝左（点它收回来）
+    const head = this.drawerForced
+      ? bar.createDiv({ cls: 'vinyl-shelf-toolbar-toggle is-static' })
+      : bar.createEl('button', { cls: 'vinyl-shelf-toolbar-toggle' });
+    this.toolbarToggle = this.drawerForced ? null : (head as HTMLButtonElement);
+    this.toolbarTitle = head.createDiv({ cls: 'vinyl-shelf-toolbar-title' });
+    if (this.toolbarToggle) {
+      const chevron = head.createSpan({ cls: 'vinyl-shelf-toggle-chevron' });
+      setIcon(chevron, 'chevron-right');
+      this.toolbarToggle.setAttribute('aria-expanded', String(this.drawerOpen));
+      this.toolbarToggle.addEventListener('click', () => {
+        this.drawerOpen = !this.drawerOpen;
+        this.syncDrawer();
+      });
+    }
+
+    // 任务栏的控件直接平铺在条上（不再套一层内层 flex 容器）：嵌套的「换行 flex」会让 Chromium
+    // 把整条的 max-content 算小 —— 展开后明明放得下，导入组还是被挤到第二行（实测 977px 宽的
+    // 视图里整条只量到 589px，2 行）。平铺后按真实内容量宽，只在真的放不下时才换行。
+    // 收起时的隐藏 / 展开时的入场动画都按「条的直接子元素」写（见 styles.css）。
 
     // 搜索（防抖 200ms，只重建网格保持输入焦点）
     const searchWrap = bar.createDiv({ cls: 'vinyl-shelf-search' });
@@ -351,7 +414,7 @@ export class VinylShelfView extends ItemView {
       }, 200);
     });
 
-    // 按钮都建在 host 里：前四个直接进工具栏，最后两个（导入）先进一个组 ——
+    // 按钮都建在 host 里：前四个 + 批量删除直接进任务栏，最后两个（导入）先进一个组 ——
     // 空态教程的虚线圈要圈住这一组（见 buildTutorial / layoutTutorial）
     let host: HTMLElement = bar;
     const mk = (icon: string, title: string, fn: (ev: MouseEvent) => void) => {
@@ -367,10 +430,132 @@ export class VinylShelfView extends ItemView {
     mk('arrow-up-down', t('shelf.sort'), (ev) => this.showSortMenu(ev));
     mk('filter', t('shelf.filter'), (ev) => this.showFilterMenu(ev));
     mk('sliders-horizontal', t('shelf.props'), (ev) => this.showPropsPopover(ev));
+    // 批量删除：没有专辑可删时不出现（空墙只有一个出路 —— 导入）
+    this.batchBtn = this.entries.length
+      ? mk('trash-2', t('shelf.batchDelete'), () => this.toggleBatch())
+      : null;
+    if (this.batchBtn) this.batchBtn.setAttribute('aria-pressed', 'false');
     host = bar.createDiv({ cls: 'vinyl-shelf-import-group' });
     this.importGroupEl = host;
     mk('cloud-download', t('shelf.importAlbum'), () => this.plugin.openAlbumImport());
     mk('upload', t('shelf.importAudio'), () => this.plugin.openLocalImport());
+  }
+
+  /** 抽屉把手的状态回写（展开 / 收起 + 读屏状态 + 提示文案），不动 DOM 结构。
+   *  计数文案由 renderGrid 写好后调这里刷新 aria-label（筛选态下数字会变）。 */
+  private syncDrawer() {
+    const open = this.drawerForced || this.drawerOpen;
+    this.toolbarEl?.toggleClass('is-open', open);
+    if (!this.toolbarToggle) return; // 空墙：固定展开，没有把手
+    this.toolbarToggle.setAttribute('aria-expanded', String(open));
+    this.toolbarToggle.setAttribute(
+      'aria-label',
+      `${this.toolbarTitle?.textContent ?? ''}｜${t(open ? 'shelf.collapse' : 'shelf.expand')}`
+    );
+  }
+
+  // ============ 批量删除（选择模式）============
+  // 入口在工具栏；进模式后卡片变成「勾选框」：点 = 选 / 取消选、Ctrl / ⌘ 同义、Shift = 连选，
+  // 手势原语与播放器唱片区共用（core/multi-select）。底部浮出一条动作条（已选计数 / 全选 / 删除 / 退出）。
+
+  private toggleBatch() {
+    if (this.batch.active) this.exitBatch();
+    else this.enterBatch();
+  }
+
+  private enterBatch() {
+    if (!this.entries.length) return;
+    this.batch = { active: true, selection: [], anchor: '' };
+    this.syncBatch();
+  }
+
+  /** 退出选择模式（Esc / 动作条退出按钮 / 删完收工都走这里） */
+  private exitBatch() {
+    if (!this.batch.active) return;
+    this.batch = { active: false, selection: [], anchor: '' };
+    this.syncBatch();
+  }
+
+  /** 当前显示的专辑路径（按显示顺序）：Shift 连选 / 全选都以「眼前看到的」为准 */
+  private visiblePaths(): string[] {
+    return this.applyViewFilters().map((e) => e.album.path);
+  }
+
+  private pickForBatch(path: string, ev: MouseEvent) {
+    this.batch.selection = ev.shiftKey
+      ? rangeInList(this.batch.selection, this.visiblePaths(), this.batch.anchor || path, path)
+      : toggleInList(this.batch.selection, path);
+    this.batch.anchor = path;
+    this.syncBatch();
+  }
+
+  /** 全选 / 清空（同一枚按钮：视窗里都选上了就切到「清空选择」） */
+  private toggleSelectAll() {
+    const all = this.visiblePaths();
+    const picked = new Set(this.batch.selection);
+    const allPicked = all.length > 0 && all.every((p) => picked.has(p));
+    this.batch.selection = allPicked
+      ? []
+      : [...this.batch.selection, ...all.filter((p) => !picked.has(p))];
+    this.batch.anchor = all.length && !allPicked ? all[all.length - 1] : '';
+    this.syncBatch();
+  }
+
+  private openBatchDelete() {
+    const picked = new Set(this.batch.selection);
+    const albums = this.entries.filter((e) => picked.has(e.album.path)).map((e) => e.album);
+    if (!albums.length) return;
+    this.plugin.openDeleteAlbums(albums, () => this.exitBatch());
+  }
+
+  /** 底部动作条（选择模式）：居中悬浮的小圆条 —— 与顶部工具栏同一种「浮起来」的观感 */
+  private renderBatchBar(c: HTMLElement) {
+    const bar = c.createDiv({ cls: 'vinyl-shelf-batchbar' });
+    this.batchBarEl = bar;
+    this.batchCountEl = bar.createDiv({ cls: 'vinyl-shelf-batch-count' });
+    const mk = (icon: string, label: string, fn: () => void) => {
+      const b = bar.createEl('button', { cls: 'vinyl-btn vinyl-btn-small' });
+      setIcon(b, icon);
+      b.setAttribute('aria-label', label);
+      b.addEventListener('click', fn);
+      return b;
+    };
+    this.batchAllBtn = mk('list-checks', t('batch.selectAll'), () => this.toggleSelectAll());
+    this.batchDeleteBtn = mk('trash-2', t('batch.delete'), () => this.openBatchDelete());
+    this.batchDeleteBtn.addClass('is-danger');
+    mk('x', t('batch.exit'), () => this.exitBatch());
+  }
+
+  /** 选择模式的整体状态回写：进入 / 退出、卡片勾选态、动作条、工具栏入口按钮 */
+  private syncBatch() {
+    const active = this.batch.active;
+    const picked = new Set(this.batch.selection);
+    this.contentEl.toggleClass('is-batching', active);
+    for (const [path, el] of this.cardEls) {
+      const on = active && picked.has(path);
+      el.toggleClass('is-batch-selected', on);
+      // 读屏：选择模式里卡片是「开关」，把选中态报出来（退出时撤掉，别把卡片变成开关语义）
+      if (active) el.setAttribute('aria-pressed', on ? 'true' : 'false');
+      else el.removeAttribute('aria-pressed');
+    }
+    if (this.batchBarEl) {
+      this.batchBarEl.toggleClass('is-on', active);
+      if (this.batchCountEl) {
+        this.batchCountEl.textContent = tf('batch.selected', { n: this.batch.selection.length });
+      }
+      if (this.batchDeleteBtn) this.batchDeleteBtn.disabled = !this.batch.selection.length;
+      if (this.batchAllBtn && active) {
+        const all = this.visiblePaths();
+        const allPicked = all.length > 0 && all.every((p) => picked.has(p));
+        setIcon(this.batchAllBtn, allPicked ? 'x' : 'list-checks');
+        this.batchAllBtn.setAttribute('aria-label', t(allPicked ? 'batch.clear' : 'batch.selectAll'));
+      }
+    }
+    if (this.batchBtn) {
+      this.batchBtn.toggleClass('is-active', active);
+      this.batchBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
+      this.batchBtn.setAttribute('aria-label', t(active ? 'batch.exit' : 'shelf.batchDelete'));
+    }
   }
 
   private renderGrid() {
@@ -379,6 +564,14 @@ export class VinylShelfView extends ItemView {
     this.cardEls.clear();
     this.clearTutorial(); // 教程层挂在视图上而不是网格里，要单独收
 
+    // 选择模式：专辑可能已被删掉 / 改名（卡片是快照）→ 选择表里去掉不存在的；
+    // 墙空了就自动退出模式（否则底下还浮着一条「已选 N 张」却没东西可选）
+    if (this.batch.active) {
+      const alive = new Set(this.entries.map((e) => e.album.path));
+      this.batch.selection = this.batch.selection.filter((p) => alive.has(p));
+      if (!this.entries.length) this.batch.active = false;
+    }
+
     const shown = this.applyViewFilters();
     const filtered = !!this.state.query || this.state.sourceFilter !== 'all';
     if (this.toolbarTitle) {
@@ -386,16 +579,19 @@ export class VinylShelfView extends ItemView {
         ? tf('shelf.titleFiltered', { shown: shown.length, total: this.entries.length })
         : tf('shelf.titleWithCount', { n: this.entries.length });
     }
+    this.syncDrawer(); // 计数变了：把手上的 aria-label 跟着换
 
     if (!this.entries.length) {
       // 一张专辑都没有（新装也是这样）：直接给图纸上那份「图文教程」
       this.buildTutorial();
+      this.syncBatch();
       return;
     }
     if (!shown.length) {
       const empty = this.gridHost.createDiv({ cls: 'vinyl-shelf-empty' });
       empty.createDiv({ text: t('shelf.filtered.title'), cls: 'vinyl-shelf-empty-title' });
       empty.createDiv({ text: t('shelf.filtered.hint'), cls: 'vinyl-muted' });
+      this.syncBatch();
       return;
     }
 
@@ -405,6 +601,7 @@ export class VinylShelfView extends ItemView {
     }
     this.wireGridDrop(grid);
     if (this.lastSnap) this.updatePlaying(this.lastSnap);
+    this.syncBatch(); // 卡片是新 DOM：把勾选态铺回去
   }
 
   // ============ 空态教程 ============
@@ -981,11 +1178,20 @@ export class VinylShelfView extends ItemView {
         .createSpan({ text: t('card.collect'), cls: 'vinyl-badge is-collect' });
     }
 
-    card.addEventListener('click', () => {
+    // 选择模式的勾选圈（批量删除）：常态不显示，进模式后每张卡右上角一枚空圈，选中打勾
+    const mark = card.createDiv({ cls: 'vinyl-shelf-card-check' });
+    setIcon(mark, 'check');
+
+    card.addEventListener('click', (ev) => {
+      if (this.batch.active) {
+        this.pickForBatch(album.path, ev);
+        return;
+      }
       void this.playAlbum(e);
     });
     card.addEventListener('contextmenu', (ev) => {
       ev.preventDefault();
+      if (this.batch.active) return; // 选择模式里不弹菜单：右键留给「别的用途」，别把播放 / 删除搅进来
       this.showMenu(e, ev);
     });
     // 拖拽音频到卡片 = 导入到该专辑（落库模式取设置）
@@ -1108,17 +1314,30 @@ export class VinylShelfView extends ItemView {
 
   // ============ 播放状态 ============
 
-  // 播放中高亮：当前队列所属专辑卡片描边 + 标题着色 + 唱片离墙（卡位空出）
+  // 播放中高亮 + 唱片离墙：当前专辑描边着色；队列里排着的专辑（列表模式下常有多张）同样把
+  // 唱片收走 —— 「已在列表里」就是「已经离开墙」。进出队列都带动画：排进来时自己飞离墙面，
+  // 退出列表模式（队列收敛回当前专辑）时被移出的那几张滑回封套。
   private updatePlaying(s: PlayerSnapshot) {
     this.lastSnap = s;
     const current = s.status !== 'idle' && s.albumNotePath ? s.albumNotePath : null;
+    const queued = queuedAlbumPaths(s.queue);
     for (const [path, el] of this.cardEls) {
-      const active = path === current;
-      const wasActive = el.classList.contains('is-playing');
-      if (wasActive && !active) {
+      const playing = path === current;
+      const away = playing || queued.has(path);
+      const wasAway = el.classList.contains('is-playing') || el.classList.contains('is-queued');
+      // 刚建出来的卡片只回写状态：首屏就排着的专辑不该一起「飞出去」（那是一次渲染，不是一次动作）
+      const known = el.__vinylSnap === true;
+      el.__vinylSnap = true;
+      if (known && wasAway && !away) {
         this.playDiscReturn(el);
+      } else if (known && !wasAway && away && !el.__vinylLift) {
+        // 排进列表（点专辑 / 唱片架多选 / 其它排队入口都算）→ 唱片飞离墙面。
+        // 交接动画正在跑时 __vinylLift 已挂上，这里不重复点火
+        const disc = el.querySelector<HTMLElement>('.vinyl-shelf-disc');
+        if (disc && !prefersReducedMotion()) animateDiscLiftOff(el, disc);
       }
-      el.classList.toggle('is-playing', active);
+      el.classList.toggle('is-playing', playing);
+      el.classList.toggle('is-queued', away && !playing);
     }
   }
 
@@ -1143,7 +1362,10 @@ export class VinylShelfView extends ItemView {
       { duration: 700, easing: 'cubic-bezier(0.33, 1, 0.68, 1)' }
     );
     cardEl.addClass('is-returning');
-    anim.addEventListener('finish', () => cardEl.removeClass('is-returning'));
+    // cancel 也要摘：连着换专辑时上一条回位动画会被取消，只挂 finish 的话 is-returning 会永远留在卡上
+    const done = () => cardEl.removeClass('is-returning');
+    anim.addEventListener('finish', done);
+    anim.addEventListener('cancel', done);
     cardEl.__vinylReturn = anim;
   }
 

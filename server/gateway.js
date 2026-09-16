@@ -789,11 +789,16 @@ route('GET', '/api/lyric', async ({ query, cookie }) => {
 
 route('GET', '/api/search', async ({ query, cookie }) => {
   const type = query.type === 'song' ? 1 : 10;
+  // 一页给多少条由客户端定（搜索页要一直往深处翻）。上限 50：上游一次给太多没意义，
+  // 放大 limit 就是在放大被限流的概率 —— 网易云对搜索本来就敏感。
+  const limit = Math.min(50, Math.max(1, Number(query.limit) || 30));
+  const offset = Math.max(0, Number(query.offset) || 0);
   const r = await search(
     {
       keywords: query.keywords,
       type,
-      limit: 10,
+      limit,
+      offset,
       // 显式 weapi：模块自身不带默认值时会落到 eapi（设备指纹通道），而网页版走的是 weapi
       crypto: 'weapi',
       cookie: cookie || readCookie(),

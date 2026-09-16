@@ -36,13 +36,17 @@ Vinyl Life 把专辑笔记展示成一张张唱片，配有黑胶唱机样式的
 
 右键卡片可以打开笔记、补充音频、更换封面，或打开对应的音乐平台页面。没有音源的专辑也能放在墙上，点击会直接打开笔记，适合只收藏资料和写乐评。
 
+点击卡片即换碟：那张专辑的黑胶会从墙上抽走，交给播放器。开着专辑队列模式时，点击变成「排到队尾」——排进列表的专辑唱片同样从墙上收走（墙上就不再摆着已经在队列里的专辑），关掉队列模式时队列收敛回当前专辑、排在后面的唱片再滑回墙上。
+
 ## 黑胶播放器
 
-播放器有转动的唱片和随播放状态移动的唱臂，可以放在侧栏、主区标签页，也可以单独开一个窗口。
+播放器有转动的唱片和两段姿态的唱臂：不播放专辑或暂停时，唱针归位到支架上（姿态 1，唱臂竖直朝下）；播放专辑时，唱针落在唱片上（姿态 2），且唱针到唱片圆心的距离表示的正是这张专辑播到了哪里。播放器可以放在侧栏、主区标签页，也可以单独开一个窗口。
 
-常用操作都在唱机下方：播放与暂停、上一首与下一首、进度拖动、音量调整。曲目列表可以直接点歌，也可以拖动改变播放顺序。每张专辑会记住自己的排序，下次打开时继续使用；在线专辑还可以恢复平台原有的曲目顺序。
+整页自上而下是三张卡片：顶部三枚按键（「选取专辑」占一半，队列模式与播放模式各占四分之一）、唱机、唱放。播放与暂停是唱机左下角的一枚长方形按键：黑色键面、边缘两道浅线，贴死在面板的左下角，键面是手写体的「Vinyl Life」——播放中点亮并像通电那样缓慢呼吸（键面也亮一档），暂停时暗下来、呼吸停掉；唱放卡里是单曲进度与音量。
 
-播放器会显示当前音源，在线播放时还会显示音质档位。是否在载入专辑后自动播放，可以在设置中调整。
+顶部的「选取专辑」会让「唱机 + 唱放」这对卡片像立方体一样左转到背面 —— 那面是三行唱片架（按键卡与下面的队列都不动）：横着划过时三行会错开一点（视差），指针停在哪张，哪张就从侧脊放倒、摊开成整张封面。点一张即换碟；在专辑队列模式下点一张是排到队尾；按住 Ctrl（macOS 是 ⌘）点可以多选、Shift 点连选一段，选好后一次「加入队列」。
+
+曲目列表可以直接点歌，也可以拖动改变播放顺序（只影响这一次会话，不会记住，下次打开仍是发行顺序）。每张专辑的名字那一栏末尾都有一个小按键，点一下就在那张专辑的笔记里追加一条带时间戳的听歌记录。是否在载入专辑后自动播放，可以在设置中调整。
 
 ## 导入音乐
 
@@ -67,7 +71,9 @@ Vinyl Life 把专辑笔记展示成一张张唱片，配有黑胶唱机样式的
 
 粘贴专辑链接或 ID，插件会获取专辑资料、创建笔记并下载封面。之后可以从专辑墙打开播放。
 
-也可以直接输入专辑或歌曲名搜索：结果里带封面、艺人、发行日期和曲目数，按歌曲搜出来的会注明它出自哪张专辑，点「导入」即按那张专辑建笔记；已经在库里的专辑显示「打开已有专辑」，不会重复导入。
+也可以直接输入专辑或歌曲名搜索：结果里带封面、艺人、发行日期和曲目数，按歌曲搜出来的会注明它出自哪张专辑，点「导入」即按那张专辑建笔记；**已经在库里的专辑不再出现在结果里**（状态行会写明隐去了几张，避免看起来像搜索漏了）。
+
+搜索是模糊的：错一个字、专辑名和歌手名颠倒着写、只记得标题后半截，都能把对的那张排到前面；看不出关联的兜底结果会被剪掉。首屏 20 条，往下可以「显示更多」（本地展开，不花网络），展开完了点「加载更多」继续向平台要下一页，两个平台的结果都和前面的一起重排。
 
 搜索页可以连着导入：导入完成不会跳走，那张卡片就地变成「打开」——接着点下一张的「导入」就行；想立刻去看笔记时再点「打开」。
 
@@ -130,7 +136,7 @@ cover: "[[Vinyl Life/covers/专辑封面.jpg]]"
 
 面板由插件自己绘制，所以这些设置在 Obsidian 的全局设置搜索里搜不到 —— 直接打开「设置 → Vinyl Life」看标签页。
 
-唱机有胡桃木、贝壳白和哑光黑三种配色，唱片可选黑、黄、蓝、白。专辑墙可以按窗口宽度自动排版，也可以固定为每行 2—7 张；唱片弹出方向可选上、下、左、右。
+唱机有胡桃木、贝壳白、哑光黑和珊瑚红四种配色（珊瑚红 = rgb(161 70 67) 的哑光砖红漆面 + 帆布织纹 + 奶白盘），唱片可选黑、黄、蓝、白。专辑墙可以按窗口宽度自动排版，也可以固定为每行 2—7 张；唱片弹出方向可选上、下、左、右。
 
 默认文件位置如下，均可按自己的习惯修改：
 
@@ -190,7 +196,7 @@ npm test
 - `npm run typecheck`：类型检查。它依赖 build 先生成 `src/core/gateway-bundle.ts` 与 `src/core/style-bundle.ts`，两步顺序不能反。
 - `npm run lint`：ESLint（含官方审核规则集），提交前保持零报错。
 - `npm test`：跑测试，200 多项，纯 Node 环境，不需要 Obsidian。
-- `main.js` 有体积预算（348 KB，超出直接构建失败）：它是社区市场的下载主体，预算写在 `esbuild.config.mjs`。其中约 47 KB 是手写体（拉丁 Excalifont + 中文霞鹜文楷子集，空态教程与设置「关于」页共用，见 `assets/fonts/`）、约 26 KB 是手绘笔触引擎 roughjs。
+- `main.js` 有体积预算（384 KB，超出直接构建失败）：它是社区市场的下载主体，预算写在 `esbuild.config.mjs`。其中约 47 KB 是手写体（拉丁 Excalifont + 中文霞鹜文楷子集，空态教程与设置「关于」页共用，见 `assets/fonts/`）、约 26 KB 是手绘笔触引擎 roughjs。
 
 源码目录结构：
 
@@ -247,13 +253,17 @@ The toolbar at the top lets you:
 
 Right-clicking a card lets you open the note, add audio, change the cover, or open the matching page on the music platform. Albums with no audio can sit on the shelf too; clicking them opens the note directly, which suits collecting information and writing reviews.
 
+Clicking a card switches to that record: its vinyl slides off the wall and into the player. With album queue mode on, a click queues it instead — and a queued album's vinyl leaves the wall too (the wall never keeps a record that is already in the list). Turn queue mode off and the queue collapses back to the current album, sliding those records back onto the wall.
+
 ## Vinyl player
 
-The player has a spinning record and a tonearm that moves with the playback state, and it can live in the sidebar, in a main-area tab, or in a window of its own.
+The player has a spinning record and a tonearm with two postures: off the record and resting on its cradle when nothing is playing or playback is paused (posture 1), and down on the record while an album plays (posture 2), where the distance between the stylus and the centre of the record is exactly how far into the album you are. The player can live in the sidebar, in a main-area tab, or in a window of its own.
 
-The controls you reach for most sit below the turntable: play and pause, previous and next track, scrubbing, and volume. The track list lets you click a song to play it, or drag to change the playing order. Each album remembers its own ordering and keeps using it the next time you open it; for online albums you can also restore the platform's original track order.
+The page is three cards, top to bottom: a row of three buttons (“Pick an album” takes half, queue mode and play mode a quarter each), the turntable, and the phono stage. Play/pause is a rectangular button in the turntable’s lower-left corner, its bottom edge level with the bottom of the record; the phono-stage card holds the track progress bar and the volume meter.
 
-The player shows the current source, and for online playback the quality tier as well. Whether playback starts automatically after an album loads can be changed in the settings.
+“Pick an album” at the top turns the page like a cube to its other face — a three-row record crate. The rows drift slightly out of step as you move across them (parallax), and the album under the pointer tips over from its spine into a full cover. Click one to switch to it; in album queue mode a click queues it instead. Ctrl-click (⌘ on macOS) selects several albums, Shift-click extends a run, and “Add to queue” takes them all at once.
+
+The track list lets you click a song to play it, or drag to change the playing order — for this session only; nothing is remembered, so an album always opens in release order. Every album's name row ends with a small button that appends a timestamped listening line to that album's note. The player shows the current source, and for online playback the quality tier as well. Whether playback starts automatically after an album loads can be changed in the settings.
 
 ## Importing music
 
@@ -278,7 +288,9 @@ The file extensions you can import are `mp3`, `flac`, `m4a`, `m4b`, `mp4`, `wav`
 
 Paste an album link or ID and the plugin fetches the album information, creates a note, and downloads the cover. After that you can open it from the album shelf and play it.
 
-You can also search by album or song name. Each result shows its cover, artists, release date, and track count; a song result tells you which album it comes from, and clicking Import creates that album's note. Albums already in your vault show an Open existing album button instead of being imported twice.
+You can also search by album or song name. Each result shows its cover, artists, release date, and track count; a song result tells you which album it comes from, and clicking Import creates that album's note. **Albums already in your vault no longer appear in the results at all** (the status line says how many were hidden, so it does not look like the search missed them).
+
+Searching is fuzzy: a typo, the album and artist names typed in either order, or only the second half of a title will still rank the right one first, and loosely-related filler from the platforms is trimmed away. The first 20 results are shown; Show more reveals the rest of the local pool for free, and Load more asks the platforms for the next page and re-ranks everything together.
 
 The search page is built for importing several albums in a row: importing does not navigate away, and that card turns into an Open button — just hit Import on the next result. Click Open only when you want to go to the note.
 
@@ -401,7 +413,7 @@ npm test
 - `npm run typecheck`: type-check. It depends on `npm run build` having generated `src/core/gateway-bundle.ts` / `src/core/style-bundle.ts` first, so the order cannot be reversed.
 - `npm run lint`: ESLint with the official review rule set; keep it clean before committing.
 - `npm test`: run the tests — 200+ of them, in plain Node, with no Obsidian required.
-- `main.js` has a size budget (348 KB; exceeding it fails the build) because it is what the community store downloads — the budget lives in `esbuild.config.mjs`. About 47 KB of it is the handwriting fonts (Latin Excalifont + Chinese LXGW WenKai subsets, shared by the empty-shelf tutorial and the About settings page; see `assets/fonts/`) and ~26 KB is roughjs, the hand-drawn stroke engine.
+- `main.js` has a size budget (400 KB; exceeding it fails the build) because it is what the community store downloads — the budget lives in `esbuild.config.mjs`. About 47 KB of it is the handwriting fonts (Latin Excalifont + Chinese LXGW WenKai subsets, shared by the empty-shelf tutorial and the About settings page; see `assets/fonts/`) and ~26 KB is roughjs, the hand-drawn stroke engine.
 
 Source layout:
 

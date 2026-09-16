@@ -11,6 +11,7 @@ import type {
   NeteaseSong,
   QrKeyResponse,
   NeteaseSearchResponse,
+  SearchPage,
   SongUrlResponse,
 } from './api-types';
 
@@ -131,12 +132,22 @@ export class ServerClient {
     return { restriction: t('auth.sourceUnavailable') };
   }
 
-  async searchAlbums(keywords: string): Promise<NeteaseSearchResponse> {
-    return this.getJson<NeteaseSearchResponse>('/api/search', { keywords, type: 'album' });
+  async searchAlbums(keywords: string, page?: SearchPage): Promise<NeteaseSearchResponse> {
+    return this.getJson<NeteaseSearchResponse>('/api/search', {
+      keywords,
+      type: 'album',
+      limit: String(page?.limit ?? 30),
+      offset: String(page?.offset ?? 0),
+    });
   }
 
-  async searchSongs(keywords: string): Promise<NeteaseSearchResponse> {
-    return this.getJson<NeteaseSearchResponse>('/api/search', { keywords, type: 'song' });
+  async searchSongs(keywords: string, page?: SearchPage): Promise<NeteaseSearchResponse> {
+    return this.getJson<NeteaseSearchResponse>('/api/search', {
+      keywords,
+      type: 'song',
+      limit: String(page?.limit ?? 30),
+      offset: String(page?.offset ?? 0),
+    });
   }
 
   // 封面代理下载（避开浏览器 CORS）。失败时透传网关给的原因（图床超时 / 404 / 被拦等），

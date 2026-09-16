@@ -1,6 +1,7 @@
 // 专辑删除回归：esbuild 编译真实 src/delete.ts（连带 album-index 的 frontmatter 解析）后在 vm 执行
 // （stub obsidian + 假 vault）。覆盖：可删资产盘点（音频文件夹 / 零散文件 / 封面）、
-// 其他专辑引用保护（含子目录嵌套）、外链路径不删、勾选项关闭时不动作、文件夹内文件不重复删除。
+// 其他专辑引用保护（含子目录嵌套）、外链路径不删、勾选项关闭时不动作、文件夹内文件不重复删除；
+// 以及批量删除（专辑墙工具栏入口）：同批专辑互相视为不存在，共用资源可删、批外引用仍受保护。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -316,4 +317,98 @@ test('计数：countFolderAudios 递归统计（子目录计入 + 非音频文�
   sub.children.push(f);
 
   assert.equal(h.mod.countFolderAudios(dir), 3, 'a.mp3 / b.flac / cd1/c.wav（jpg 不计）');
+});
+
+// ============ 批量删除（专辑墙工具栏入口）============
+// 与单张盘点的分水岭：同批要删的专辑互相视为「不存在」——它们共用的音频目录不该因为
+// 「还有别张在引用」（其实是同批要删的那张）被留下；与未选中专辑共用的资源照旧保护。
+
+test('批量：同批两张专辑共用的音频目录 / 封面可删（单张盘点会误判成「他人引用」）', () => {
+  const h = setup();
+  const noteA = seedAlbumA(h);
+  const noteB = h.addFile('06-专辑墙/专辑/B.md', {
+    tags: ['album'],
+    audioFolder: `[[${AUDIO_DIR}]]`,
+    cover: `[[${COVER}]]`,
+  });
+  const albums = [h.albumOf(noteA), h.albumOf(noteB)];
+
+  const single = h.mod.collectAlbumDeleteTargets(h.app, albums[0]);
+  assert.deepEqual(Array.from(single.audioFolders), [], '单张盘点：B 还在，目录受保护');
+  assert.equal(single.coverShared, true);
+
+  const batch = h.mod.collectAlbumBatchDeleteTargets(h.app, albums);
+  assert.deepEqual(Array.from(batch.audioFolders, (f) => f.path), [AUDIO_DIR], '同批盘点：B 也要删 → 目录可删');
+  assert.deepEqual(Array.from(batch.coverFiles, (f) => f.path), [COVER], '共用的封面只列一次');
+  assert.deepEqual(Array.from(batch.sharedAudioPaths), []);
+  assert.equal(batch.coverSharedCount, 0);
+});
+
+test('批量：与未选中专辑共用的资源照旧保护', () => {
+  const h = setup();
+  const noteA = seedAlbumA(h);
+  const noteB = h.addFile('06-专辑墙/专辑/B.md', {
+    tags: ['album'],
+    audioFolder: `[[${AUDIO_DIR}]]`,
+    cover: `[[${COVER}]]`,
+  });
+  h.addFile('06-专辑墙/专辑/C.md', {
+    tags: ['album'],
+    audioFolder: `[[${AUDIO_DIR}]]`,
+    cover: `[[${COVER}]]`,
+  });
+  const batch = h.mod.collectAlbumBatchDeleteTargets(h.app, [h.albumOf(noteA), h.albumOf(noteB)]);
+
+  assert.deepEqual(Array.from(batch.audioFolders), [], 'C 没选中 → 目录不能删');
+  assert.deepEqual(Array.from(batch.sharedAudioPaths), [AUDIO_DIR]);
+  assert.deepEqual(Array.from(batch.coverFiles), []);
+  assert.equal(batch.coverSharedCount, 2, '两张选中专辑的封面都因 C 引用而留下');
+});
+
+test('批量：被别的待删目录包住的子目录与其中的零散文件都不单独列出', () => {
+  const h = setup();
+  // A 独占大目录，B 的音频目录是它下面的子目录（两张都选中）
+  h.addAudioDir(AUDIO_DIR, ['01.mp3']);
+  const sub = h.ensureFolder(`${AUDIO_DIR}/sub`);
+  const inSub = new TFile(`${AUDIO_DIR}/sub/02.mp3`, {});
+  h.files.set(inSub.path, inSub);
+  sub.children.push(inSub);
+  const noteA = h.addFile('06-专辑墙/专辑/A.md', {
+    tags: ['album'],
+    audioFolder: `[[${AUDIO_DIR}]]`,
+  });
+  const noteB = h.addFile('06-专辑墙/专辑/B.md', {
+    tags: ['album'],
+    audioFolder: `[[${AUDIO_DIR}/sub]]`,
+    audio: [`${AUDIO_DIR}/sub/02.mp3`],
+  });
+  const batch = h.mod.collectAlbumBatchDeleteTargets(h.app, [h.albumOf(noteA), h.albumOf(noteB)]);
+
+  assert.deepEqual(Array.from(batch.audioFolders, (f) => f.path), [AUDIO_DIR], '只留外层目录');
+  assert.deepEqual(Array.from(batch.audioFiles), [], '目录内的零散文件随目录一起走，不单独 trash');
+});
+
+test('批量执行：目录 / 零散文件 / 封面各删一次；勾选关闭则不动作', async () => {
+  const h = setup();
+  const noteA = seedAlbumA(h);
+  const noteB = h.addFile('06-专辑墙/专辑/B.md', {
+    tags: ['album'],
+    audioFolder: `[[${AUDIO_DIR}]]`,
+    cover: `[[${COVER}]]`,
+  });
+  const albums = [h.albumOf(noteA), h.albumOf(noteB)];
+  const batch = h.mod.collectAlbumBatchDeleteTargets(h.app, albums);
+
+  const removed = await h.mod.deleteAlbumBatchAssets(h.app, batch, { audio: false, cover: false });
+  assert.equal(removed, 0);
+  assert.deepEqual(Array.from(h.trashed), [], '勾选关闭：一个资产都不动');
+
+  const removed2 = await h.mod.deleteAlbumBatchAssets(h.app, batch, { audio: true, cover: true });
+  assert.equal(removed2, 3, 'AUDIO_DIR + loose.mp3 + COVER');
+  assert.deepEqual(
+    Array.from(h.trashed).sort(),
+    [AUDIO_DIR, '06-专辑墙/audio/loose.mp3', COVER].sort(),
+    '共用资源不重复删'
+  );
+  assert.equal(h.files.has(`${AUDIO_DIR}/01.mp3`), false, '目录内文件随目录删除');
 });
