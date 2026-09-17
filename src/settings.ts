@@ -1,4 +1,4 @@
-// 设置面板：自绘标签页（通用 / 外观 / 源 / 关于），布局照设计稿
+// 设置面板：自绘标签页（通用 / 统计 / 外观 / 源 / 关于），布局照设计稿
 // Excalidraw/Drawing 2026-09-15 15.58.24：一行标签 + 右侧「Vinyl Life」+ 下方整块面板。
 //
 // 为什么不用 1.13 的声明式 API（getSettingDefinitions）：它渲染的是「分页列表 → 子页 + 返回键」，
@@ -8,15 +8,16 @@
 //
 // 切标签 = 清空内容区重画：不预建四份再藏起来 ——「关于」页的手绘框要按真实尺寸画，
 // 藏起来的元素量出来是 0。语言 / 取值变了走 render()：整面板重建，仍停在当前标签页。
-import { App, PluginSettingTab, Setting, getIconIds, setIcon } from 'obsidian';
+import { App, PluginSettingTab, Setting } from 'obsidian';
 import type VinylLifePlugin from './main';
 import { QrLoginModal, qqQrProvider } from './views/qr-login-modal';
-import { StatsModal } from './views/stats-modal';
+import { StatsPage } from './views/stats-page';
+import { SettingsSection, settingsSection } from './views/settings-section';
 import { attachAboutInk, renderAboutPage } from './views/about-page';
 import { DiscDirection, DISC_DIRECTIONS, SpinSpeed, SPIN_SPEEDS } from './core/disc-motion';
 import { notice } from './util';
 import { Lang, LANGUAGES, t, tf } from './core/i18n';
-import { EMPTY_STATS, VinylStats, ensureStats } from './core/stats';
+import { EMPTY_STATS, VinylStats } from './core/stats';
 import type { PlayMode } from './core/player-state';
 import { DEFAULT_SHELF_PROPS } from './core/shelf-props';
 import type { LoginState } from './core/auth';
@@ -29,9 +30,10 @@ import {
   normalizeRecordColor,
 } from './core/appearance';
 
-/** 四个标签页：顺序即标签条顺序，key 是页名键（进 i18n 词典，中英各一份） */
+/** 标签页：顺序即标签条顺序，key 是页名键（进 i18n 词典，中英各一份） */
 export const SETTINGS_TABS = [
   { id: 'general', key: 'settings.tab.general' },
+  { id: 'stats', key: 'settings.tab.stats' },
   { id: 'appearance', key: 'settings.tab.appearance' },
   { id: 'source', key: 'settings.tab.source' },
   { id: 'about', key: 'settings.tab.about' },
@@ -136,70 +138,10 @@ export function normalizeVolume(raw: unknown): number {
   return typeof raw === 'number' && isFinite(raw) && raw >= 0 && raw <= 1 ? raw : DEFAULT_SETTINGS.volume;
 }
 
-/** 一行设置：标题 + 说明 + 控件。自绘面板没有声明式 API 那套搜索索引，
- *  这里的 name/desc 只管显示（写法与 1.13 的声明式定义保持一致，便于对照）。 */
-const row = (parent: HTMLElement, name: string, desc: string, build: (s: Setting) => void): void => {
-  const s = new Setting(parent).setName(name);
-  if (desc) s.setDesc(desc);
-  build(s);
+/** 一行设置：标题 + 控件（行说明一律不写：设置项自己说得清楚，小字只是噪音）。 */
+const row = (parent: HTMLElement, name: string, build: (s: Setting) => void): void => {
+  build(new Setting(parent).setName(name));
 };
-
-/** 设置分区：只负责视觉分组，不改变 Setting 的原生结构与行为。 */
-const section = (
-  parent: HTMLElement,
-  text: string,
-  kind: string,
-  icon: string,
-  build: (el: HTMLElement) => void
-): void => {
-  const el = parent.createDiv({ cls: `vinyl-settings-section is-${kind}` });
-  const title = new Setting(el).setName(text).setHeading();
-  title.settingEl.addClass('vinyl-settings-section-heading');
-  const iconEl = title.settingEl.createSpan({ cls: 'vinyl-settings-section-icon' });
-  mountSectionIcon(iconEl, icon);
-  build(el);
-};
-
-/** 图标名 → 文本符号：宿主没有对应 Lucide 图标时的回落。
- *  这些符号的字形由系统字体逐字回落决定，换机器会变样（粗细/大小不一致，缺字形时是豆腐块），
- *  所以只当兜底用，别当主路径。 */
-const SECTION_ICONS: Record<string, string> = {
-  'sliders-horizontal': '⌁',
-  'folder-tree': '⌂',
-  'notebook-pen': '✎',
-  'audio-lines': '≋',
-  'panel-right-open': '▣',
-  'chart-no-axes-column': '▥',
-  'layout-grid': '⊞',
-  'disc-3': '◉',
-  'radio-tower': '⌁',
-  cloud: '☁',
-  'message-circle-more': '◌',
-  'hard-drive': '▱',
-};
-
-/** 分区图标：优先用 Obsidian 自带的 Lucide（内联 SVG，形状与线条跨平台一致）。 */
-function mountSectionIcon(el: HTMLElement, name: string): void {
-  if (hasIcon(name)) {
-    setIcon(el, name);
-    return;
-  }
-  el.setText(SECTION_ICONS[name] ?? '·');
-}
-
-// 宿主装了哪些图标：取一次就够（图标集在会话内不变）。
-// 老版本 Obsidian 没有 getIconIds，或图标名是较新才加入的 → 回落文本符号。
-let knownIcons: Set<string> | null = null;
-function hasIcon(name: string): boolean {
-  if (!knownIcons) {
-    try {
-      knownIcons = new Set(getIconIds());
-    } catch {
-      knownIcons = new Set();
-    }
-  }
-  return knownIcons.has(name);
-}
 
 const columnOptions = (): [number, string][] => [
   [2, tf('settings.columnsN', { n: 2 })],
@@ -244,10 +186,12 @@ export class VinylSettingTab extends PluginSettingTab {
   private qqRefresh = 0;
   // 「关于」页手绘笔触的停止函数：重绘 / 关闭面板时要断开 ResizeObserver
   private aboutInkStop: (() => void) | null = null;
+  private statsPage: StatsPage;
 
   constructor(app: App, plugin: VinylLifePlugin) {
     super(app, plugin);
     this.plugin = plugin;
+    this.statsPage = new StatsPage(plugin, () => this.render());
   }
 
   display(): void {
@@ -270,6 +214,9 @@ export class VinylSettingTab extends PluginSettingTab {
       cls: `vinyl-settings-body is-${this.activeTab}`,
     });
     switch (this.activeTab) {
+      case 'stats':
+        this.statsPage.render(body);
+        break;
       case 'appearance':
         this.renderAppearanceTab(body);
         break;
@@ -313,12 +260,14 @@ export class VinylSettingTab extends PluginSettingTab {
     this.aboutInkStop = null;
   }
 
-  // ============ 通用：语言 / 路径 / 模板 / 播放 / 统计 ============
+  // ============ 通用：基础偏好 + 播放 / 路径 / 模板 ============
+  // 书写顺序就是两栏网格里的排布顺序：前两个分区是半宽卡片，正好并排成一行；
+  // 后两个分区带输入框，占整行（见 styles.css 的 .is-paths / .is-template）。
 
   private renderGeneralTab(el: HTMLElement): void {
     const p = this.plugin;
-    section(el, t('settings.section.basics'), 'basics', 'sliders-horizontal', (group) => {
-      row(group, t('settings.language'), t('settings.languageDesc'), (s) =>
+    settingsSection(el, t('settings.section.basics'), 'basics', 'sliders-horizontal', (body) => {
+      row(body, t('settings.language'), (s) =>
         void s.addDropdown((d) => {
           for (const l of LANGUAGES) d.addOption(l.value, l.label);
           d.setValue(p.settings.language);
@@ -332,8 +281,47 @@ export class VinylSettingTab extends PluginSettingTab {
       );
     });
 
-    section(el, t('settings.path'), 'paths', 'folder-tree', (group) => {
-      row(group, t('settings.albumFolder'), t('settings.albumFolderDesc'), (s) =>
+    settingsSection(el, t('settings.section.playback'), 'playback', 'audio-lines', (body) => {
+      row(body, t('settings.defaultSource'), (s) =>
+        void s.addDropdown((d) =>
+          d
+            .addOption('auto', t('settings.sourceAuto'))
+            .addOption('local', t('settings.sourceLocal'))
+            .addOption('netease', t('settings.sourceNetease'))
+            .addOption('qq', t('settings.sourceQq'))
+            .setValue(p.settings.defaultSource)
+            .onChange(async (v) => {
+              p.settings.defaultSource = v as VinylSettings['defaultSource'];
+              await p.saveSettings();
+            })
+        )
+      );
+      row(body, t('settings.quality'), (s) =>
+        void s.addDropdown((d) =>
+          d
+            .addOption('standard', t('settings.qualityStandard'))
+            .addOption('higher', t('settings.qualityHigher'))
+            .addOption('exhigh', t('settings.qualityExhigh'))
+            .addOption('lossless', t('settings.qualityLossless'))
+            .setValue(p.settings.quality)
+            .onChange(async (v) => {
+              p.settings.quality = v as VinylSettings['quality'];
+              await p.saveSettings();
+            })
+        )
+      );
+      row(body, t('settings.autoPlay'), (s) =>
+        void s.addToggle((tg) =>
+          tg.setValue(p.settings.autoPlay).onChange(async (v) => {
+            p.settings.autoPlay = v;
+            await p.saveSettings();
+          })
+        )
+      );
+    });
+
+    settingsSection(el, t('settings.path'), 'paths', 'folder-tree', (body) => {
+      row(body, t('settings.albumFolder'), (s) =>
         void s.addText((txt) =>
           txt
             .setPlaceholder(DEFAULT_SETTINGS.albumFolder)
@@ -344,7 +332,7 @@ export class VinylSettingTab extends PluginSettingTab {
             })
         )
       );
-      row(group, t('settings.coverFolder'), t('settings.coverFolderDesc'), (s) =>
+      row(body, t('settings.coverFolder'), (s) =>
         void s.addText((txt) =>
           txt
             .setPlaceholder(DEFAULT_SETTINGS.coverFolder)
@@ -357,8 +345,8 @@ export class VinylSettingTab extends PluginSettingTab {
       );
     });
 
-    section(el, t('settings.template'), 'template', 'notebook-pen', (group) => {
-      row(group, t('settings.albumTemplate'), t('settings.albumTemplateDesc'), (s) =>
+    settingsSection(el, t('settings.template'), 'template', 'notebook-pen', (body) => {
+      row(body, t('settings.albumTemplate'), (s) =>
         void s
           .addText((txt) =>
             txt
@@ -377,82 +365,14 @@ export class VinylSettingTab extends PluginSettingTab {
           )
       );
     });
-
-    section(el, t('settings.section.playback'), 'playback', 'audio-lines', (group) => {
-      row(group, t('settings.defaultSource'), t('settings.defaultSourceDesc'), (s) =>
-        void s.addDropdown((d) =>
-          d
-            .addOption('auto', t('settings.sourceAuto'))
-            .addOption('local', t('settings.sourceLocal'))
-            .addOption('netease', t('settings.sourceNetease'))
-            .addOption('qq', t('settings.sourceQq'))
-            .setValue(p.settings.defaultSource)
-            .onChange(async (v) => {
-              p.settings.defaultSource = v as VinylSettings['defaultSource'];
-              await p.saveSettings();
-            })
-        )
-      );
-      row(group, t('settings.quality'), t('settings.qualityDesc'), (s) =>
-        void s.addDropdown((d) =>
-          d
-            .addOption('standard', t('settings.qualityStandard'))
-            .addOption('higher', t('settings.qualityHigher'))
-            .addOption('exhigh', t('settings.qualityExhigh'))
-            .addOption('lossless', t('settings.qualityLossless'))
-            .setValue(p.settings.quality)
-            .onChange(async (v) => {
-              p.settings.quality = v as VinylSettings['quality'];
-              await p.saveSettings();
-            })
-        )
-      );
-      row(group, t('settings.autoPlay'), t('settings.autoPlayDesc'), (s) =>
-        void s.addToggle((tg) =>
-          tg.setValue(p.settings.autoPlay).onChange(async (v) => {
-            p.settings.autoPlay = v;
-            await p.saveSettings();
-          })
-        )
-      );
-    });
-
-    section(el, t('settings.section.stats'), 'stats', 'chart-no-axes-column', (group) => {
-      row(
-        group,
-        t('settings.statsTotal'),
-        tf('settings.statsDesc', {
-          plays: p.settings.stats.totalPlays,
-          albums: Object.keys(p.settings.stats.albums).length,
-          tracks: Object.keys(p.settings.stats.tracks).length,
-        }),
-        (s) =>
-          void s
-            .addButton((b) =>
-              b.setButtonText(t('settings.viewStats')).onClick(() => {
-                new StatsModal(this.app, p.settings.stats).open();
-              })
-            )
-            .addButton((b) =>
-              b
-                .setButtonText(t('settings.clearStats'))
-                .setDestructive()
-                .onClick(async () => {
-                  p.settings.stats = ensureStats(null);
-                  await p.saveSettings();
-                  this.render();
-                })
-            )
-      );
-    });
   }
 
   // ============ 外观：专辑墙 / 黑胶唱片 / 播放器 ============
 
   private renderAppearanceTab(el: HTMLElement): void {
     const p = this.plugin;
-    section(el, t('settings.section.shelf'), 'shelf', 'layout-grid', (group) => {
-      row(group, t('settings.columns'), t('settings.columnsDesc'), (s) =>
+    settingsSection(el, t('settings.section.shelf'), 'shelf', 'layout-grid', (body) => {
+      row(body, t('settings.columns'), (s) =>
         void s.addDropdown((d) => {
           d.addOption('auto', t('settings.columnsAuto'));
           for (const [n, label] of columnOptions()) d.addOption(String(n), label);
@@ -464,7 +384,7 @@ export class VinylSettingTab extends PluginSettingTab {
           });
         })
       );
-      row(group, t('settings.discDirection'), t('settings.discDirectionDesc'), (s) =>
+      row(body, t('settings.discDirection'), (s) =>
         void s.addDropdown((d) => {
           for (const [key, label] of discOptions()) d.addOption(key, label);
           d.setValue(p.settings.discDirection).onChange(async (v) => {
@@ -479,8 +399,8 @@ export class VinylSettingTab extends PluginSettingTab {
       );
     });
 
-    section(el, t('settings.section.vinyl'), 'vinyl', 'disc-3', (group) => {
-      row(group, t('settings.recordColor'), t('settings.recordColorDesc'), (s) =>
+    settingsSection(el, t('settings.section.vinyl'), 'vinyl', 'disc-3', (body) => {
+      row(body, t('settings.recordColor'), (s) =>
         void s.addDropdown((d) => {
           for (const key of RECORD_COLORS) d.addOption(key, t(RECORD_LABEL_KEYS[key]));
           d.setValue(p.settings.recordColor).onChange(async (v) => {
@@ -492,8 +412,8 @@ export class VinylSettingTab extends PluginSettingTab {
       );
     });
 
-    section(el, t('settings.section.player'), 'deck', 'radio-tower', (group) => {
-      row(group, t('settings.playerLocation'), t('settings.playerLocationDesc'), (s) =>
+    settingsSection(el, t('settings.section.player'), 'deck', 'radio-tower', (body) => {
+      row(body, t('settings.playerLocation'), (s) =>
         void s.addDropdown((d) =>
           d
             .addOption('sidebar', t('settings.locSidebar'))
@@ -506,7 +426,7 @@ export class VinylSettingTab extends PluginSettingTab {
             })
         )
       );
-      row(group, t('settings.deck'), t('settings.deckDesc'), (s) =>
+      row(body, t('settings.deck'), (s) =>
         void s.addDropdown((d) => {
           for (const key of DECK_STYLES) d.addOption(key, t(DECK_LABEL_KEYS[key]));
           d.setValue(p.settings.playerDeck).onChange(async (v) => {
@@ -516,7 +436,7 @@ export class VinylSettingTab extends PluginSettingTab {
           });
         })
       );
-      row(group, t('settings.spinSpeed'), t('settings.spinSpeedDesc'), (s) =>
+      row(body, t('settings.spinSpeed'), (s) =>
         void s.addDropdown((d) => {
           d.addOption('slow', t('settings.spinSlow'));
           d.addOption('normal', t('settings.spinNormal'));
@@ -536,9 +456,9 @@ export class VinylSettingTab extends PluginSettingTab {
 
   private renderSourceTab(el: HTMLElement): void {
     const p = this.plugin;
-    section(el, t('settings.sub.netease'), 'netease', 'cloud', (group) => {
-      this.statusRow(group, 'netease');
-      row(group, t('settings.qrLogin'), t('settings.qrLoginDescNetease'), (s) =>
+    settingsSection(el, t('settings.sub.netease'), 'netease', 'cloud', (body) => {
+      this.statusRow(body, 'netease');
+      row(body, t('settings.qrLogin'), (s) =>
         void s.addButton((b) =>
           b.setButtonText(t('settings.qrLogin')).onClick(() => {
             new QrLoginModal(
@@ -549,7 +469,7 @@ export class VinylSettingTab extends PluginSettingTab {
           })
         )
       );
-      row(group, t('settings.logout'), t('settings.logoutDescNetease'), (s) =>
+      row(body, t('settings.logout'), (s) =>
         void s.addButton((b) =>
           b
             .setButtonText(t('settings.logoutAction'))
@@ -563,9 +483,9 @@ export class VinylSettingTab extends PluginSettingTab {
       );
     });
 
-    section(el, t('settings.sub.qq'), 'qq', 'message-circle-more', (group) => {
-      this.statusRow(group, 'qq');
-      row(group, t('settings.qrLogin'), t('settings.qrLoginDescQq'), (s) =>
+    settingsSection(el, t('settings.sub.qq'), 'qq', 'message-circle-more', (body) => {
+      this.statusRow(body, 'qq');
+      row(body, t('settings.qrLogin'), (s) =>
         void s.addButton((b) =>
           b.setButtonText(t('settings.qrLogin')).onClick(() => {
             new QrLoginModal(
@@ -576,7 +496,7 @@ export class VinylSettingTab extends PluginSettingTab {
           })
         )
       );
-      row(group, t('settings.logout'), t('settings.logoutDescQq'), (s) =>
+      row(body, t('settings.logout'), (s) =>
         void s.addButton((b) =>
           b
             .setButtonText(t('settings.logoutAction'))
@@ -590,8 +510,8 @@ export class VinylSettingTab extends PluginSettingTab {
       );
     });
 
-    section(el, t('settings.section.local'), 'local', 'hard-drive', (group) => {
-      row(group, t('settings.audioFolder'), t('settings.audioFolderDesc'), (s) =>
+    settingsSection(el, t('settings.section.local'), 'local', 'hard-drive', (body) => {
+      row(body, t('settings.audioFolder'), (s) =>
         void s.addText((txt) =>
           txt
             .setPlaceholder(DEFAULT_SETTINGS.audioFolder)
@@ -602,7 +522,7 @@ export class VinylSettingTab extends PluginSettingTab {
             })
         )
       );
-      row(group, t('settings.importMode'), t('settings.importModeDesc'), (s) =>
+      row(body, t('settings.importMode'), (s) =>
         void s.addDropdown((d) =>
           d
             .addOption('copy', t('settings.importCopy'))
@@ -630,7 +550,7 @@ export class VinylSettingTab extends PluginSettingTab {
    *  两个平台并行检测，避免一个慢源阻塞另一个。
    *  行说明（账号与网关连通性）刻意不写：状态就在控件区，再来一行只是重复。 */
   private statusRow(parent: HTMLElement, platform: 'netease' | 'qq'): void {
-    row(parent, t('settings.loginStatus'), '', (s) => {
+    row(parent, t('settings.loginStatus'), (s) => {
       s.settingEl.addClass('vinyl-auth-setting');
       const el = s.controlEl.createDiv({ cls: 'vinyl-auth-status' });
       if (platform === 'netease') {

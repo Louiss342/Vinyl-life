@@ -1,6 +1,8 @@
 // Vinyl Life —— 主入口：注册视图 / 命令 / 设置面板，装配服务层与播放引擎。
 // 本地源（零后端）+ 在线源（应用内网关）统一为 Track 队列。
 import { Editor, Plugin, TFile, MarkdownView, WorkspaceLeaf, normalizePath } from 'obsidian';
+import * as fs from 'fs';
+import * as path from 'path';
 import {
   VinylSettings,
   DEFAULT_SETTINGS,
@@ -27,11 +29,13 @@ import { VinylShelfView, SHELF_VIEW_TYPE } from './views/shelf-view';
 import { HandoffController } from './animation/handoff';
 import {
   AlbumInfo,
+  findConventionCover,
   getAlbumInfo,
   findAlbumNotes,
   setAlbumTemplatePath,
+  stripWikilink,
 } from './core/album-index';
-import { normalizeShelfProps, normalizeShelfPropLabels } from './core/shelf-props';
+import { normalizeShelfProps, normalizeShelfPropLabels, propLabel } from './core/shelf-props';
 import { DISC_DIRECTIONS, SPIN_SPEEDS } from './core/disc-motion';
 import { normalizeDeckStyle, normalizeRecordColor } from './core/appearance';
 import {
@@ -55,7 +59,7 @@ import { DeleteAlbumModal } from './views/delete-album-modal';
 import { DeleteBatchModal } from './views/delete-batch-modal';
 import { collectAlbumBatchDeleteTargets, deleteAlbumBatchAssets } from './delete';
 import { setLanguage, t, tf } from './core/i18n';
-import { ensureStats, recordTrackPlay } from './core/stats';
+import { AlbumPlayStat, AlbumStatSnapshot, VinylStats, ensureStats, localDayKey, recordTrackPlay } from './core/stats';
 import { Track, trackKey } from './core/track';
 
 // wikilink 里不能安全出现的字符：|（别名分隔）与 [ ]（链接定界）、换行。
@@ -75,6 +79,19 @@ function albumWikiLink(path: string | undefined, title: string): string {
   if (safePath && safeName) return `[[${safePath}|${safeName}]]`;
   if (safePath) return `[[${safePath}]]`;
   return name;
+}
+
+/** 导出笔记的落点目录名：和 audio / covers / Vinyl Note 一样用英文，不随界面语言变 */
+const STATS_EXPORT_FOLDER = 'Stats';
+
+/** Markdown 表格单元格：管道会截断列、换行会断行 —— wikilink 的别名分隔符靠这一步进表格 */
+function tableCell(text: string): string {
+  return text.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+}
+
+/** 导出笔记里的字符柱状：按最大值等比缩放到最多 16 格（页面热力图在笔记里的等价物） */
+function textBar(count: number, max: number): string {
+  return '█'.repeat(Math.max(1, Math.round((count / Math.max(1, max)) * 16)));
 }
 
 export default class VinylLifePlugin extends Plugin {
@@ -470,25 +487,22 @@ export default class VinylLifePlugin extends Plugin {
     new DeleteBatchModal(this.app, this, albums, onDeleted).open();
   }
 
-  // 执行删除：连带资产（可选）→ 笔记 → 统计 → 播放态复位。
+  // 执行删除：历史快照 → 连带资产（可选）→ 笔记 → 播放态复位。
   // 单张与批量共用这一条路径：批量时同批专辑互相视为「不存在」，
   // 它们共用的音频目录才不会被误判成「还有别张在用」而留下（见 collectAlbumBatchDeleteTargets）。
   async deleteAlbums(albums: AlbumInfo[], opts: { audio: boolean; cover: boolean }) {
     if (!albums.length) return;
+    // 统计是历史，不应随专辑删除：先保留封面副本和 YAML，日后可从统计页重建。
+    for (const album of albums) await this.captureDeletedAlbum(album);
     const targets = collectAlbumBatchDeleteTargets(this.app, albums);
     const removed = await deleteAlbumBatchAssets(this.app, targets, opts);
-    let statsChanged = false;
     for (const album of albums) {
       // 笔记可能已被外部删除/改名（卡片是快照）→ 存在才删，其余清理照旧
       if (this.app.vault.getAbstractFileByPath(album.path) instanceof TFile) {
         await this.app.fileManager.trashFile(album.file);
       }
-      if (this.settings.stats.albums[album.path]) {
-        delete this.settings.stats.albums[album.path];
-        statsChanged = true;
-      }
     }
-    if (statsChanged) await this.saveSettings();
+    await this.saveSettings();
     const current = this.engine.snapshot().albumNotePath;
     if (current && albums.some((a) => a.path === current)) this.engine.clear();
     const assets = removed ? tf('notice.albumDeletedAssets', { n: removed }) : '';
@@ -559,14 +573,313 @@ export default class VinylLifePlugin extends Plugin {
   }
 
   recordPlay(track: Track, albumPath?: string, albumTitle?: string) {
+    let snapshot: AlbumStatSnapshot | undefined;
+    if (albumPath) {
+      const file = this.app.vault.getAbstractFileByPath(albumPath);
+      const album = file instanceof TFile
+        ? getAlbumInfo(this.app, file, { coverFolder: this.settings.coverFolder })
+        : null;
+      if (album) snapshot = this.albumStatSnapshot(album);
+    }
     this.settings.stats = recordTrackPlay(
       this.settings.stats,
       trackKey(track),
       albumPath,
       albumTitle,
-      track.title
+      track.title,
+      snapshot
     );
     this.scheduleStatsSave();
+  }
+
+  private albumStatSnapshot(album: AlbumInfo): AlbumStatSnapshot {
+    const coverFile = this.albumCoverFile(album);
+    return {
+      title: album.title,
+      artist: album.artist,
+      year: album.year,
+      genre: album.genre,
+      rating: album.rating,
+      cover: album.cover,
+      coverRaw: album.coverRaw,
+      coverVaultPath: coverFile?.path,
+      neteaseId: album.neteaseId,
+      qqId: album.qqId,
+      audioFolderRef: album.audioFolderRef,
+      audioRefs: [...album.audioRefs],
+      sourcePref: album.sourcePref,
+      displayProps: { ...album.displayProps },
+    };
+  }
+
+  private albumCoverFile(album: AlbumInfo): TFile | null {
+    if (album.coverRaw && !/^https?:\/\//i.test(album.coverRaw) && !/^#[0-9a-f]{3,8}$/i.test(album.coverRaw)) {
+      const hit = this.app.metadataCache.getFirstLinkpathDest(stripWikilink(album.coverRaw), album.path);
+      if (hit instanceof TFile) return hit;
+    }
+    return findConventionCover(
+      this.app,
+      album.file,
+      album.audioFolderRef,
+      this.settings.coverFolder
+    );
+  }
+
+  private historyCoverName(albumPath: string, extension: string): string {
+    let hash = 2166136261;
+    for (let i = 0; i < albumPath.length; i++) {
+      hash ^= albumPath.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return `.stats-covers/${(hash >>> 0).toString(16)}.${extension || 'jpg'}`;
+  }
+
+  private async captureDeletedAlbum(album: AlbumInfo): Promise<void> {
+    const stat = this.settings.stats.albums[album.path];
+    if (!stat) return;
+    const snapshot = { ...stat.snapshot, ...this.albumStatSnapshot(album) };
+    try {
+      const text = await this.app.vault.read(album.file);
+      snapshot.frontmatter = text.match(/^---\r?\n[\s\S]*?\r?\n---/)?.[0];
+    } catch {
+      // 笔记已被外部删除时仍保留已有快照。
+    }
+    const coverFile = this.albumCoverFile(album);
+    if (coverFile) {
+      try {
+        const rel = this.historyCoverName(album.path, coverFile.extension);
+        const dest = pluginAbsPath(this, rel);
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.writeFileSync(dest, Buffer.from(await this.app.vault.readBinary(coverFile)));
+        snapshot.cachedCover = rel;
+        snapshot.coverVaultPath = coverFile.path;
+      } catch (e) {
+        console.warn('[vinyl] 保留历史封面失败', e);
+      }
+    }
+    stat.snapshot = snapshot;
+  }
+
+  statsCoverSrc(snapshot: AlbumStatSnapshot | undefined): string | undefined {
+    if (!snapshot) return undefined;
+    if (snapshot.cachedCover) {
+      const rel = normalizePath(`${this.app.vault.configDir}/${this.manifest.dir}/${snapshot.cachedCover}`);
+      return this.app.vault.adapter.getResourcePath(rel);
+    }
+    return snapshot.cover;
+  }
+
+  async playAlbumFromStats(albumPath: string, cardEl: HTMLElement | null = null): Promise<boolean> {
+    const file = this.app.vault.getAbstractFileByPath(albumPath);
+    if (!(file instanceof TFile)) return false;
+    const album = getAlbumInfo(this.app, file, { coverFolder: this.settings.coverFolder });
+    if (!album) return false;
+    await this.handoff.handoff(album, cardEl);
+    return true;
+  }
+
+  async restoreAlbumFromStats(albumPath: string): Promise<boolean> {
+    if (this.app.vault.getAbstractFileByPath(albumPath) instanceof TFile) return true;
+    const snapshot = this.settings.stats.albums[albumPath]?.snapshot;
+    if (!snapshot) {
+      notice(t('stats.restoreUnavailable'));
+      return false;
+    }
+    try {
+      const parent = albumPath.split('/').slice(0, -1).join('/');
+      if (parent) await ensureFolder(this.app, parent);
+      let frontmatter = snapshot.frontmatter;
+      if (!frontmatter) {
+        const lines = ['---', 'tags: [album]'];
+        const add = (key: string, value: string | number | undefined) => {
+          if (value !== undefined && value !== '') lines.push(`${key}: ${JSON.stringify(value)}`);
+        };
+        add('artist', snapshot.artist);
+        add('year', snapshot.year);
+        add('genre', snapshot.genre);
+        add('rating', snapshot.rating);
+        add('cover', snapshot.coverRaw);
+        add('neteaseId', snapshot.neteaseId);
+        add('qqId', snapshot.qqId);
+        add('audioFolder', snapshot.audioFolderRef);
+        if (snapshot.audioRefs?.length) {
+          lines.push('audio:');
+          for (const ref of snapshot.audioRefs) lines.push(`  - ${JSON.stringify(ref)}`);
+        }
+        if (snapshot.sourcePref && snapshot.sourcePref !== 'auto') add('source', snapshot.sourcePref);
+        lines.push('---');
+        frontmatter = lines.join('\n');
+      }
+      if (snapshot.cachedCover && snapshot.coverVaultPath) {
+        const existing = this.app.vault.getAbstractFileByPath(snapshot.coverVaultPath);
+        if (!existing) {
+          const coverParent = snapshot.coverVaultPath.split('/').slice(0, -1).join('/');
+          if (coverParent) await ensureFolder(this.app, coverParent);
+          const bytes = fs.readFileSync(pluginAbsPath(this, snapshot.cachedCover));
+          const data = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+          await this.app.vault.createBinary(snapshot.coverVaultPath, data);
+        }
+      }
+      await this.app.vault.create(
+        albumPath,
+        `${frontmatter}\n\n# ${snapshot.title}\n\n${t('import.reflectionHeading')}\n`
+      );
+      notice(tf('stats.restoredNotice', { title: snapshot.title }));
+      return true;
+    } catch (e) {
+      notice(tf('stats.restoreFailed', { msg: (e as Error).message }));
+      return false;
+    }
+  }
+
+  async clearPlaybackStats(): Promise<void> {
+    this.settings.stats = ensureStats(null);
+    const cache = pluginAbsPath(this, '.stats-covers');
+    try {
+      if (path.basename(cache) === '.stats-covers') fs.rmSync(cache, { recursive: true, force: true });
+    } catch (e) {
+      console.warn('[vinyl] 清理历史封面失败', e);
+    }
+    await this.saveSettings();
+  }
+
+  async exportPlaybackStats(): Promise<TFile> {
+    const stats = this.settings.stats;
+    const now = new Date();
+    const day = localDayKey(now.getTime());
+    const folder = normalizePath(
+      `${this.settings.albumFolder.split('/').slice(0, -1).join('/') || 'Vinyl Life'}/${STATS_EXPORT_FOLDER}`
+    );
+    await ensureFolder(this.app, folder);
+    const baseName = tf('stats.exportFile', { date: day });
+    let target = normalizePath(`${folder}/${baseName}.md`);
+    let i = 2;
+    while (this.app.vault.getAbstractFileByPath(target)) {
+      target = normalizePath(`${folder}/${baseName} (${i++}).md`);
+    }
+    const file = await this.app.vault.create(target, this.statsNoteLines(stats).join('\n'));
+    notice(tf('stats.exportedNotice', { path: target }));
+    return file;
+  }
+
+  /** 专辑在导出笔记里的写法：笔记还在就给可点击链接，删了只报名字。
+   *  表格单元格里管道会截断列，统一交给 tableCell 转义。 */
+  private albumCell(albumPath: string, stat: AlbumPlayStat): string {
+    const title = stat.snapshot?.title || albumPath.split('/').pop()?.replace(/\.md$/, '') || albumPath;
+    const exists = this.app.vault.getAbstractFileByPath(albumPath) instanceof TFile;
+    return tableCell(exists ? albumWikiLink(albumPath, title) : tf('stats.exportRemoved', { title }));
+  }
+
+  /** 按卡片属性汇总（取值与统计页「自定义统计」同一套：笔记优先，其次是历史快照）。
+   *  属性多了笔记会很长，最多取前四个；某个属性一条数据都没有就整块略过。 */
+  private statsNotePropBlocks(stats: VinylStats): string[] {
+    const out: string[] = [];
+    for (const prop of this.settings.shelfProps.slice(0, 4)) {
+      const groups = new Map<string, { plays: number; albums: number }>();
+      for (const [albumPath, stat] of Object.entries(stats.albums)) {
+        const current = this.app.vault.getAbstractFileByPath(albumPath);
+        const album = current instanceof TFile ? getAlbumInfo(this.app, current) : null;
+        const value = album?.displayProps[prop] || stat.snapshot?.displayProps?.[prop];
+        if (!value) continue;
+        const group = groups.get(value) ?? { plays: 0, albums: 0 };
+        group.plays += stat.plays;
+        group.albums++;
+        groups.set(value, group);
+      }
+      if (!groups.size) continue;
+      const label = propLabel(prop, this.settings.shelfPropLabels);
+      out.push(`### ${label}`, '', tf('stats.exportPropsHead', { name: label }), '| --- | ---: | ---: |');
+      for (const [value, group] of Array.from(groups).sort((a, b) => b[1].plays - a[1].plays)) {
+        out.push(`| ${tableCell(value)} | ${group.plays} | ${group.albums} |`);
+      }
+      out.push('');
+    }
+    return out;
+  }
+
+  /** 导出笔记的正文：摘要 + 概览 + 月度分布 + 播放最多 + 最近播放 + 按属性汇总 + 每日播放。
+   *  内容对齐统计页（页面上看得到的这里都有），并补上页面没直接给的记录跨度与最活跃的一天；
+   *  分布用字符柱状（页面是热力图，笔记里给等价的文字版）。 */
+  private statsNoteLines(stats: VinylStats): string[] {
+    const albumCount = Object.keys(stats.albums).length;
+    const trackCount = Object.keys(stats.tracks).length;
+    const daily = new Map<string, number>();
+    for (const event of stats.events) {
+      const key = localDayKey(event.at);
+      daily.set(key, (daily.get(key) ?? 0) + 1);
+    }
+    const days = Array.from(daily.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+    const busiest = days.reduce<[string, number] | null>(
+      (best, cur) => (!best || cur[1] > best[1] ? cur : best),
+      null
+    );
+
+    // 不写 H1：笔记标题就是文件名，正文再来一行「Vinyl Life 播放统计 · 日期」是重复
+    const lines = [
+      tf('stats.exportSummary', {
+        plays: stats.totalPlays,
+        albums: albumCount,
+        tracks: trackCount,
+        days: days.length,
+      }),
+      '',
+      tf('stats.exportTotal', { n: stats.totalPlays }),
+      tf('stats.exportAlbums', { n: albumCount }),
+      tf('stats.exportTracks', { n: trackCount }),
+    ];
+    if (days.length && busiest) {
+      lines.push(tf('stats.exportFirst', { date: days[0][0] }));
+      lines.push(tf('stats.exportBusiest', { date: busiest[0], n: busiest[1] }));
+    }
+    lines.push('');
+
+    if (days.length) {
+      const months = new Map<string, number>();
+      for (const [date, count] of days) {
+        const month = date.slice(0, 7);
+        months.set(month, (months.get(month) ?? 0) + count);
+      }
+      const rows = Array.from(months.entries()).sort((a, b) => b[0].localeCompare(a[0]));
+      const max = Math.max(...rows.map(([, n]) => n));
+      lines.push(t('stats.exportMonthlyHeading'), '', t('stats.exportMonthlyHead'), '| --- | ---: | --- |');
+      for (const [month, count] of rows) lines.push(`| ${month} | ${count} | ${textBar(count, max)} |`);
+      lines.push('');
+    }
+
+    const albums = Object.entries(stats.albums).sort((a, b) => b[1].plays - a[1].plays);
+    if (albums.length) {
+      lines.push(t('stats.exportTopHeading'), '', t('stats.exportTopHead'), '| ---: | --- | ---: | --- |');
+      albums.forEach(([albumPath, stat], index) => {
+        lines.push(
+          `| ${index + 1} | ${this.albumCell(albumPath, stat)} | ${stat.plays} | ${localDayKey(stat.lastPlayedAt)} |`
+        );
+      });
+      lines.push('');
+    }
+
+    const recent = [...albums].sort((a, b) => b[1].lastPlayedAt - a[1].lastPlayedAt).slice(0, 10);
+    if (recent.length) {
+      lines.push(t('stats.exportRecentHeading'), '', t('stats.exportRecentHead'), '| --- | ---: | --- |');
+      for (const [albumPath, stat] of recent) {
+        lines.push(`| ${this.albumCell(albumPath, stat)} | ${stat.plays} | ${localDayKey(stat.lastPlayedAt)} |`);
+      }
+      lines.push('');
+    }
+
+    const props = this.statsNotePropBlocks(stats);
+    if (props.length) lines.push(t('stats.exportPropsHeading'), '', ...props);
+
+    if (days.length) {
+      const max = Math.max(...days.map(([, n]) => n));
+      lines.push(t('stats.exportDailyHeading'), '', t('stats.exportDailyHead'), '| --- | ---: | --- |');
+      for (const [date, count] of [...days].reverse()) {
+        lines.push(`| ${date} | ${count} | ${textBar(count, max)} |`);
+      }
+      lines.push('');
+    }
+
+    lines.push(t('stats.exportMigrationNote'), '');
+    return lines;
   }
 
   private statsSaveTimer: number | null = null;

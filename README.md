@@ -119,17 +119,18 @@ cover: "[[Vinyl Life/covers/专辑封面.jpg]]"
 
 ## 播放统计
 
-在「通用」设置里可以查看累计播放次数、最近听过的专辑和播放最多的专辑。最近播放记录包含上次播放的曲目和时间，也可以从这里清除统计。
+独立的「统计」标签页会用近一年的日历热力图显示每天的播放量，热力图按时间倒序铺开：今天在最左边一列，往右回溯一年，最近在听什么一眼就能看到。点击某天会展开当天的紧密唱片墙，封面可直接点击播放；下方还有最近播放、播放最多和按艺术家、年份等卡片属性分组的自定义统计。
 
-统计保存在插件自己的数据文件中，不会自动往专辑笔记里添加播放记录。
+统计保存在插件自己的数据文件中，不会自动往专辑笔记里添加播放记录。从专辑墙删除有播放历史的专辑时，插件会保留一份封面和元数据快照：统计页仍能显示它，点击后可确认添加回专辑墙。已删除的本地音频不会被快照复制。页底可一键清除统计，或导出为 Markdown 笔记 —— 摘要与概览（含记录跨度、最活跃的一天）、近一年按月分布、播放最多、最近播放、按卡片属性汇总，以及每日播放（带文字柱状），页面上有的都在，另加几项页面没直接给的汇总。
 
 ## 设置
 
-设置面板是四个标签页，点哪个就地换成哪一页：
+设置面板是五个标签页，点哪个就地换成哪一页：
 
 | 标签页 | 可以调整的内容 |
 | --- | --- |
-| 通用 | 界面语言、专辑和封面目录、本地笔记模板、默认音源、在线音质、自动播放、播放器位置，以及播放统计。 |
+| 通用 | 界面语言、专辑和封面目录、本地笔记模板、默认音源、在线音质与自动播放。 |
+| 统计 | 日历热力图、当日唱片墙、最近/最多播放、自定义属性统计、清除与导出。 |
 | 外观 | 专辑墙每行数量、唱片弹出方向、唱片颜色、唱机配色和转盘动画速度。 |
 | 源 | 网易云与 QQ 音乐登录、本地音频目录、默认导入方式，以及在线音源运行状态。 |
 | 关于 | 版本、作者手记（中英对照）、项目地址和许可信息。整页手绘：文案用手写体，便签外框是一圈手画的虚线。 |
@@ -336,17 +337,18 @@ Deleting an album brings up a confirmation window where you can choose whether t
 
 ## Playback statistics
 
-The General settings show the cumulative play count, the albums you played recently, and the albums you played most. The recent list includes the last track played and the time it was played, and you can clear the statistics from here as well.
+The dedicated Statistics tab uses a one-year calendar heatmap to show how much you listened each day. Select a day to open its compact record wall; click a cover to play it. Recent, most-played, and custom groupings by card properties such as artist or year appear below.
 
-Statistics are stored in the plugin's own data file; play records are never added to your album notes automatically.
+Statistics are stored in the plugin's own data file; play records are never added to your album notes automatically. When an album with listening history is removed through the shelf, Vinyl Life keeps a cover and metadata snapshot. The removed record remains visible in Statistics and can be added back after confirmation; deleted local audio is not copied into the snapshot. The bottom of the page can clear the statistics or export them as a Markdown note.
 
 ## Settings
 
-The settings panel is four tabs; clicking a tab switches the content in place:
+The settings panel is five tabs; clicking a tab switches the content in place:
 
 | Tab | What you can adjust |
 | --- | --- |
-| General | Interface language, album and cover folders, the local note template, the default source, online audio quality, autoplay, player position, and playback statistics. |
+| General | Interface language, album and cover folders, the local note template, the default source, online audio quality, and autoplay. |
+| Statistics | Calendar heatmap, daily record wall, recent/most-played lists, custom property groupings, clearing, and export. |
 | Appearance | How many albums per row on the shelf, which way records slide out, record color, turntable color scheme, and platter animation speed. |
 | Sources | NetEase and QQ Music sign-in, the local audio folder, the default import method, and the status of the online source runtime. |
 | About | Version, the author's note (Chinese and English side by side), the project URL, and license information. The whole page is hand-drawn: the text uses a handwriting font, and a dashed frame is sketched around the note. |

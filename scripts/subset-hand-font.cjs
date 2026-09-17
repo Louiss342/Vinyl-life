@@ -4,11 +4,12 @@
 //   拉丁：Excalidraw 官方 Excalifont（设计稿 Drawing 2026-09-15 14.14.52 用的就是它）
 //   中文：霞鹜文楷 LXGW WenKai（Excalidraw 渲染中文时配的字体，也就是设计稿里中文的样子）
 //
-// 用得上手写体的两处文案，字符集都自动从这里取：
+// 用得上手写体的三处文案，字符集都自动从这里取：
 //   ① 专辑墙空态教程 —— src/core/i18n.ts 的 shelf.tutorial.*
 //   ② 设置面板「关于」页 —— src/core/about.ts 的作者手记（中英） + 词典里的壳文案
 //      （版本行 / 许可行） + 页面上写死的拉丁文（产品名 / 链接文字 / 分隔符）
-// 两处都是固定内容，所以字能一个不落地进子集；改完文案重跑即可。
+//   ③ 设置面板「统计」页的累计播放行 —— 词典里的 stats.unit*（Drawing 2026-09-17 16.15.55）
+// 三处都是固定内容，所以字能一个不落地进子集；改完文案重跑即可。
 //
 // 用法：
 //   npm i @excalidraw/excalidraw subset-font --no-save          # 取官方字体与子集工具
@@ -89,7 +90,20 @@ function handText() {
     out.en += dictEntry(i18nSrc, k).en;
   }
 
-  if (!out.zh || !out.en) throw new Error('没取到手写体文案，检查上面两处来源的写法');
+  // ③ 「统计」页累计播放行的手写体小字（数字是拉丁面，随 LATIN_EXTRA 的 0-9 一起给）
+  const statsUnitKeys = [
+    'stats.unitPlays',
+    'stats.unitListened',
+    'stats.unitAlbums',
+    'stats.unitTracks',
+    'stats.unitSongs',
+  ];
+  for (const k of statsUnitKeys) {
+    out.zh += dictEntry(i18nSrc, k).zh;
+    out.en += dictEntry(i18nSrc, k).en;
+  }
+
+  if (!out.zh || !out.en) throw new Error('没取到手写体文案，检查上面几处来源的写法');
   return out;
 }
 
@@ -129,8 +143,9 @@ async function main() {
     [
       '/* ============ 手写体（拉丁 Excalifont + 中文霞鹜文楷，均为官方字体子集） ============',
       ' * 与设计稿同款：拉丁走 Excalifont，中文走霞鹜文楷（Excalidraw 渲染中文时配的就是它）。',
-      ' * 用在哪：专辑墙空态教程（Drawing 2026-09-15 14.14.52）与设置面板「关于」页。',
-      ' * 两个面都是按这两处文案裁过的子集，故不沿用原字体名；子集之外的字（生僻字等）',
+      ' * 用在哪：专辑墙空态教程（Drawing 2026-09-15 14.14.52）、设置面板「关于」页，',
+      ' * 以及「统计」页的累计播放行（Drawing 2026-09-17 16.15.55）。',
+      ' * 两个面都是按这几处文案裁过的子集，故不沿用原字体名；子集之外的字（生僻字等）',
       ' * 由浏览器回落到主题字体，最多是个别字没有手写感，不会空白。',
       ' * 授权：Excalifont © 2024 by Excalidraw、LXGW WenKai © 2021-2026 LXGW，均 SIL OFL 1.1，',
       ' * 全文见 assets/fonts/ 下的两个 -OFL.txt。',
@@ -143,7 +158,10 @@ async function main() {
   const css = fs.readFileSync(CSS, 'utf8');
   const at = css.indexOf(CSS_MARKER);
   if (at < 0) throw new Error(`styles.css 里找不到字体块标记：${CSS_MARKER}`);
-  fs.writeFileSync(CSS, css.slice(0, at) + block);
+  // 重写的是「从字体块到文件尾」这一整段 —— 尾部的版本戳要原样接回去，
+  // 否则跑完脚本样式表就没了戳，插件会当成旧样式挂兜底副本（有测试在盯）。
+  const stamp = (/\/\*! vinyl-life styles [\s\S]*?\*\//.exec(css.slice(at)) || [])[0];
+  fs.writeFileSync(CSS, css.slice(0, at) + block.replace(/\n$/, '\n') + (stamp ? '\n' + stamp + '\n' : ''));
 
   const check = fs.readFileSync(CSS, 'utf8');
   const faces = (check.match(/data:font\/woff2/g) || []).length;

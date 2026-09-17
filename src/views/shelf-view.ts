@@ -931,7 +931,8 @@ export class VinylShelfView extends ItemView {
     const row = pop.createDiv({ cls: 'vinyl-props-row is-selected' });
     row.dataset.propKey = key;
     row.setAttribute('draggable', 'true');
-    row.setAttribute('title', tf('props.frontmatterKey', { key }));
+    // 提示走 aria-label：行里还有「改显示名 / 移除」两个按钮，用 title 会把气泡叠到它们身上
+    row.setAttribute('aria-label', tf('props.frontmatterKey', { key }));
     row.addEventListener('dragstart', (ev) => {
       this.dragKey = key;
       this.dropAt = null;
@@ -1131,7 +1132,8 @@ export class VinylShelfView extends ItemView {
 
     // 笔记路径的悬停提示只挂在封面上：挂整张卡片的话，鼠标移到专辑名或属性行也会弹出来，
     // 正好挡住正在滚动的文字。属性行自己的提示（属性名：值）见下面的 buildCard 属性循环。
-    const cover = card.createDiv({ cls: 'vinyl-shelf-cover', attr: { title: album.path } });
+    // 封面不再单独挂 title（原先报的是 vault 路径）：悬停交给卡片的 aria-label，只报专辑名
+    const cover = card.createDiv({ cls: 'vinyl-shelf-cover' });
     // 唱片层（绝对定位）：位于封面之下（img/占位 z-index 1 在上，disc 藏于封面后方探出）
     cover.createDiv({ cls: 'vinyl-shelf-disc' });
     if (album.cover) {
@@ -1159,7 +1161,7 @@ export class VinylShelfView extends ItemView {
       const row = card.createDiv({
         cls: 'vinyl-shelf-prop vinyl-marquee',
         // 冒号也随语言（全角 / 半角），别把中文标点漏进英文界面
-        attr: { title: `${propLabel(key, labels)}${t('common.colon')}${text}` },
+        attr: { 'aria-label': `${propLabel(key, labels)}${t('common.colon')}${text}` },
       });
       row.createSpan({ text, cls: 'vinyl-shelf-prop-value vinyl-marquee-text' });
     }

@@ -273,6 +273,8 @@ export class VinylPlayerView extends ItemView {
   private els: PlayerEls | null = null;
   private renderedQueue: Track[] | null = null;
   private queueRows: HTMLElement[] = [];
+  /** 每行的序号格：拖拽提示挂在它上面（行的 aria-label 留给曲名，一个元素只留一个提示来源） */
+  private queueIdxs: HTMLElement[] = [];
   /** 段容器（多专辑时画出来的分组）+ 段头：切语言要按它们重写段头提示 */
   private segmentEls: Array<{ el: HTMLElement; head: HTMLElement; seg: { start: number; count: number; albumTitle: string; albumPath: string } }> = [];
   // 队列行右侧的来源角标（文案随语言变；行不重建，切语言时按 renderedQueue 就地重写）
@@ -461,9 +463,12 @@ export class VinylPlayerView extends ItemView {
       note.setAttribute('aria-label', tf('player.noteAlbum', { name }));
       if (remove) remove.setAttribute('aria-label', tf('player.queueRemoveAlbum', { name }));
     }
-    // 段头可拖拽（整段排序）的提示：只有多专辑时才真能拖，但文案写在头上不碍事
-    for (const { head } of this.segmentEls) head.setAttribute('title', t('player.queueDragAlbum'));
-    for (const row of this.queueRows) row.setAttribute('title', t('player.dragToReorder'));
+    // 段头可拖拽（整段排序）的提示：只有多专辑时才真能拖，但文案写在头上不碍事。
+    // 走 aria-label 而不是 title —— 段头里还有「写感想 / 移除整段」两个按钮，浏览器会把祖先的
+    // title 也弹出来，与宿主按 aria-label 画的气泡叠成两个（这就是「写感想」那两个气泡的来源）。
+    for (const { head } of this.segmentEls) head.setAttribute('aria-label', t('player.queueDragAlbum'));
+    // 行的拖拽提示改挂序号：行自己已经用 aria-label 报曲名，同一元素只留一个提示来源
+    for (const idx of this.queueIdxs) idx.setAttribute('aria-label', t('player.dragToReorder'));
     if (this.emptyQueueEl) this.emptyQueueEl.textContent = t('player.emptyQueue');
     // 来源角标走 trackSourceLabel（随语言变）：行不重建，按当前队列就地重写文本
     const queue = this.renderedQueue;
@@ -974,6 +979,7 @@ export class VinylPlayerView extends ItemView {
     box.empty();
     this.queueRows = [];
     this.queueBadges = [];
+    this.queueIdxs = [];
     this.emptyQueueEl = null;
     this.segmentEls = [];
     this.segmentBtns = [];
@@ -1030,7 +1036,14 @@ export class VinylPlayerView extends ItemView {
         row.setAttribute('role', 'button');
         row.setAttribute('aria-label', track.title);
         this.bindQueueDrag(row, i);
-        row.createSpan({ text: String(i + 1).padStart(2, '0'), cls: 'vinyl-idx' });
+        // 序号兼作拖拽把手：拖拽提示挂在它身上（行的 aria-label 留给曲名）
+        this.queueIdxs.push(
+          row.createSpan({
+            text: String(i + 1).padStart(2, '0'),
+            cls: 'vinyl-idx',
+            attr: { 'aria-label': t('player.dragToReorder') },
+          })
+        );
         row.createSpan({ text: track.title, cls: 'vinyl-q-title' });
         const badge = row.createSpan({
           text: trackSourceLabel(track),

@@ -164,7 +164,37 @@ test('i18n：词典里没有无人引用的死键（动态拼接的键族除外�
 // 局限：启发式不是语义分析——把 aria-label 与 title 拆到相隔很远的两个函数里、或同一文案写成不同
 //   表达式（如 t('k') 与 tf('k', {})）时可能漏检；同理，接收者重名（两个作用域里都叫 b）在窗口内可能误报，
 //   但误报只会让人肉核对一眼，不会放过真问题。
-// 反向不查：只设 title、没有 aria-label 的元素（如队列行的拖拽提示）是合法的单提示写法，保持原样。
+// 反向见下一条测试：title 现在是全面禁止的（祖先的 title 会被浏览器继承到子元素上，启发式抓不到）。
+// ============ 提示气泡：视图层不得再出现 title 属性 ============
+// 背景：宿主按 aria-label 画样式化气泡，浏览器又会为 title 弹一个原生气泡 —— 而且 title 会被
+// *继承*：只要祖先带 title，悬停它内部任何元素都会再冒一个（「写感想」按钮压在段头 title 上时
+// 就是两个气泡）。启发式查不出这种跨元素的继承，所以这里直接禁掉 title：提示一律走 aria-label。
+test('源码防护：视图层不出现 title 属性（提示统一走 aria-label）', () => {
+  const hits = [];
+  for (const f of srcTsFiles()) {
+    const rel = path.relative(__dirname, f);
+    const lines = fs.readFileSync(f, 'utf8').split(/\r?\n/);
+    lines.forEach((line, i) => {
+      if (/setAttribute\(\s*['"]title['"]/.test(line)) hits.push(`${rel}:${i + 1} setAttribute('title')`);
+      const at = line.indexOf('attr: {');
+      if (at < 0) return;
+      // attr 对象可能跨行：从 attr: { 起数花括号，走到配对的 } 为止，只在这个切片里找 title 键
+      let depth = 0;
+      for (let j = i; j < lines.length; j++) {
+        // 首行从 attr: { 处切起（前面可能还有别的键，别误判）；之后每行整行扫
+        const text = j === i ? lines[j].slice(at) : lines[j];
+        for (const ch of text) {
+          if (ch === '{') depth++;
+          else if (ch === '}') depth--;
+        }
+        if (/\btitle\s*:/.test(text)) hits.push(`${rel}:${j + 1} attr.title`);
+        if (depth <= 0) break;
+      }
+    });
+  }
+  assert.deepEqual(hits, [], '提示改走 aria-label：title 会和宿主气泡叠成两个，还会被后代继承');
+});
+
 test('源码防护：同一元素不得同时设 aria-label 与 title（否则弹两个提示气泡）', () => {
   const files = srcTsFiles();
   assert.ok(files.length > 0, '没扫到源文件');
@@ -633,18 +663,23 @@ test('播放器：队列行的拖拽提示随语言就更新（不重建队列�
   const queue = [{ source: 'local-vault', path: 'a.mp3', title: 'A', duration: 65 }];
   view.update(snap({ queue, index: 0, status: 'paused' }));
   const row = view.queueRows[0];
-  assert.ok(row, '队列行已建');
-  assert.equal(row.getAttribute('title'), '拖拽调整顺序');
+  const idx = view.queueIdxs[0];
+  assert.ok(row && idx, '队列行与序号格已建');
+  // 提示只走 aria-label：行报曲名、序号格报拖拽 —— 同一元素只留一个提示来源
+  // （浏览器会把祖先的 title 继承到子元素上，行上再挂 title 就会和宿主气泡叠成两个）
+  assert.equal(idx.getAttribute('aria-label'), '拖拽调整顺序');
+  assert.equal(row.getAttribute('title'), null, '行上不得再有 title');
 
   mod.setLanguage('en');
   view.applyLanguage();
-  assert.equal(row.getAttribute('title'), 'Drag to reorder');
+  assert.equal(idx.getAttribute('aria-label'), 'Drag to reorder');
+  assert.equal(view.queueIdxs[0], idx, '就地改属性：序号格没被重建');
   assert.equal(view.queueRows[0], row, '就地改属性：队列行没被重建');
   assert.equal(row.getAttribute('draggable'), 'true', '非文案属性不受影响');
 
   mod.setLanguage('zh');
   view.applyLanguage();
-  assert.equal(row.getAttribute('title'), '拖拽调整顺序');
+  assert.equal(idx.getAttribute('aria-label'), '拖拽调整顺序');
 });
 
 test('播放器：切语言后队列的来源角标按新语言重算（不重建节点）', () => {
@@ -1055,18 +1090,18 @@ test('手写体子集：取材覆盖「关于」页（改文案要重跑脚本�
   assert.match(css, /font-family: 'Vinyl Hand CJK'/, '中文面');
 });
 
-test('设置面板：四个标签页，顺序与页名固定（页名走词典）', () => {
+test('设置面板：五个标签页，统计位于通用与外观之间（页名走词典）', () => {
   const mod = settingsModule();
   const tabs = mod.SETTINGS_TABS;
   // 展开一层再比：vm 沙箱里的数组原型与测试侧不同，deepStrictEqual 会判不等
   assert.deepEqual(
     [...tabs.map((tab) => tab.id)],
-    ['general', 'appearance', 'source', 'about'],
-    '标签顺序照设计稿：通用 / 外观 / 源 / 关于'
+    ['general', 'stats', 'appearance', 'source', 'about'],
+    '标签顺序：通用 / 统计 / 外观 / 源 / 关于'
   );
   assert.deepEqual(
     [...tabs.map((tab) => tab.key)],
-    ['settings.tab.general', 'settings.tab.appearance', 'settings.tab.source', 'settings.tab.about'],
+    ['settings.tab.general', 'settings.tab.stats', 'settings.tab.appearance', 'settings.tab.source', 'settings.tab.about'],
     '页名键收在清单里，别在渲染处另拼'
   );
   for (const tab of tabs) {
@@ -1077,7 +1112,7 @@ test('设置面板：四个标签页，顺序与页名固定（页名走词典�
   }
 });
 
-test('设置面板：标签条四个按钮，点一下就换内容、高亮跟着走（假 DOM 驱动 display()）', () => {
+test('设置面板：标签条五个按钮，点一下就换内容、高亮跟着走（假 DOM 驱动 display()）', () => {
   // 面板整块自绘，所以 display() 能在这个假 DOM 上跑起来：Setting 用链式桩顶掉，
   // 控件本身（下拉 / 开关的真实现）不需要 —— 这里验的是标签条与「点一下就换内容」。
   const mod = settingsModule();
@@ -1096,10 +1131,10 @@ test('设置面板：标签条四个按钮，点一下就换内容、高亮跟�
   tab.display();
 
   const buttons = () => collect(tab.containerEl).filter((e) => e.classes.has('vinyl-settings-tab'));
-  assert.equal(buttons().length, 4, '四个标签');
+  assert.equal(buttons().length, 5, '五个标签');
   assert.deepEqual(
     [...buttons().map((b) => b.textContent)],
-    ['通用', '外观', '源', '关于'],
+    ['通用', '统计', '外观', '源', '关于'],
     '标签文案走词典（默认中文）'
   );
   assert.equal(buttons()[0].getAttribute('aria-current'), 'true', '当前标签要报给读屏软件');
@@ -1112,8 +1147,8 @@ test('设置面板：标签条四个按钮，点一下就换内容、高亮跟�
   assert.equal(has('默认位置'), false, '播放器默认位置已移出通用页');
   assert.equal(has('每行专辑数量'), false, '「外观」页的行还没渲染（切标签是重建，不是预建四份）');
 
-  buttons()[1].onclick();
-  assert.ok(buttons()[1].classes.has('is-active'), '切到「外观」后高亮跟过去');
+  buttons()[2].onclick();
+  assert.ok(buttons()[2].classes.has('is-active'), '切到「外观」后高亮跟过去');
   assert.equal(buttons()[0].getAttribute('aria-current'), 'false', '上一个标签不再报当前页');
   assert.ok(has('每行专辑数量'), '内容换成「外观」页的设置行');
   assert.ok(has('默认位置'), '播放器默认位置已移动到「外观」页');
@@ -1121,8 +1156,9 @@ test('设置面板：标签条四个按钮，点一下就换内容、高亮跟�
 });
 
 test('设置面板：分区图标优先走宿主 Lucide，宿主没有该图标名才回落文本符号', () => {
-  // 通用页的五个分区：sliders-horizontal / folder-tree / notebook-pen / audio-lines / chart-no-axes-column
-  const generalIcons = ['sliders-horizontal', 'folder-tree', 'notebook-pen', 'audio-lines', 'chart-no-axes-column'];
+  // 播放统计已单独成页；通用页剩四个分区。
+  // 顺序 = 通用页分区的书写顺序 = 两栏网格里的排布（基础偏好与播放是半宽的一对，路径/模板整行）
+  const generalIcons = ['sliders-horizontal', 'audio-lines', 'folder-tree', 'notebook-pen'];
   const render = (extra) => {
     const mod = settingsModule(extra);
     const tab = new mod.VinylSettingTab(
@@ -1145,20 +1181,20 @@ test('设置面板：分区图标优先走宿主 Lucide，宿主没有该图标�
     getIconIds: () => [...generalIcons],
     setIcon: (el, name) => el.setAttribute('data-icon', name),
   });
-  assert.equal(lucide.length, 5, '五个分区各有一个图标位');
+  assert.equal(lucide.length, 4, '四个分区各有一个图标位');
   assert.deepEqual(
     [...lucide.map((el) => el.getAttribute('data-icon'))],
     generalIcons,
     '宿主有这些图标名时必须用 Lucide（SVG 形状跨平台一致），别再用文本符号'
   );
-  assert.deepEqual([...lucide.map((el) => el.textContent)], ['', '', '', '', ''], '走了 Lucide 就不再放文本');
+  assert.deepEqual([...lucide.map((el) => el.textContent)], ['', '', '', ''], '走了 Lucide 就不再放文本');
 
   // 老宿主：没有 getIconIds（或图标名是较新才加的）→ 回落文本符号
   const legacy = render({});
-  assert.equal(legacy.length, 5);
+  assert.equal(legacy.length, 4);
   assert.deepEqual(
     [...legacy.map((el) => el.textContent)],
-    ['⌁', '⌂', '✎', '≋', '▥'],
+    ['⌁', '≋', '⌂', '✎'],
     '取不到图标集时回落文本符号，界面不至于空一块'
   );
   assert.equal(legacy.every((el) => el.getAttribute('data-icon') === null), true);
