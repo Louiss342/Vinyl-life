@@ -23,14 +23,14 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     zh: '专辑笔记里还没有可排序的属性',
     en: 'No sortable properties on your album notes yet',
   },
-  'sort.dir.oldNew': { zh: '早-晚', en: 'Old → New' },
-  'sort.dir.newOld': { zh: '晚-早', en: 'New → Old' },
-  'sort.dir.leastMost': { zh: '少-多', en: 'Least → Most' },
-  'sort.dir.mostLeast': { zh: '多-少', en: 'Most → Least' },
-  'sort.dir.lowHigh': { zh: '低-高', en: 'Low → High' },
-  'sort.dir.highLow': { zh: '高-低', en: 'High → Low' },
-  'sort.dir.oldRecent': { zh: '远-近', en: 'Old → Recent' },
-  'sort.dir.recentOld': { zh: '近-远', en: 'Recent → Old' },
+  // 方向词（工具栏方案：给具体动作，不再是「早-晚」这种两头式）
+  'sort.dir.newestFirst': { zh: '最新在前', en: 'Newest first' },
+  'sort.dir.earliestFirst': { zh: '最早在前', en: 'Earliest first' },
+  'sort.dir.mostFirst': { zh: '最多在前', en: 'Most first' },
+  'sort.dir.leastFirst': { zh: '最少在前', en: 'Least first' },
+  'sort.dir.highFirst': { zh: '高分在前', en: 'Highest first' },
+  'sort.dir.lowFirst': { zh: '低分在前', en: 'Lowest first' },
+  'sort.dir.recentFirst': { zh: '最近在前', en: 'Most recent first' },
   'sort.dir.asc': { zh: '升序', en: 'Ascending' },
   'sort.dir.desc': { zh: '降序', en: 'Descending' },
   'filter.all': { zh: '全部', en: 'All' },
@@ -38,33 +38,35 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'filter.netease': { zh: '网易云', en: 'NetEase' },
   'filter.qq': { zh: 'QQ 音乐', en: 'QQ Music' },
   'filter.collect': { zh: '仅收藏（无音源）', en: 'Collection only (no source)' },
+  // 分段控件里放得下的短名（完整名字仍在 aria-label 上）
+  'filter.collectShort': { zh: '仅收藏', en: 'Collect' },
 
-  // —— 专辑墙：视图标题 / 工具栏 ——
+  // —— 专辑墙：视图标题 / 工具栏（工具栏方案 2026-09-18：单行，按钮只留图标） ——
   'shelf.title': { zh: '专辑墙', en: 'Album shelf' },
-  'shelf.titleWithCount': { zh: '专辑墙（{n} 张）', en: 'Album shelf ({n})' },
-  'shelf.search': { zh: '在这里快速检索你的黑胶 :)', en: 'Quickly search your vinyl here :)' },
+  'shelf.heading': { zh: '我的唱片', en: 'My records' },
+  // 标题与数量同行：数量用手绘体；有搜索 / 来源筛选时改报「匹配数/总数」
+  'shelf.search': { zh: '在这里快速检索你的唱片:)', en: 'Quickly search your records here :)' },
+  'shelf.searchClear': { zh: '清空关键词', en: 'Clear the keyword' },
+  'toolbar.search': { zh: '搜索', en: 'Search' },
+  'toolbar.display': { zh: '陈列', en: 'Display' },
+  'toolbar.add': { zh: '添加', en: 'Add' },
+  'toolbar.more': { zh: '更多', en: 'More' },
+  // 陈列：非「全部」的筛选要在单行工具栏里保持可见（按钮图标后面跟一个来源名）
+  'toolbar.displayFiltered': { zh: '陈列 · {source}', en: 'Display · {source}' },
   'shelf.refresh': { zh: '刷新', en: 'Refresh' },
-  'shelf.sort': { zh: '排序', en: 'Sort' },
-  'shelf.filter': { zh: '音源筛选', en: 'Filter by source' },
-  'shelf.props': { zh: '卡片属性', en: 'Card properties' },
-  'shelf.importAlbum': { zh: '导入专辑', en: 'Import album' },
-  'shelf.importAudio': { zh: '导入本地音频', en: 'Import local audio' },
-  // 抽屉把手（常态下工具栏只剩它）：展开 / 收起读屏提示
-  'shelf.expand': { zh: '展开工具栏', en: 'Expand toolbar' },
-  'shelf.collapse': { zh: '收起工具栏', en: 'Collapse toolbar' },
   'shelf.batchDelete': { zh: '批量删除', en: 'Batch delete' },
   'shelf.empty.title': { zh: '还没有专辑笔记', en: 'No album notes yet' },
   'shelf.empty.hint': {
-    zh: '新建笔记并写入 frontmatter：tags: [album] + cover / artist / year… 即可上墙；也可用工具栏「导入」从网易云或本地音频起步。',
-    en: 'Create a note with frontmatter tags: [album] plus cover / artist / year… to put it on the shelf, or start with Import in the toolbar.',
+    zh: '新建笔记并写入 frontmatter：tags: [album] + cover / artist / year… 即可上墙；也可用工具栏「添加」从网易云或本地音频起步。',
+    en: 'Create a note with frontmatter tags: [album] plus cover / artist / year… to put it on the shelf, or start with Add in the toolbar.',
   },
   // —— 专辑墙：空态教程（文案取自 Excalidraw 设计稿 Drawing 2026-09-15 14.14.52）——
   'shelf.tutorial.title': { zh: 'Enjoy Your Vinyl Life！！！', en: 'Enjoy Your Vinyl Life!!!' },
   'shelf.tutorial.emptyTitle': { zh: '现在的专辑墙还什么都没有哦0.o', en: 'The album wall is still empty 0.o' },
   'shelf.tutorial.importA': { zh: '如果你想快速导入你心爱的专辑', en: 'Want to import your beloved albums in no time?' },
   'shelf.tutorial.importB': {
-    zh: '尝试点击这两个按钮吧，本地和在线都可以哦:)',
-    en: 'Try these two buttons — local and online both work :)',
+    zh: '尝试点击这个按钮吧，本地和在线都可以哦:)',
+    en: 'Try this button — local and online both work :)',
   },
   'shelf.tutorial.onlineOnly': {
     zh: '不过在线平台目前只支持网易云音乐和QQ音乐:(',
@@ -89,13 +91,31 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   },
   'shelf.filtered.title': { zh: '没有符合条件的专辑', en: 'No albums match' },
   'shelf.filtered.hint': { zh: '调整搜索词或筛选条件试试', en: 'Try a different search or filter.' },
+  'shelf.searchOnline': { zh: '在线查找「{q}」', en: 'Search online for “{q}”' },
 
-  // —— 专辑墙：批量删除（选择模式 / 底部动作条 / 确认弹窗）——
-  'batch.selected': { zh: '已选 {n} 张', en: '{n} selected' },
-  'batch.selectAll': { zh: '全选', en: 'Select all' },
+  // —— 专辑墙：陈列面板（来源 / 排列 / 显示） ——
+  'display.source': { zh: '来源', en: 'Source' },
+  'display.arrange': { zh: '排列', en: 'Sort' },
+  'display.sortBy': { zh: '依据', en: 'Sort by' },
+  'display.dir': { zh: '方向', en: 'Direction' },
+  'display.view': { zh: '显示', en: 'Display' },
+  'display.columns': { zh: '每行数量', en: 'Per row' },
+  'display.props': { zh: '封面下的信息', en: 'Info under cover' },
+  'display.propsNone': { zh: '未显示', en: 'None' },
+  'display.back': { zh: '返回陈列', en: 'Back to Display' },
+  'display.customGroup': { zh: '自定义属性', en: 'Custom properties' },
+
+  // —— 专辑墙：更多菜单 ——
+  'more.select': { zh: '选择专辑', en: 'Select albums' },
+  'more.refresh': { zh: '刷新专辑墙', en: 'Refresh shelf' },
+  'menu.selectMany': { zh: '选择多张', en: 'Select multiple' },
+
+  // —— 专辑墙：选择模式（工具栏切换用途；确认弹窗） ——
+  'batch.selected': { zh: '已选择 {n} 张', en: '{n} selected' },
+  'batch.selectAll': { zh: '全选当前 {n} 张', en: 'Select all {n}' },
   'batch.clear': { zh: '清空选择', en: 'Clear selection' },
-  'batch.delete': { zh: '删除所选', en: 'Delete selected' },
-  'batch.exit': { zh: '退出批量删除', en: 'Exit batch delete' },
+  'batch.delete': { zh: '删除…', en: 'Delete…' },
+  'batch.exit': { zh: '完成', en: 'Done' },
   'batchDelete.title': { zh: '批量删除专辑', en: 'Delete albums' },
   'batchDelete.summary': {
     zh: '将要删除以下 {n} 张专辑的笔记：',
@@ -147,6 +167,7 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'src.local': { zh: '本地', en: 'Local' },
   // —— 通用（跨视图复用的小词 / 分隔符） ——
   'common.cancel': { zh: '取消', en: 'Cancel' },
+  'common.close': { zh: '关闭', en: 'Close' },
   'common.delete': { zh: '删除', en: 'Delete' },
   'common.listSep': { zh: '、', en: ', ' },
   'common.comma': { zh: '，', en: ', ' },
@@ -192,14 +213,18 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     en: 'Searching NetEase and QQ Music…',
   },
   'import.searchFound': { zh: '找到 {n} 张专辑', en: 'Found {n} album(s)' },
-  // 已在库中的专辑不再出现在结果里：隐去了多少要说一声，不然用户会以为搜索漏了
-  'import.searchFoundHidden': {
-    zh: '找到 {n} 张（{m} 张已在库中，已隐去）',
-    en: 'Found {n} ({m} already in your library, hidden)',
+  // 已在库中的（同平台同 id）照常出现在结果里、就地标「已在收藏」：这里如实报一声有几张
+  'import.searchFoundOwned': {
+    zh: '找到 {n} 张专辑（其中 {m} 张已在收藏）',
+    en: 'Found {n} album(s) — {m} already in your library',
   },
-  'import.searchAllImported': {
-    zh: '搜到的 {n} 张专辑都已在库中，没有再要导入的了',
-    en: 'All {n} matches are already in your library',
+  // 逐条结果的状态：添加 → 正在添加 → 已添加（按钮变「打开」）；失败原地重试
+  'import.adding': { zh: '正在添加…', en: 'Adding…' },
+  'import.retry': { zh: '重试', en: 'Retry' },
+  'import.owned': { zh: '已在收藏', en: 'In library' },
+  'import.sameNameHint': {
+    zh: '库中有一张同名专辑（平台不同，可继续添加）',
+    en: 'A same-name album is in your library (different platform — you can still add)',
   },
   // 结果池与翻页：先本地展开（不花网络），展开完了再向上游要下一页
   'import.showMore': { zh: '显示更多（还有 {n} 张）', en: 'Show more ({n} left)' },
@@ -248,6 +273,17 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   },
   'import.failed': { zh: '❌ 导入失败：', en: '❌ Import failed: ' },
   'import.action': { zh: '导入', en: 'Import' },
+
+  // —— 专辑墙「添加」面板：在线搜索 + 本地导入同住一个浮层 ——
+  'add.title': { zh: '添加唱片', en: 'Add records' },
+  'add.placeholder': {
+    zh: '搜索专辑、艺人，或粘贴专辑链接',
+    en: 'Search albums, artists, or paste an album link',
+  },
+  'add.localHint': { zh: '将本地音频拖到这里，或', en: 'Drop local audio here, or' },
+  'add.chooseFiles': { zh: '选择文件', en: 'Choose files' },
+  'add.back': { zh: '返回添加', en: 'Back to Add' },
+  // 新专辑不在当前视野里时的回执（看得见的那张贴边走边闪，不用打扰）
 
   // —— 导入弹窗：本地音频导入 ——
   'import.localTitle': { zh: '导入本地音频', en: 'Import local audio' },
@@ -594,6 +630,14 @@ export const DICT: Record<string, { zh: string; en: string }> = {
 
   // —— 设置面板：外观 ——
   'settings.section.shelf': { zh: '专辑墙', en: 'Album shelf' },
+  'settings.toolbarPosition': { zh: '工具栏位置', en: 'Toolbar position' },
+  // 六档位置：顶部 / 底部 × 左 / 中 / 右（默认为「顶部居中」）
+  'settings.toolbarTopLeft': { zh: '顶部左对齐', en: 'Top left' },
+  'settings.toolbarTopCenter': { zh: '顶部居中', en: 'Top center' },
+  'settings.toolbarTopRight': { zh: '顶部右对齐', en: 'Top right' },
+  'settings.toolbarBottomLeft': { zh: '底部左对齐', en: 'Bottom left' },
+  'settings.toolbarBottomCenter': { zh: '底部居中', en: 'Bottom center' },
+  'settings.toolbarBottomRight': { zh: '底部右对齐', en: 'Bottom right' },
   'settings.columns': { zh: '每行专辑数量', en: 'Albums per row' },
   'settings.columnsAuto': { zh: '自动', en: 'Auto' },
   'settings.columnsN': { zh: '{n} 张', en: '{n} per row' },
@@ -845,10 +889,6 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'props.joiner': { zh: '、', en: ', ' },
 
   // —— 专辑墙卡片 / 属性弹层（views/shelf-view）——
-  'shelf.titleFiltered': {
-    zh: '专辑墙（{shown}/{total}）',
-    en: 'Album shelf ({shown}/{total})',
-  },
   'props.frontmatterKey': { zh: 'frontmatter 键：{key}', en: 'frontmatter key: {key}' },
   'props.albumCount': { zh: '{count} 张', en: '{count} albums' },
   'props.rename': { zh: '重命名「{name}」', en: 'Rename “{name}”' },

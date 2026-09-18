@@ -101,7 +101,10 @@ async function build() {
   // 400 → 420：独立统计页 —— 近一年热力日历、当日唱片墙、专辑快照恢复、
   // 自定义属性汇总和 Markdown 导出。新增为功能代码与样式，没有引入依赖。
   // （累计播放行另走手写体：文案进了两个字体子集，中文面 +0.7 KB，仍在这条预算之内。）
-  const MAIN_JS_BUDGET = 420 * 1024;
+  // 420 → 440：工具栏交互重做（方案 2026-09-18）—— 单行工具栏 + 原位搜索 + 陈列 / 添加两个浮层 +
+  // 选择模式改挂工具栏（去掉底部动作条）。导入搜索抽成 views/album-search（弹窗与添加浮层共用）、
+  // 新增 views/add-panel，styles.css 多出工具栏 / 浮层样式 —— 净增约 9 KB，全是这次交互的代码。
+  const MAIN_JS_BUDGET = 440 * 1024;
   if (sizes['main.js'] > MAIN_JS_BUDGET) {
     throw new Error(
       `main.js 体积 ${(sizes['main.js'] / 1024).toFixed(1)} KB 超出预算 ${MAIN_JS_BUDGET / 1024} KB：` +

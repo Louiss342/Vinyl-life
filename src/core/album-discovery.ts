@@ -29,13 +29,17 @@ export interface AlbumSearchCandidate {
   matchedTrack?: string;
   /** 本轮本地重排的相关度（0..100）。只给剪尾和测试看，界面不展示这个数 */
   score?: number;
+  /** 同平台同 id 已经明确入库：界面显示「已在收藏」，不再给「添加」 */
+  inLibrary?: boolean;
+  /** 库里有一张同名的（另一个平台 / 未记 id）：只提示一声，仍可添加 */
+  nameInLibrary?: boolean;
 }
 
 export interface AlbumSearchResult {
   items: AlbumSearchCandidate[];
   warnings: Array<{ source: MusicSource; message: string }>;
-  /** 命中但已在库中、被隐去的条数：状态行靠它解释「怎么比记忆里少」 */
-  hiddenImported: number;
+  /** 结果里已在收藏的条数（状态行用来说「其中 N 张已在收藏」） */
+  owned: number;
   /** 上游还有没有下一页：界面靠它决定「加载更多」还要不要发请求 */
   hasMore: boolean;
 }
@@ -393,22 +397,28 @@ function trimSessions(): void {
 }
 
 function emptyResult(): AlbumSearchResult {
-  return { items: [], warnings: [], hiddenImported: 0, hasMore: false };
+  return { items: [], warnings: [], owned: 0, hasMore: false };
 }
 
-/** 池子 → 展示列表：本地重排 → 剪尾 → 隐去已在库中的 */
+/** 池子 → 展示列表：本地重排 → 剪尾 → 标注已在库中的。
+ *  工具栏方案 2026-09-18：不再隐去 —— 明确入库的同平台专辑照常出现、就地标「已在收藏」；
+ *  只凭同名命中的另记一笔（nameInLibrary），界面上给一句弱提示而不是当成同一张。 */
 function present(app: App, query: string, session: SearchSession): AlbumSearchResult {
   const ranked = cutTail(rank(session.pool, query));
   const library = libraryIndex(app);
-  const items = ranked.filter((item) => {
-    if (library.ids.has(item.key)) return false;
+  const items = ranked.map((item) => {
+    const inLibrary = library.ids.has(item.key);
     const name = nameKey(item.title, item.artists.join(' '));
-    return !(name && library.names.has(name));
+    return {
+      ...item,
+      inLibrary,
+      nameInLibrary: !inLibrary && !!name && library.names.has(name),
+    };
   });
   return {
     items,
     warnings: session.warnings,
-    hiddenImported: ranked.length - items.length,
+    owned: items.filter((item) => item.inLibrary).length,
     hasMore: SOURCES.some((source) => !session.exhausted.has(source)),
   };
 }

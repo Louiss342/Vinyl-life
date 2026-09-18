@@ -117,6 +117,7 @@ function loadModal() {
       this.app = app;
       this.contentEl = fakeEl();
       this.titleEl = fakeEl();
+      this.modalEl = fakeEl(); // 真机上的弹窗壳：markVinylModal（全直角）往它上面挂类名
       this.closed = false;
     }
     close() {
@@ -280,7 +281,7 @@ test('搜索结果导入：留在搜索页、就地变「打开」，可以接�
   assert.equal(modal.closed, true, '「打开」= 明确要去看，这时才关窗');
 });
 
-test('搜索结果导入：失败不改变卡片状态，也不会把窗口关掉', async () => {
+test('搜索结果导入：失败原位变「重试」，也不会把窗口关掉', async () => {
   const { mod, TFile: FileClass } = loadModal();
   const h = makeHarness();
   h.TFile = FileClass;
@@ -295,7 +296,7 @@ test('搜索结果导入：失败不改变卡片状态，也不会把窗口关�
   fire(sideButton(cards[0]), 'click');
   await flush(10);
   assert.equal(modal.closed, false, '失败也不能关窗（用户还要接着试）');
-  assert.equal(sideButton(cards[0]).textContent, '导入', '按钮回到可点状态，文案不变');
+  assert.equal(sideButton(cards[0]).textContent, '重试', '失败原位重试（工具栏方案 §5）');
   assert.equal(sideButton(cards[0]).disabled, false, '失败后按钮要能再点');
   assert.match(String(rowStatus(cards[0]).textContent), /失败|❌/);
 });

@@ -1,6 +1,6 @@
 // Vinyl Life — 通用小工具
 
-import { App, Plugin, Notice, TFile, TFolder, normalizePath } from 'obsidian';
+import { App, Plugin, Notice, TFile, TFolder, Menu, Modal, normalizePath } from 'obsidian';
 import * as path from 'path';
 import { readdirSync as fsReaddirSync } from 'fs';
 import type { Dirent } from 'fs';
@@ -363,6 +363,18 @@ export function sanitizeFileName(name: string): string {
     .replace(/\s+$/, '')
     .trim();
   return cleaned || 'untitled';
+}
+
+/** 给插件弹窗挂「全直角」类名：壳（宿主的 .modal）的圆角由 styles.css 的「全直角」段收掉。
+ *  只挂在自己的 modalEl 上 —— 只有插件开的这几个弹窗变直角，别处不受影响。 */
+export function markVinylModal(modal: Modal): void {
+  modal.modalEl.addClass('vinyl-modal');
+}
+
+/** 给插件自己的菜单挂「全直角」类名（排序 / 筛选）。Menu.dom 没进公开类型，但运行时就是
+ *  菜单根元素；取不到就跳过 —— 只是菜单那圈圆角收不掉，不影响任何功能。 */
+export function markVinylMenu(menu: Menu): void {
+  (menu as Menu & { dom?: HTMLElement }).dom?.addClass('vinyl-menu');
 }
 
 /** 系统「减少动态效果」是否开启（前庭敏感的用户靠它关掉转盘与交接动画）。

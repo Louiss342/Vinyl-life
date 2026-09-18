@@ -15,6 +15,7 @@ import { StatsPage } from './views/stats-page';
 import { SettingsSection, settingsSection } from './views/settings-section';
 import { attachAboutInk, renderAboutPage } from './views/about-page';
 import { DiscDirection, DISC_DIRECTIONS, SpinSpeed, SPIN_SPEEDS } from './core/disc-motion';
+import { TOOLBAR_POSITIONS, ToolbarPosition, normalizeToolbarPosition } from './core/appearance';
 import { notice } from './util';
 import { Lang, LANGUAGES, t, tf } from './core/i18n';
 import { EMPTY_STATS, VinylStats } from './core/stats';
@@ -26,6 +27,7 @@ import {
   RecordColor,
   DECK_STYLES,
   RECORD_COLORS,
+  SHELF_COLUMN_CHOICES,
   normalizeDeckStyle,
   normalizeRecordColor,
 } from './core/appearance';
@@ -76,6 +78,8 @@ export interface VinylSettings {
   discDirection: DiscDirection;
   /** 播放器转盘转速（外观页） */
   turntableSpeed: SpinSpeed;
+  /** 专辑墙工具栏的位置（外观页）：顶部 / 底部 × 左 / 中 / 右；默认 = 顶部居中 */
+  toolbarPosition: ToolbarPosition;
   /** 专辑墙卡片显示的属性键（专辑墙工具栏「卡片属性」维护；顺序即显示顺序）。
    *  对应专辑笔记 frontmatter 的键名。只读语义：永远整表替换（变更走 shelf-props 的 toggle/reorder helper） */
   shelfProps: string[];
@@ -109,6 +113,7 @@ export const DEFAULT_SETTINGS: VinylSettings = {
   shelfColumns: 'auto',
   discDirection: 'right',
   turntableSpeed: 'normal',
+  toolbarPosition: 'top-center',
   volume: 0.8,
   queueMode: false,
   playMode: 'once',
@@ -143,14 +148,19 @@ const row = (parent: HTMLElement, name: string, build: (s: Setting) => void): vo
   build(new Setting(parent).setName(name));
 };
 
-const columnOptions = (): [number, string][] => [
-  [2, tf('settings.columnsN', { n: 2 })],
-  [3, tf('settings.columnsN', { n: 3 })],
-  [4, tf('settings.columnsN', { n: 4 })],
-  [5, tf('settings.columnsN', { n: 5 })],
-  [6, tf('settings.columnsN', { n: 6 })],
-  [7, tf('settings.columnsN', { n: 7 })],
-];
+const columnOptions = (): [number, string][] =>
+  SHELF_COLUMN_CHOICES.map((n) => [n, tf('settings.columnsN', { n })]);
+
+// 工具栏位置下拉的显示名（与 DECK_LABEL_KEYS 同一套做法：键写成字面量，别现拼，
+// 词典的「没有死键」自检才扫得到）
+const TOOLBAR_POS_KEYS: Record<ToolbarPosition, string> = {
+  'top-left': 'settings.toolbarTopLeft',
+  'top-center': 'settings.toolbarTopCenter',
+  'top-right': 'settings.toolbarTopRight',
+  'bottom-left': 'settings.toolbarBottomLeft',
+  'bottom-center': 'settings.toolbarBottomCenter',
+  'bottom-right': 'settings.toolbarBottomRight',
+};
 
 const discOptions = (): [DiscDirection, string][] => [
   ['right', t('settings.discRight')],
@@ -379,6 +389,16 @@ export class VinylSettingTab extends PluginSettingTab {
           d.setValue(String(p.settings.shelfColumns)).onChange(async (v) => {
             p.settings.shelfColumns =
               v === 'auto' ? 'auto' : Number(v) || DEFAULT_SETTINGS.shelfColumns;
+            await p.saveSettings();
+            p.refreshAppearance();
+          });
+        })
+      );
+      row(body, t('settings.toolbarPosition'), (s) =>
+        void s.addDropdown((d) => {
+          for (const key of TOOLBAR_POSITIONS) d.addOption(key, t(TOOLBAR_POS_KEYS[key]));
+          d.setValue(p.settings.toolbarPosition).onChange(async (v) => {
+            p.settings.toolbarPosition = normalizeToolbarPosition(v);
             await p.saveSettings();
             p.refreshAppearance();
           });

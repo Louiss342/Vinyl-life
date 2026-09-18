@@ -10,6 +10,7 @@ import {
   collectAlbumBatchDeleteTargets,
   scanFolderContents,
 } from '../delete';
+import { markVinylModal } from '../util';
 import { t, tf } from '../core/i18n';
 
 /** 专辑清单 / 提示里的路径列表最多各铺几条，其余折成「等 N 张 / 等」 */
@@ -27,6 +28,7 @@ export class DeleteBatchModal extends Modal {
     private onDeleted?: () => void
   ) {
     super(app);
+    markVinylModal(this); // 全直角：弹窗壳收掉圆角（见 styles.css「全直角」段）
     this.titleEl.setText(t('batchDelete.title'));
     this.targets = collectAlbumBatchDeleteTargets(app, albums);
   }

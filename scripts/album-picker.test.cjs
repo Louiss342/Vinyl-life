@@ -370,7 +370,7 @@ test('样式：恢复原来的窄侧脊 → 悬停展开封面，保留纵向视
   const css = fs.readFileSync(path.join(__dirname, '../styles.css'), 'utf8');
   assert.match(css, /\.vinyl-picker-row\s*\{[^}]*display:\s*flex/, '唱片仍是原来的横向侧脊队列');
   assert.match(css, /\.vinyl-picker-crate\s*\{[^}]*overflow-y:\s*auto/, '唱片架纵向滚动');
-  assert.match(css, /\.vinyl-pick\s*\{[^}]*border-radius:\s*3px/, '恢复原来的封面圆角');
+  assert.match(css, /\.vinyl-pick\s*\{[^}]*border-radius:\s*0/, '全直角（用户点名：与专辑墙上的专辑一致）');
   assert.match(css, /\.vinyl-pick\s*\{[^}]*width:\s*24px[^}]*height:\s*var\(--vinyl-pick-h/, '默认是原来的窄侧脊');
   assert.match(css, /\.vinyl-pick:hover,[\s\S]{0,120}?\.vinyl-pick:focus-visible\s*\{[^}]*width:\s*var\(--vinyl-pick-h/, '悬停展开成完整封面');
   assert.match(

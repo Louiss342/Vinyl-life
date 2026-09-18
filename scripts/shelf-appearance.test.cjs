@@ -177,27 +177,48 @@ test('一致性：CSS 基础值（右向）与 disc-motion.ts 兜底值一致', 
   assert.deepEqual(Array.from(mod.DISC_DIRECTIONS), DIRS, '方向枚举应与 CSS 类名一致');
 });
 
-test('接线：applyAppearance 写方向类 + 列数变量 + 唱片配色类', () => {
+test('接线：applyAppearance 写方向类 + 列数变量 + 唱片配色类 + 工具栏位置类', () => {
   const mod = makeStub();
   const el = makeEl();
-  const plugin = { settings: { discDirection: 'left', shelfColumns: 'auto', recordColor: 'yellow' } };
+  const plugin = {
+    settings: {
+      discDirection: 'left',
+      shelfColumns: 'auto',
+      recordColor: 'yellow',
+      toolbarPosition: 'bottom-right',
+    },
+  };
   const view = new mod.VinylShelfView({}, plugin);
   view.contentEl = el;
 
   view.applyAppearance();
-  assert.deepEqual(Array.from(el.classes).sort(), ['is-disc-left', 'is-record-yellow']);
+  assert.deepEqual(Array.from(el.classes).sort(), [
+    'is-disc-left',
+    'is-record-yellow',
+    'is-toolbar-bottom-right',
+  ]);
   assert.equal(el.props.get('--vinyl-shelf-columns'), 'repeat(auto-fill, minmax(230px, 1fr))');
 
   plugin.settings.discDirection = 'up';
   plugin.settings.shelfColumns = 5;
+  plugin.settings.toolbarPosition = 'top-left';
   view.applyAppearance();
-  assert.deepEqual(Array.from(el.classes).sort(), ['is-disc-up', 'is-record-yellow'], '换方向应撤掉旧类');
+  assert.deepEqual(
+    Array.from(el.classes).sort(),
+    ['is-disc-up', 'is-record-yellow', 'is-toolbar-top-left'],
+    '换方向 / 换位置都应撤掉旧类'
+  );
   assert.equal(el.props.get('--vinyl-shelf-columns'), 'repeat(5, minmax(0, 1fr))');
 
   plugin.settings.discDirection = undefined; // 脏数据 → 回落到右向
   plugin.settings.recordColor = 'blue';
+  plugin.settings.toolbarPosition = 'nonsense'; // 脏数据 → 回落到顶部居中
   view.applyAppearance();
-  assert.deepEqual(Array.from(el.classes).sort(), ['is-disc-right', 'is-record-blue'], '唱片配色应即时切换');
+  assert.deepEqual(
+    Array.from(el.classes).sort(),
+    ['is-disc-right', 'is-record-blue', 'is-toolbar-top-center'],
+    '唱片配色即时切换；工具栏位置脏值回落默认'
+  );
 });
 
 test('接线：播放器 applyAppearance 写转速变量', () => {

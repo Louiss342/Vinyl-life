@@ -64,7 +64,12 @@ function setup(overrides = {}) {
     ...overrides,
   };
   class Modal {
-    constructor(app) { this.app = app; this.contentEl = new Element('div'); this.titleEl = new Element('div'); }
+    constructor(app) {
+      this.app = app;
+      this.contentEl = new Element('div');
+      this.titleEl = new Element('div');
+      this.modalEl = new Element('div'); // 真机上的弹窗壳：markVinylModal（全直角）往它上面挂类名
+    }
   }
   const module = { exports: {} };
   vm.runInNewContext(source, {

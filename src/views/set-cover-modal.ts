@@ -4,7 +4,7 @@
 import { App, FuzzySuggestModal, Modal, TFile } from 'obsidian';
 import type VinylLifePlugin from '../main';
 import type { AlbumInfo } from '../core/album-index';
-import { ensureFolder, isImageFile, notice, sanitizeFileName } from '../util';
+import { ensureFolder, isImageFile, markVinylModal, notice, sanitizeFileName } from '../util';
 import { t, tf } from '../core/i18n';
 
 class VaultImageSuggest extends FuzzySuggestModal<TFile> {
@@ -13,6 +13,7 @@ class VaultImageSuggest extends FuzzySuggestModal<TFile> {
     private onPick: (f: TFile) => void
   ) {
     super(app);
+    markVinylModal(this); // 全直角：弹窗壳收掉圆角（见 styles.css「全直角」段）
     this.setPlaceholder(t('cover.pickInVault'));
   }
 
@@ -38,6 +39,7 @@ export class SetCoverModal extends Modal {
     private album: AlbumInfo
   ) {
     super(app);
+    markVinylModal(this); // 全直角：弹窗壳收掉圆角（见 styles.css「全直角」段）
     this.titleEl.setText(tf('cover.title', { title: album.title }));
   }
 

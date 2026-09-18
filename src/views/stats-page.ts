@@ -14,6 +14,7 @@ import {
 } from '../core/stats';
 import { propLabel } from '../core/shelf-props';
 import { SettingsSection, settingsSection } from './settings-section';
+import { markVinylModal } from '../util';
 import { t, tf } from '../core/i18n';
 
 function albumTitle(path: string, stat: AlbumPlayStat): string {
@@ -37,6 +38,7 @@ class RestoreAlbumModal extends Modal {
     private onRestored: () => void
   ) {
     super(plugin.app);
+    markVinylModal(this); // 全直角：弹窗壳收掉圆角（见 styles.css「全直角」段）
     this.titleEl.setText(t('stats.removedTitle'));
   }
 

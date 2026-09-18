@@ -37,7 +37,11 @@ import {
 } from './core/album-index';
 import { normalizeShelfProps, normalizeShelfPropLabels, propLabel } from './core/shelf-props';
 import { DISC_DIRECTIONS, SPIN_SPEEDS } from './core/disc-motion';
-import { normalizeDeckStyle, normalizeRecordColor } from './core/appearance';
+import {
+  normalizeDeckStyle,
+  normalizeRecordColor,
+  normalizeToolbarPosition,
+} from './core/appearance';
 import {
   notice,
   pluginAbsPath,
@@ -272,6 +276,7 @@ export default class VinylLifePlugin extends Plugin {
     // 配色项（不认识的旧值由 normalize* 回落默认）
     this.settings.playerDeck = normalizeDeckStyle(data?.playerDeck);
     this.settings.recordColor = normalizeRecordColor(data?.recordColor);
+    this.settings.toolbarPosition = normalizeToolbarPosition(data?.toolbarPosition);
   }
 
   /** 音量与播放位置的防抖持久化入口（引擎每次 emit 都会调，落盘由 5 秒防抖兜住） */
@@ -414,8 +419,13 @@ export default class VinylLifePlugin extends Plugin {
     new LocalImportModal(this.app, this.importCtx(), albums, preset).open();
   }
 
-  // 拖拽入库入口（专辑墙调用）：album 为 null 时从文件新建本地专辑
-  async importAudioFromFiles(files: File[], album: AlbumInfo | null, rootName = '') {
+  // 拖拽入库入口（专辑墙调用）：album 为 null 时从文件新建本地专辑。
+  // 返回落库到的专辑笔记路径（拿不到 / 失败为 null）—— 专辑墙拿它给新卡片描边
+  async importAudioFromFiles(
+    files: File[],
+    album: AlbumInfo | null,
+    rootName = ''
+  ): Promise<string | null> {
     // 拖入的是文件夹 → 按「一张专辑一个文件夹」分析（音乐库根目录会被拦下）
     const scan = rootName
       ? analyzeFolder(
@@ -425,7 +435,7 @@ export default class VinylLifePlugin extends Plugin {
       : null;
     if (scan?.verdict === 'library') {
       notice(tf('notice.libraryRoot', { hint: libraryRootHint(scan) }));
-      return;
+      return null;
     }
     // 不支持的格式单独提示（静默忽略时拖进来没反应，用户不知道为什么）
     const { audio: pickedAudio, skipped } = splitAudioFiles(files);
@@ -433,7 +443,7 @@ export default class VinylLifePlugin extends Plugin {
     if (!scan && skipped.length) notice(skippedFormatsText(skipped.map((f) => f.name)));
     if (!audioFiles.length) {
       if (scan) notice(t('notice.noSupportedAudio'));
-      return;
+      return null;
     }
     try {
       let target = album;
@@ -446,7 +456,7 @@ export default class VinylLifePlugin extends Plugin {
         );
         if (!target) {
           notice(t('notice.createAlbumFailed'));
-          return;
+          return null;
         }
       }
       const mode = this.settings.importMode;
@@ -457,7 +467,7 @@ export default class VinylLifePlugin extends Plugin {
             ? t('notice.nothingToImportExisting')
             : t('notice.nothingToImport')
         );
-        return;
+        return null;
       }
       notice(
         tf('notice.imported', {
@@ -470,8 +480,10 @@ export default class VinylLifePlugin extends Plugin {
             : '') +
           (res.fallback ? t('notice.importFallback') : '')
       );
+      return target.path;
     } catch (e) {
       notice(tf('notice.importFailed', { msg: (e as Error).message }));
+      return null;
     }
   }
 

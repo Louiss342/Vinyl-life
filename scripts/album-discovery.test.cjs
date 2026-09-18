@@ -94,7 +94,7 @@ test('平台明确标记不可用的专辑不进入搜索结果', () => {
   assert.deepEqual(Array.from(qq, (x) => x.sourceAlbumId), ['AVAILABLE1']);
 });
 
-test('已在库中的专辑不出现在结果里，隐去的条数如实报出', async () => {
+test('已在收藏的专辑照常出现、就地标记（工具栏方案：不再隐去）', async () => {
   const file = { path: 'Vinyl Life/Vinyl Note/叶惠美.md', basename: '叶惠美' };
   const app = {
     vault: { getMarkdownFiles: () => [file] },
@@ -107,12 +107,21 @@ test('已在库中的专辑不出现在结果里，隐去的条数如实报出',
     ]),
     '周杰伦'
   );
-  assert.deepEqual(Array.from(result.items, (x) => x.title), ['七里香']);
-  assert.equal(result.hiddenImported, 1, '少了的那张要说清是「已在库中」，不能悄悄少');
+  const byTitle = new Map(Array.from(result.items, (x) => [x.title, x.inLibrary ?? false]));
+  assert.deepEqual(
+    [...byTitle.entries()].sort(),
+    [
+      ['七里香', false],
+      ['叶惠美', true],
+    ],
+    '两张都照常出现：已在收藏的那张就地标记'
+  );
+  assert.equal(result.items.length, 2, '不再隐去任何一条');
+  assert.equal(result.owned, 1, '已在收藏的条数如实报出（状态行要说一声）');
 });
 
-test('已在库中：另一个平台的同一张专辑也要隐去（否则一点就是第二张重复笔记）', async () => {
-  // 库里是网易云那版（neteaseId 匹配），结果里来的是 QQ 那版：id 对不上，但标题 + 艺人一致
+test('已在收藏：同平台同 id 才算（另一个平台的那版只是同名：照常可添加 + 一句弱提示）', async () => {
+  // 库里是网易云那版（neteaseId 匹配），结果里来的是 QQ 那版：id 对不上，标题 + 艺人一致
   const file = { path: 'Vinyl Life/Vinyl Note/叶惠美.md', basename: '叶惠美' };
   const app = {
     vault: { getMarkdownFiles: () => [file] },
@@ -124,11 +133,14 @@ test('已在库中：另一个平台的同一张专辑也要隐去（否则一�
     searchCtx(app, [], [], [{ mid: '000MkMni19ClKG', name: '叶惠美', artist: '周杰伦', trackCount: 11 }]),
     '叶惠美'
   );
-  assert.deepEqual(Array.from(result.items, (x) => x.title), []);
-  assert.equal(result.hiddenImported, 1);
+  const first = result.items[0];
+  assert.equal(first.title, '叶惠美');
+  assert.equal(first.inLibrary ?? false, false, '不同平台：不是「已在收藏」');
+  assert.equal(first.nameInLibrary, true, '但库里有同名：给一句弱提示，仍可添加');
+  assert.equal(result.owned, 0);
 });
 
-test('已在库中：艺人名对不上就不算同一张（宁可漏认，不能把别的专辑认成同一张）', async () => {
+test('已在收藏：艺人名对不上就不算同名（宁可漏认，不能把别的专辑认成同一张）', async () => {
   const file = { path: 'Vinyl Life/Vinyl Note/七里香.md', basename: '七里香' };
   const app = {
     vault: { getMarkdownFiles: () => [file] },
@@ -140,8 +152,10 @@ test('已在库中：艺人名对不上就不算同一张（宁可漏认，不�
     searchCtx(app, [], [], [{ mid: 'OTHERMID001', name: '七里香', artist: '王珏子乔', trackCount: 11 }]),
     '七里香'
   );
-  assert.deepEqual(Array.from(result.items, (x) => x.title), ['七里香'], '同名不同人：照常显示');
-  assert.equal(result.hiddenImported, 0);
+  const first = result.items[0];
+  assert.equal(first.title, '七里香');
+  assert.equal(first.inLibrary ?? false, false);
+  assert.equal(first.nameInLibrary ?? false, false, '同名不同人：连弱提示都不给');
 });
 
 test('模糊重排：拼错一个字 / 词序颠倒 / 只记得后半截，都能把对的那张排到最前', async () => {

@@ -32,3 +32,43 @@ export function normalizeDeckStyle(raw: unknown): DeckStyle {
 export function normalizeRecordColor(raw: unknown): RecordColor {
   return RECORD_COLORS.includes(raw as RecordColor) ? (raw as RecordColor) : DEFAULT_RECORD_COLOR;
 }
+
+/** 每行专辑数量的手动档位（设置面板与专辑墙「陈列」面板共用一套）：自动之外的可选列数 */
+export const SHELF_COLUMN_CHOICES: readonly number[] = [2, 3, 4, 5, 6, 7];
+
+/** 专辑墙工具栏的位置（外观页）：顶部 / 底部 × 左 / 中 / 右 六档；默认 = 现在这套「顶部居中」 */
+export type ToolbarPosition =
+  | 'top-left'
+  | 'top-center'
+  | 'top-right'
+  | 'bottom-left'
+  | 'bottom-center'
+  | 'bottom-right';
+
+export const TOOLBAR_POSITIONS: readonly ToolbarPosition[] = [
+  'top-left',
+  'top-center',
+  'top-right',
+  'bottom-left',
+  'bottom-center',
+  'bottom-right',
+];
+
+export const DEFAULT_TOOLBAR_POSITION: ToolbarPosition = 'top-center';
+
+/** 是否钉在窗格底部（教程布局要据此把整块收在工具栏上方） */
+export function isToolbarAtBottom(v: ToolbarPosition): boolean {
+  return v.startsWith('bottom');
+}
+
+/** data.json → 工具栏位置（脏值回落默认） */
+export function normalizeToolbarPosition(raw: unknown): ToolbarPosition {
+  return TOOLBAR_POSITIONS.includes(raw as ToolbarPosition)
+    ? (raw as ToolbarPosition)
+    : DEFAULT_TOOLBAR_POSITION;
+}
+
+/** 值 → 专辑墙上的类名（CSS 按这六个类摆位） */
+export function toolbarPositionClass(v: ToolbarPosition): string {
+  return `is-toolbar-${v}`;
+}

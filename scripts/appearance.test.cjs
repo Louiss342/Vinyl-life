@@ -64,6 +64,34 @@ test('唱片配色：四个方案、默认黑胶，类名 is-record-*', () => {
   }
 });
 
+test('工具栏位置：六档（顶部 / 底部 × 左 / 中 / 右），默认顶部居中', () => {
+  assert.deepEqual(Array.from(mod.TOOLBAR_POSITIONS), [
+    'top-left',
+    'top-center',
+    'top-right',
+    'bottom-left',
+    'bottom-center',
+    'bottom-right',
+  ]);
+  assert.equal(mod.DEFAULT_TOOLBAR_POSITION, 'top-center');
+  for (const v of Array.from(mod.TOOLBAR_POSITIONS)) {
+    assert.equal(mod.normalizeToolbarPosition(v), v, `合法值原样通过：${v}`);
+    assert.equal(mod.toolbarPositionClass(v), `is-toolbar-${v}`, '类名 = is-toolbar-<值>');
+    assert.equal(
+      mod.isToolbarAtBottom(v),
+      String(v).startsWith('bottom'),
+      `底部分族对不对：${v}`
+    );
+  }
+  for (const raw of [undefined, null, '', 'left', 'bottom', 42, {}, 'top-middle']) {
+    assert.equal(
+      mod.normalizeToolbarPosition(raw),
+      'top-center',
+      `脏值回落默认：${String(raw)}`
+    );
+  }
+});
+
 test('归一化：脏值 / 旧值回落默认，合法值原样通过', () => {
   for (const raw of [undefined, null, '', 42, true, {}, 'follow', 'dark', 'sepia']) {
     assert.equal(mod.normalizeDeckStyle(raw), 'walnut', `deck raw=${String(raw)}`);

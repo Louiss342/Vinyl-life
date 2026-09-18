@@ -2,7 +2,7 @@
 //   ① 首屏只画一屏，剩下的先本地展开（不花网络）—— 「只有二十条」不该再靠调大上限来解
 //   ② 本地见底了才向上游要下一页，那一页要和前面的结果一起重排（更贴的浮上来）
 //   ③ 翻到底就收成一行说明，别再留个点了没反应的按钮
-//   ④ 已在库中的专辑不出现在结果里，隐去了几张要在状态行说清楚
+//   ④ 已在收藏的专辑照常出现、就地标「已在收藏」（同平台同 id），状态行报个数
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -115,6 +115,7 @@ function loadModal() {
       this.app = app;
       this.contentEl = fakeEl();
       this.titleEl = fakeEl();
+      this.modalEl = fakeEl(); // 真机上的弹窗壳：markVinylModal（全直角）往它上面挂类名
       this.closed = false;
     }
     close() {
@@ -284,11 +285,16 @@ test('导入搜索：已在库中的专辑不出现，隐去的条数写在状�
   const titles = collect(modal.contentEl)
     .filter((e) => e.classes.has('vinyl-import-result-title'))
     .map((e) => e.textContent);
-  assert.deepEqual(titles, ['晨光 精选 2020'], '库里已有的那张不出现在结果里');
-  assert.equal(String(statusLine(modal.contentEl).textContent), '找到 1 张（1 张已在库中，已隐去）');
+  assert.deepEqual(titles, ['晨光', '晨光 精选 2020'], '两张都照常出现（不再隐去）');
+  // 已在收藏的那张：按钮变成不可点的「已在收藏」，另一张照常可添加
+  const ownedButtons = collect(modal.contentEl)
+    .filter((e) => e.tag === 'button' && e.textContent === '已在收藏')
+    .map((e) => ({ disabled: e.disabled }));
+  assert.deepEqual(ownedButtons, [{ disabled: true }], '同平台同 id：一张已在收藏且不可点');
+  assert.equal(String(statusLine(modal.contentEl).textContent), '找到 2 张专辑（其中 1 张已在收藏）');
 });
 
-test('导入搜索：搜到的全都在库里 → 说清原因，而不是留一片空白', async () => {
+test('导入搜索：搜到的全都在库里 → 逐条标「已在收藏」，不再留一片空白', async () => {
   const { mod } = loadModal();
   const h = makeHarness(() => [{ id: 1, name: '晨光', artist: { name: '某某' }, size: 11 }], {
     files: [{ path: 'Albums/晨光.md', basename: '晨光' }],
@@ -298,7 +304,8 @@ test('导入搜索：搜到的全都在库里 → 说清原因，而不是留一
   await modal.onOpen();
   await search(modal, '晨光');
 
-  assert.equal(cardsOf(modal.contentEl).length, 0);
-  assert.match(String(statusLine(modal.contentEl).textContent), /都已在库中/);
-  assert.equal(moreBar(modal.contentEl).classes.has('vinyl-hidden'), true, '没有结果时不留空入口');
+  assert.equal(cardsOf(modal.contentEl).length, 1, '照常画出来');
+  assert.match(String(statusLine(modal.contentEl).textContent), /1 张已在收藏/);
+  const owned = collect(modal.contentEl).find((e) => e.tag === 'button' && e.textContent === '已在收藏');
+  assert.ok(owned && owned.disabled, '这条不给「添加」按钮（点了只会多一张重复笔记）');
 });

@@ -3,6 +3,7 @@
 import { App, Modal } from 'obsidian';
 import { ServerManager } from '../core/server-manager';
 import type { LoginState } from '../core/auth';
+import { markVinylModal } from '../util';
 import { t, tf } from '../core/i18n';
 
 export interface QrAuthLike {
@@ -65,6 +66,7 @@ export class QrLoginModal extends Modal {
     }
   ) {
     super(app);
+    markVinylModal(this); // 全直角：弹窗壳收掉圆角（见 styles.css「全直角」段）
     this.deps = deps;
     this.provider = opts?.provider ?? neteaseQrProvider();
     this.onLogin = opts?.onLogin;

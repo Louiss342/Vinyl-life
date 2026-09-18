@@ -1,4 +1,5 @@
-// 专辑墙排序回归：菜单顺序 / 状态机（切换与翻转）/ 菜单标题（含中英与自定义属性）/ 比较器。
+// 专辑墙排序回归：依据顺序 / 状态机（换依据 / 换方向 / 换属性）/ 方向文案（含中英）/ 比较器。
+// 工具栏方案 2026-09-18：依据与方向是两个独立下拉（不再靠重复点击翻转）；缺失排序属性一律排最后。
 // esbuild 从真实 TS 编译进 node:vm（stub obsidian），不改 vault、不依赖 Obsidian 运行。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -7,7 +8,7 @@ const esbuild = require('esbuild');
 
 const source = esbuild.buildSync({
   stdin: {
-    // 一并导出 i18n：菜单标题要验证中英两套词典
+    // 一并导出 i18n：方向文案要验证中英两套词典
     contents: `export * from '../src/core/shelf-sort';\nexport * as i18n from '../src/core/i18n';\n`,
     resolveDir: __dirname,
     loader: 'ts',
@@ -52,9 +53,9 @@ const shelfEntry = (title, extra = {}) => ({ album: { path: `专辑/${title}.md`
 const titles = (list) => Array.from(list, (e) => e.album.title);
 const plain = (o) => ({ ...o });
 
-// ============ 菜单顺序与状态机 ============
+// ============ 依据顺序与状态机 ============
 
-test('SORT_BASES：菜单顺序与设计稿一致（名称 → 作者 → 发行日期 → 播放次数 → 评分 → 最近播放 → 自定义）', () => {
+test('SORT_BASES：下拉顺序与设计稿一致（名称 → 作者 → 发行日期 → 播放次数 → 评分 → 最近播放 → 自定义）', () => {
   assert.deepEqual(Array.from(mod.SORT_BASES), [
     'title',
     'artist',
@@ -75,88 +76,93 @@ test('defaultDirOf：文本 / 日期类默认升序；热度类（播放次数 /
   }
 });
 
-test('switchSort：没选中 = 切过来（用默认方向）；已选中 = 翻转方向', () => {
+test('setSortBasis：换依据用该依据的默认方向；选同一个依据不动方向', () => {
   const cur = { basis: 'title', dir: 'asc' };
-  assert.deepEqual(plain(mod.switchSort(cur, 'plays')), { basis: 'plays', dir: 'desc' }, '换依据用该项默认方向');
-  assert.deepEqual(plain(mod.switchSort(cur, 'year')), { basis: 'year', dir: 'asc' });
-  assert.deepEqual(plain(mod.switchSort(cur, 'title')), { basis: 'title', dir: 'desc' }, '再点已选中 → 倒序');
+  assert.deepEqual(plain(mod.setSortBasis(cur, 'plays')), { basis: 'plays', dir: 'desc' });
+  assert.deepEqual(plain(mod.setSortBasis(cur, 'year')), { basis: 'year', dir: 'asc' });
+  // 方向是独立下拉：同一个依据被再选一次，不该翻转（那是旧交互）
+  assert.deepEqual(plain(mod.setSortBasis(cur, 'title')), { basis: 'title', dir: 'asc' });
   assert.deepEqual(
-    plain(mod.switchSort({ basis: 'title', dir: 'desc' }, 'title')),
-    { basis: 'title', dir: 'asc' },
-    '倒序再点 → 换回顺序'
+    plain(mod.setSortBasis({ basis: 'title', dir: 'desc' }, 'title')),
+    { basis: 'title', dir: 'desc' },
+    '再选同一个依据：方向保持用户选的那档'
   );
 });
 
-test('switchSort：从自定义切走丢掉 custom 键（切回来要重新选属性）', () => {
+test('setSortBasis：从自定义切走丢掉 custom 键（切回来要重新选属性）', () => {
   const cur = { basis: 'custom', dir: 'asc', custom: 'genre' };
-  assert.deepEqual(plain(mod.switchSort(cur, 'artist')), { basis: 'artist', dir: 'asc' });
+  assert.deepEqual(plain(mod.setSortBasis(cur, 'artist')), { basis: 'artist', dir: 'asc' });
 });
 
-test('switchSort：在自定义上再点 = 翻转方向（保留属性）', () => {
-  const cur = { basis: 'custom', dir: 'asc', custom: 'genre' };
-  assert.deepEqual(plain(mod.switchSort(cur, 'custom')), { basis: 'custom', dir: 'desc', custom: 'genre' });
-});
-
-test('pickCustomSort：新属性按升序排；同一个属性再选 = 翻转（与固定依据同规则）', () => {
-  assert.deepEqual(plain(mod.pickCustomSort({ basis: 'title', dir: 'asc' }, 'genre')), {
+test('setCustomSortKey：选属性即切到自定义依据、按升序；同一个属性再选不动方向', () => {
+  assert.deepEqual(plain(mod.setCustomSortKey({ basis: 'title', dir: 'asc' }, 'genre')), {
     basis: 'custom',
     dir: 'asc',
     custom: 'genre',
   });
-  assert.deepEqual(plain(mod.pickCustomSort({ basis: 'custom', dir: 'asc', custom: 'genre' }, 'genre')), {
-    basis: 'custom',
-    dir: 'desc',
-    custom: 'genre',
-  });
-  assert.deepEqual(plain(mod.pickCustomSort({ basis: 'custom', dir: 'desc', custom: 'genre' }, 'label')), {
+  assert.deepEqual(
+    plain(mod.setCustomSortKey({ basis: 'custom', dir: 'desc', custom: 'genre' }, 'genre')),
+    { basis: 'custom', dir: 'desc', custom: 'genre' },
+    '同一个属性再选：方向保持'
+  );
+  assert.deepEqual(plain(mod.setCustomSortKey({ basis: 'custom', dir: 'desc', custom: 'genre' }, 'label')), {
     basis: 'custom',
     dir: 'asc',
     custom: 'label',
   });
 });
 
-// ============ 菜单标题 ============
-
-test('菜单标题（中文）：未选中显示默认方向，选中显示当前方向', () => {
-  mod.i18n.setLanguage('zh');
-  const cur = { basis: 'plays', dir: 'desc' };
-  assert.equal(mod.sortItemLabel('title', cur), '专辑名称[A-Z]');
-  assert.equal(mod.sortItemLabel('artist', cur), '作者名称[A-Z]');
-  assert.equal(mod.sortItemLabel('year', cur), '发行日期[早-晚]');
-  assert.equal(mod.sortItemLabel('plays', cur), '播放次数[多-少]');
-  assert.equal(mod.sortItemLabel('rating', cur), '评分[高-低]');
-  assert.equal(mod.sortItemLabel('recent', cur), '最近播放[近-远]');
+test('setSortDir：只动方向，依据与自定义键都不碰；同值返回原对象', () => {
+  const cur = { basis: 'custom', dir: 'asc', custom: 'genre' };
+  assert.deepEqual(plain(mod.setSortDir(cur, 'desc')), { basis: 'custom', dir: 'desc', custom: 'genre' });
+  assert.equal(mod.setSortDir(cur, 'asc'), cur, '同值不必新建');
 });
 
-test('菜单标题：再点翻转后，括号里的表述跟着变', () => {
+// ============ 方向文案 ============
+
+test('方向文案（中文）：给具体动作，方向跟着依据换', () => {
   mod.i18n.setLanguage('zh');
-  assert.equal(mod.sortItemLabel('year', { basis: 'year', dir: 'asc' }), '发行日期[早-晚]');
-  assert.equal(mod.sortItemLabel('year', { basis: 'year', dir: 'desc' }), '发行日期[晚-早]');
-  assert.equal(mod.sortItemLabel('plays', { basis: 'plays', dir: 'asc' }), '播放次数[少-多]');
-  assert.equal(mod.sortItemLabel('rating', { basis: 'rating', dir: 'asc' }), '评分[低-高]');
-  assert.equal(mod.sortItemLabel('recent', { basis: 'recent', dir: 'asc' }), '最近播放[远-近]');
+  assert.equal(mod.dirWord('title', 'asc'), 'A → Z');
+  assert.equal(mod.dirWord('title', 'desc'), 'Z → A');
+  assert.equal(mod.dirWord('artist', 'asc'), 'A → Z');
+  assert.equal(mod.dirWord('year', 'desc'), '最新在前');
+  assert.equal(mod.dirWord('year', 'asc'), '最早在前');
+  assert.equal(mod.dirWord('plays', 'desc'), '最多在前');
+  assert.equal(mod.dirWord('plays', 'asc'), '最少在前');
+  assert.equal(mod.dirWord('rating', 'desc'), '高分在前');
+  assert.equal(mod.dirWord('rating', 'asc'), '低分在前');
+  assert.equal(mod.dirWord('recent', 'desc'), '最近在前');
+  assert.equal(mod.dirWord('custom', 'asc'), '升序');
 });
 
-test('菜单标题：A-Z / Z-A 两种语言写法一致（不进词典）', () => {
+test('方向文案：A → Z / Z → A 两种语言写法一致（不进词典）', () => {
   mod.i18n.setLanguage('en');
-  assert.equal(mod.sortItemLabel('title', { basis: 'title', dir: 'asc' }), 'Album title[A-Z]');
-  assert.equal(mod.sortItemLabel('title', { basis: 'title', dir: 'desc' }), 'Album title[Z-A]');
+  assert.equal(mod.dirWord('title', 'asc'), 'A → Z');
+  assert.equal(mod.dirWord('title', 'desc'), 'Z → A');
+  assert.equal(mod.dirWord('plays', 'desc'), 'Most first');
   mod.i18n.setLanguage('zh');
 });
 
-test('菜单标题（自定义）：没选属性就是光名字；选过带属性名与方向（含 settings 改名覆写）', () => {
+test('sortDirOptions：两个方向 + 两个文案（先升后降，与依据绑定）', () => {
   mod.i18n.setLanguage('zh');
-  assert.equal(mod.sortItemLabel('custom', { basis: 'title', dir: 'asc' }), '自定义排序依据');
-  const custom = { basis: 'custom', dir: 'asc', custom: 'genre' };
-  assert.equal(mod.sortItemLabel('custom', custom), '自定义排序依据：流派[升序]');
-  assert.equal(mod.sortItemLabel('custom', { ...custom, dir: 'desc' }), '自定义排序依据：流派[降序]');
-  assert.equal(
-    mod.sortItemLabel('custom', custom, { genre: '曲风' }),
-    '自定义排序依据：曲风[升序]',
-    '属性改名跟着走'
+  assert.deepEqual(
+    Array.from(mod.sortDirOptions('rating'), (o) => ({ ...o })),
+    [
+      { dir: 'asc', label: '低分在前' },
+      { dir: 'desc', label: '高分在前' },
+    ]
   );
+});
+
+test('basisName：固定依据走词典；自定义带属性名（含 settings 改名覆写）', () => {
+  mod.i18n.setLanguage('zh');
+  assert.equal(mod.basisName('title'), '专辑名称');
+  assert.equal(mod.basisName('recent'), '最近播放');
+  assert.equal(mod.basisName('custom', 'genre'), '流派');
+  assert.equal(mod.basisName('custom', 'genre', { genre: '曲风' }), '曲风', '属性改名跟着走');
+  assert.equal(mod.basisName('custom'), '自定义排序依据', '没选属性时给个兜底名');
   mod.i18n.setLanguage('en');
-  assert.equal(mod.sortItemLabel('custom', custom), 'Custom: Genre[Ascending]');
+  assert.equal(mod.basisName('plays'), 'Play count');
   mod.i18n.setLanguage('zh');
 });
 
@@ -171,25 +177,30 @@ test('排序：专辑名称 A-Z / Z-A；返回新数组、不改入参', () => {
   assert.notEqual(asc, list, '返回的是新数组');
 });
 
-test('排序：作者名称（缺作者按空串处理，升序排最前）', () => {
+test('排序：作者名称（缺作者一律排最后，与方向无关）', () => {
   const list = [shelfEntry('x', { artist: 'B' }), shelfEntry('y'), shelfEntry('z', { artist: 'A' })];
-  assert.deepEqual(titles(mod.sortShelfEntries(list, { basis: 'artist', dir: 'asc' })), ['y', 'z', 'x']);
+  assert.deepEqual(titles(mod.sortShelfEntries(list, { basis: 'artist', dir: 'asc' })), ['z', 'x', 'y']);
   assert.deepEqual(titles(mod.sortShelfEntries(list, { basis: 'artist', dir: 'desc' })), ['x', 'z', 'y']);
 });
 
-test('排序：发行日期 早-晚 / 晚-早（缺年份按最小处理）', () => {
-  const list = [shelfEntry('a', { year: '2001' }), shelfEntry('b'), shelfEntry('c', { year: 1996 })];
-  assert.deepEqual(titles(mod.sortShelfEntries(list, { basis: 'year', dir: 'asc' })), ['b', 'c', 'a']);
-  assert.deepEqual(titles(mod.sortShelfEntries(list, { basis: 'year', dir: 'desc' })), ['a', 'c', 'b']);
+test('排序：发行日期 最新在前 / 最早在前（缺年份、非数值串都排最后）', () => {
+  const list = [
+    shelfEntry('a', { year: '2001' }),
+    shelfEntry('b'),
+    shelfEntry('c', { year: 1996 }),
+    shelfEntry('d', { year: '待定' }),
+  ];
+  assert.deepEqual(titles(mod.sortShelfEntries(list, { basis: 'year', dir: 'asc' })), ['c', 'a', 'b', 'd']);
+  assert.deepEqual(titles(mod.sortShelfEntries(list, { basis: 'year', dir: 'desc' })), ['a', 'c', 'b', 'd']);
 });
 
-test('排序：评分 高-低（默认）/ 低-高（缺评分按最小处理）', () => {
+test('排序：评分 高分在前（默认）/ 低分在前（缺评分排最后）', () => {
   const list = [shelfEntry('a', { rating: 3 }), shelfEntry('b', { rating: 5 }), shelfEntry('c')];
   assert.deepEqual(titles(mod.sortShelfEntries(list, { basis: 'rating', dir: 'desc' })), ['b', 'a', 'c']);
-  assert.deepEqual(titles(mod.sortShelfEntries(list, { basis: 'rating', dir: 'asc' })), ['c', 'a', 'b']);
+  assert.deepEqual(titles(mod.sortShelfEntries(list, { basis: 'rating', dir: 'asc' })), ['a', 'b', 'c']);
 });
 
-test('排序：播放次数 多-少 / 少-多（统计缺失按 0）', () => {
+test('排序：播放次数 最多在前 / 最少在前（没播过的排最后）', () => {
   const list = [shelfEntry('a'), shelfEntry('b'), shelfEntry('c')];
   const stats = { albums: { '专辑/b.md': { plays: 7 }, '专辑/c.md': { plays: 3 } } };
   assert.deepEqual(titles(mod.sortShelfEntries(list, { basis: 'plays', dir: 'desc' }, stats)), [
@@ -198,13 +209,13 @@ test('排序：播放次数 多-少 / 少-多（统计缺失按 0）', () => {
     'a',
   ]);
   assert.deepEqual(titles(mod.sortShelfEntries(list, { basis: 'plays', dir: 'asc' }, stats)), [
-    'a',
     'c',
     'b',
+    'a',
   ]);
 });
 
-test('排序：最近播放 近-远（默认）/ 远-近', () => {
+test('排序：最近播放 最近在前（默认）/ 最早在前（没播过的排最后）', () => {
   const list = [shelfEntry('a'), shelfEntry('b'), shelfEntry('c')];
   const stats = {
     albums: { '专辑/a.md': { lastPlayedAt: 100 }, '专辑/c.md': { lastPlayedAt: 300 } },
@@ -215,13 +226,13 @@ test('排序：最近播放 近-远（默认）/ 远-近', () => {
     'b',
   ]);
   assert.deepEqual(titles(mod.sortShelfEntries(list, { basis: 'recent', dir: 'asc' }, stats)), [
-    'b',
     'a',
     'c',
+    'b',
   ]);
 });
 
-test('排序：自定义属性 —— 数字串按数值比（不按字典序），缺失排最前', () => {
+test('排序：自定义属性 —— 数字串按数值比（不按字典序），缺失排最后', () => {
   const list = [
     shelfEntry('a', { displayProps: { serial: '9' } }),
     shelfEntry('b', { displayProps: { serial: '10' } }),
@@ -230,7 +241,7 @@ test('排序：自定义属性 —— 数字串按数值比（不按字典序）
   const sort = { basis: 'custom', dir: 'asc', custom: 'serial' };
   assert.deepEqual(
     titles(mod.sortShelfEntries(list, sort)),
-    ['c', 'a', 'b'],
+    ['a', 'b', 'c'],
     '数字串：9 < 10（纯字典序会得到相反的 10 < 9）'
   );
   assert.deepEqual(titles(mod.sortShelfEntries(list, { ...sort, dir: 'desc' })), ['b', 'a', 'c']);

@@ -4,6 +4,7 @@ import { App, Modal } from 'obsidian';
 import type VinylLifePlugin from '../main';
 import { AlbumInfo } from '../core/album-index';
 import { AlbumDeleteTargets, collectAlbumDeleteTargets, scanFolderContents } from '../delete';
+import { markVinylModal } from '../util';
 import { t, tf } from '../core/i18n';
 
 export class DeleteAlbumModal extends Modal {
@@ -16,6 +17,7 @@ export class DeleteAlbumModal extends Modal {
     private album: AlbumInfo
   ) {
     super(app);
+    markVinylModal(this); // 全直角：弹窗壳收掉圆角（见 styles.css「全直角」段）
     this.titleEl.setText(t('delete.title'));
     this.targets = collectAlbumDeleteTargets(app, album);
   }

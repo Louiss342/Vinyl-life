@@ -1,7 +1,11 @@
 // 专辑墙视图（自绘 ItemView）：
-//   工具栏：悬浮圆角长条 + 抽屉 —— 常态只有「专辑墙（N 张）」把手，点开才露出
-//   搜索（防抖）/ 刷新 / 排序 / 音源筛选 / 卡片属性 / 批量删除 / 导入专辑 / 导入本地音频
-//   批量删除：进入选择模式后点卡片勾选（Shift 连选），底部动作条确认删除（Esc 退出）
+//   工具栏（工具栏方案 2026-09-18）：单行 —— 左边标题 + 手绘体计数，右边四枚图标钮：
+//     搜索（点击原位向左展开输入框，输入即筛墙；无词失焦收回）/ 陈列 / 添加 / 更多。
+//     没有抽屉、没有厚重胶囊；窗格再窄也是单行（窄到放不下就先省计数、再缩标题）。
+//   陈列：来源（单选芯片）+ 排列（依据 / 方向两个下拉）+ 显示（每行数量 / 封面下的信息第二层）。
+//   添加：一个浮层两种入库方式 —— 在线搜索 + 本地拖放（见 views/add-panel）。
+//   选择模式：更多 → 选择专辑；工具栏整条切换用途（已选数量 / 全选当前 / 清空 / 删除… / 完成），
+//     卡片点选（Shift 连选），Esc 或「完成」退出。
 //   点击卡片 = 黑胶交接；拖拽音频入库；播放中卡片高亮 + 唱片离墙。
 import {
   ItemView,
@@ -25,7 +29,15 @@ import {
 import { DISC_DIRECTIONS, discTransform } from '../core/disc-motion';
 import { queuedAlbumPaths } from '../core/queue';
 import { animateDiscLiftOff } from '../animation/handoff';
-import { RECORD_COLORS, recordClass } from '../core/appearance';
+import {
+  RECORD_COLORS,
+  SHELF_COLUMN_CHOICES,
+  TOOLBAR_POSITIONS,
+  isToolbarAtBottom,
+  normalizeToolbarPosition,
+  recordClass,
+  toolbarPositionClass,
+} from '../core/appearance';
 import {
   collectShelfPropKeys,
   propLabel,
@@ -38,19 +50,24 @@ import {
   DEFAULT_SHELF_SORT,
   SORT_BASES,
   ShelfSort,
-  pickCustomSort,
-  sortItemLabel,
+  SortBasis,
+  SortDir,
+  basisName,
+  setCustomSortKey,
+  setSortBasis,
+  setSortDir,
+  sortDirOptions,
   sortShelfEntries,
-  switchSort,
 } from '../core/shelf-sort';
 import { rangeInList, toggleInList } from '../core/multi-select';
-import { collectDroppedFiles, droppedRootName, isAudioFile, isImageFile, notice, prefersReducedMotion } from '../util';
+import { collectDroppedFiles, droppedRootName, isAudioFile, isImageFile, markVinylMenu, notice, prefersReducedMotion } from '../util';
 // 手绘笔触用 roughjs（Excalidraw 内部同款引擎）。只引 SVG 那一支：canvas 渲染器用不上，
 // 直接引包入口会把它一起打进来（实测多 2 KB）。线宽 / 虚线等公共参数见 hand-drawn.ts。
 import { RoughSVG } from 'roughjs/bin/svg';
 import { roughDashed, roughSolid, roundRectPath, SVG_NS } from './hand-drawn';
 import { t, tf } from '../core/i18n';
 import { SetCoverModal } from './set-cover-modal';
+import { AddPanel } from './add-panel';
 import { onMarqueeOver, onMarqueeOut } from './marquee';
 
 export const SHELF_VIEW_TYPE = 'vinyl-shelf';
@@ -78,6 +95,22 @@ const filterOptions = (): [SourceFilter, string][] => [
   ['qq', t('filter.qq')],
   ['collect', t('filter.collect')],
 ];
+
+/** 分段控件里的短标签（窄浮层里放得下）：完整名字挂在 aria-label 上，不丢语义 */
+const sourceShortLabel = (key: SourceFilter): string => {
+  switch (key) {
+    case 'all':
+      return t('filter.all');
+    case 'local':
+      return t('src.local');
+    case 'netease':
+      return t('src.netease');
+    case 'qq':
+      return t('src.qq');
+    case 'collect':
+      return t('filter.collectShort');
+  }
+};
 
 // 空态教程的图纸参数（Excalidraw 设计稿 Drawing 2026-09-15 14.14.52，1 图纸单位 = 1px）。
 // 笔触一律交给 roughjs（Excalidraw 用的同一套手绘引擎），线宽 / 虚线 / roughness 等公共参数
@@ -132,27 +165,38 @@ export class VinylShelfView extends ItemView {
   private refreshTimer: number | null = null;
   private lastSnap: PlayerSnapshot | null = null;
   private state: ShelfViewState = { query: '', sort: DEFAULT_SHELF_SORT, sourceFilter: 'all' };
-  private toolbarTitle: HTMLElement | null = null;
   private toolbarEl: HTMLElement | null = null;
-  private toolbarToggle: HTMLButtonElement | null = null; // 抽屉把手（空墙时没有：固定展开）
-  private drawerOpen = false; // 抽屉：常态收起（只露计数），点一下弹出任务栏
-  private drawerForced = false; // 空墙：抽屉固定展开（教程要指着导入按钮），把手退化成纯标题
-  // 批量删除（选择模式）：点卡片 = 选 / 取消选，Shift = 连选，Esc 退出
-  private batch: { active: boolean; selection: string[]; anchor: string } = {
+  private headingEl: HTMLElement | null = null; // 标题 + 计数（计数是手绘体）
+  private displayBtnEl: HTMLButtonElement | null = null; // 陈列入口（筛了来源时按钮上挂来源名）
+  private addBtnEl: HTMLButtonElement | null = null; // 添加入口（空态教程的虚线圈指着它）
+  private searchEl: HTMLElement | null = null; // 搜索控件（图标 ↔ 输入框）
+  private searchInput: HTMLInputElement | null = null;
+  private searchOpen = false; // 输入框展开中（无关键词失焦 / 清空后收回图标）
+  private composing = false; // 中文输入法组词中：组词期间不筛墙
+  private preSearchScroll = 0; // 进入搜索前的滚动位置（清空关键词后回到这里）
+  // 选择模式（批量删除）：点卡片 = 选 / 取消选，Shift = 连选，Esc / 完成退出。
+  // scope = 进入模式那一刻眼前的结果（全选只作用于它；期间不提供搜索 / 陈列 / 添加）
+  private batch: { active: boolean; selection: string[]; anchor: string; scope: string[] } = {
     active: false,
     selection: [],
     anchor: '',
+    scope: [],
   };
-  private batchBtn: HTMLElement | null = null; // 工具栏里的「批量删除」入口
-  private batchBarEl: HTMLElement | null = null; // 底部动作条
-  private batchCountEl: HTMLElement | null = null;
-  private batchAllBtn: HTMLButtonElement | null = null; // 全选 / 清空（同一枚，文案与图标随状态换）
+  private batchInfoEl: HTMLElement | null = null;
+  private batchAllBtn: HTMLButtonElement | null = null; // 全选当前 N 张
+  private batchClearBtn: HTMLButtonElement | null = null; // 清空选择
   private batchDeleteBtn: HTMLButtonElement | null = null;
+  private batchDoneBtn: HTMLButtonElement | null = null;
   private gridHost: HTMLElement | null = null;
-  private importGroupEl: HTMLElement | null = null; // 工具栏最后两个按钮（导入专辑 / 导入本地音频）
-  private propsPopover: HTMLElement | null = null;
-  private onDocClick: ((ev: MouseEvent) => void) | null = null;
-  private dragKey: string | null = null; // 卡片属性弹层：正在拖拽的属性键
+  private shownCount = 0; // 当前筛选结果条数（标题计数与网格共用这一个数）
+  // 浮层（陈列 / 添加）：同一时刻最多一个；点外 / Esc 关闭；焦点还给入口按钮
+  private panel: { el: HTMLElement; kind: 'display' | 'add'; anchor: HTMLElement } | null = null;
+  private displayLayer: 'main' | 'props' = 'main'; // 陈列浮层当前在哪一层
+  private propsHost: HTMLElement | null = null; // 属性行（第二层）挂在哪个容器里
+  private addPanel: AddPanel | null = null;
+  private onPanelDocPointer: ((ev: PointerEvent) => void) | null = null;
+  private onPanelKey: ((ev: KeyboardEvent) => void) | null = null;
+  private dragKey: string | null = null; // 卡片属性行：正在拖拽的属性键
   private dropAt: { key: string; after: boolean } | null = null; // 当前落点（在 key 行之前/之后）
   // 空态教程（Excalidraw 设计稿移植）：root 是盖在视图上的纯装饰层，
   // ink 里是 roughjs 现画的框 / 圈 / 箭头，几何在 layoutTutorial() 里算
@@ -255,7 +299,7 @@ export class VinylShelfView extends ItemView {
     this.tutorialRO?.disconnect();
     this.tutorialRO = null;
     this.cancelTutorialSettle();
-    this.closePropsPopover();
+    this.closePanel();
   }
 
   /** 键盘等价：卡片上 Enter / 空格 = 点击（role=button 的常规语义）。
@@ -270,7 +314,8 @@ export class VinylShelfView extends ItemView {
       card.click();
       return;
     }
-    // 选择模式：Esc 退出（与播放器唱片区同一处手势，别让用户找半天出口）
+    // 选择模式：Esc 退出（与播放器唱片区同一处手势，别让用户找半天出口）。
+    // 搜索框里的 Esc 只退焦点、不清条件，由输入框自己拦住（stopPropagation）。
     if (ev.key === 'Escape' && this.batch.active) {
       ev.preventDefault();
       this.exitBatch();
@@ -284,8 +329,8 @@ export class VinylShelfView extends ItemView {
       const before = this.shelfSignature();
       this.loadEntries();
       if (before !== this.shelfSignature()) this.render();
-      // 签名不变但弹层开着：候选计数可能已变（新增字段但尚未显示）→ 就地重绘，不关层
-      else if (this.propsPopover) this.renderPropsPopover(this.propsPopover);
+      // 签名不变但浮层开着：候选计数可能已变（新增字段但尚未显示）→ 就地重绘，不关层
+      else this.refreshPanelContent();
     }, 500);
   }
 
@@ -313,34 +358,39 @@ export class VinylShelfView extends ItemView {
   // ============ 渲染 ============
 
   render() {
+    // 浮层挂在 body 上：这次重建不该把它关掉（在「添加」面板里导入一张专辑就会触发后台刷新，
+    // 面板要保持打开才能连续添加）。只把锚点换到重建后的新按钮上，见下面的 reattachPanel。
+    const keepPanel = this.panel?.kind ?? null;
     this.loadEntries();
-    this.closePropsPopover();
     const c = this.contentEl;
     c.empty();
     c.addClass('vinyl-shelf');
     this.applyAppearance();
     this.cardEls.clear();
-    // 工具栏 / 动作条的元素随旧 DOM 一起没了：先把引用清掉，免得重建间隙里的回调摸到 detached 节点
+    // 工具栏的元素随旧 DOM 一起没了：先把引用清掉，免得重建间隙里的回调摸到 detached 节点
     this.toolbarEl = null;
-    this.toolbarToggle = null;
-    this.toolbarTitle = null;
-    this.batchBtn = null;
-    this.batchBarEl = null;
-    this.batchCountEl = null;
+    this.headingEl = null;
+    this.displayBtnEl = null;
+    this.addBtnEl = null;
+    this.searchEl = null;
+    this.searchInput = null;
+    this.batchInfoEl = null;
     this.batchAllBtn = null;
+    this.batchClearBtn = null;
     this.batchDeleteBtn = null;
+    this.batchDoneBtn = null;
     this.renderToolbar(c);
     this.gridHost = c.createDiv({ cls: 'vinyl-shelf-grid-host' });
     this.renderGrid();
-    this.renderBatchBar(c);
     this.syncBatch(); // 重建后再把选择模式的整体状态铺回去（卡片是新 DOM）
+    if (keepPanel) this.reattachPanel(keepPanel);
   }
 
   /** 卡片属性变更后的就地刷新（main.refreshShelfProps 广播给所有专辑墙视图）：
-   *  重建卡片行 + 刷新已打开的弹层（计数 / 已选区） */
+   *  重建卡片行 + 刷新打开的浮层（计数 / 已选区） */
   refreshProps() {
     this.renderGrid();
-    if (this.propsPopover) this.renderPropsPopover(this.propsPopover);
+    this.refreshPanelContent();
   }
 
   // 外观（设置 → 外观）：唱片弹出方向 + 每行卡片数 + 唱片配色，仅换类与 CSS 变量，不重建卡片
@@ -350,6 +400,9 @@ export class VinylShelfView extends ItemView {
     for (const d of DISC_DIRECTIONS) c.toggleClass(`is-disc-${d}`, d === dir);
     const color = this.plugin.settings.recordColor;
     for (const v of RECORD_COLORS) c.toggleClass(recordClass(v), v === color);
+    // 工具栏位置（设置 → 外观）：六个类只换 align-self / order / top / bottom，不动结构
+    const pos = normalizeToolbarPosition(this.plugin.settings.toolbarPosition);
+    for (const v of TOOLBAR_POSITIONS) c.toggleClass(toolbarPositionClass(v), v === pos);
     const cols = this.plugin.settings.shelfColumns;
     c.style.setProperty(
       '--vinyl-shelf-columns',
@@ -359,115 +412,184 @@ export class VinylShelfView extends ItemView {
     );
   }
 
-  // 工具栏 = 悬浮圆角长条 + 抽屉（样式见 styles.css 的「专辑墙视图」段）：
-  //   常态只有一枚「专辑墙（N 张）⌄」把手，点开才露出搜索 / 各功能按钮（任务栏）。
-  //   空墙例外：教程那张图上虚线箭头指着导入按钮，抽屉固定展开，把手退化成纯标题。
+  // 工具栏（工具栏方案 2026-09-18）：单行 —— 标题（+ 手绘体计数）｜搜索｜陈列 / 添加 / 更多。
+  // 选择模式整条切换用途；其余时候右侧三键只留图标（文字都在浮层里）。
   private renderToolbar(c: HTMLElement) {
     const bar = c.createDiv({ cls: 'vinyl-shelf-toolbar' });
-    this.toolbarEl = bar; // 教程层要量它的高度（窄视图工具栏换行时别被压住）
-    this.drawerForced = !this.entries.length;
-    if (this.drawerForced || this.drawerOpen) bar.addClass('is-open');
-
-    // 抽屉把手：标题计数（+ 展开态雪佛龙）。forceOpen 时是 div —— 没有可点的东西，别做成假按钮。
-    // 箭头是横向的：抽屉朝右铺开，收起时朝右（点它向右展开），展开后转 180° 朝左（点它收回来）
-    const head = this.drawerForced
-      ? bar.createDiv({ cls: 'vinyl-shelf-toolbar-toggle is-static' })
-      : bar.createEl('button', { cls: 'vinyl-shelf-toolbar-toggle' });
-    this.toolbarToggle = this.drawerForced ? null : (head as HTMLButtonElement);
-    this.toolbarTitle = head.createDiv({ cls: 'vinyl-shelf-toolbar-title' });
-    if (this.toolbarToggle) {
-      const chevron = head.createSpan({ cls: 'vinyl-shelf-toggle-chevron' });
-      setIcon(chevron, 'chevron-right');
-      this.toolbarToggle.setAttribute('aria-expanded', String(this.drawerOpen));
-      this.toolbarToggle.addEventListener('click', () => {
-        this.drawerOpen = !this.drawerOpen;
-        this.syncDrawer();
-      });
-    }
-
-    // 任务栏的控件直接平铺在条上（不再套一层内层 flex 容器）：嵌套的「换行 flex」会让 Chromium
-    // 把整条的 max-content 算小 —— 展开后明明放得下，导入组还是被挤到第二行（实测 977px 宽的
-    // 视图里整条只量到 589px，2 行）。平铺后按真实内容量宽，只在真的放不下时才换行。
-    // 收起时的隐藏 / 展开时的入场动画都按「条的直接子元素」写（见 styles.css）。
-
-    // 搜索（防抖 200ms，只重建网格保持输入焦点）
-    const searchWrap = bar.createDiv({ cls: 'vinyl-shelf-search' });
-    const input = searchWrap.createEl('input', {
-      attr: { type: 'search', placeholder: t('shelf.search') },
-    });
-    input.value = this.state.query;
-    let timer: number | null = null;
-    input.addEventListener('input', () => {
-      if (timer) window.clearTimeout(timer);
-      timer = window.setTimeout(() => {
-        this.state.query = input.value.trim();
-        this.renderGrid();
-      }, 200);
-    });
-
-    // 按钮都建在 host 里：前四个 + 批量删除直接进任务栏，最后两个（导入）先进一个组 ——
-    // 空态教程的虚线圈要圈住这一组（见 buildTutorial / layoutTutorial）
-    let host: HTMLElement = bar;
-    const mk = (icon: string, title: string, fn: (ev: MouseEvent) => void) => {
-      // Obsidian 原生图标按钮（浅色底 + 黑色线形图标，随主题自适应，清晰易识别）
-      const b = host.createEl('button', { cls: 'clickable-icon vinyl-toolbar-icon' });
-      setIcon(b, icon);
-      // 只设 aria-label：Obsidian 按它渲染样式化提示，再设 title 会多弹一个浏览器原生提示（两个气泡）
-      b.setAttribute('aria-label', title);
-      b.addEventListener('click', fn);
-      return b;
-    };
-    mk('refresh-cw', t('shelf.refresh'), () => this.render());
-    mk('arrow-up-down', t('shelf.sort'), (ev) => this.showSortMenu(ev));
-    mk('filter', t('shelf.filter'), (ev) => this.showFilterMenu(ev));
-    mk('sliders-horizontal', t('shelf.props'), (ev) => this.showPropsPopover(ev));
-    // 批量删除：没有专辑可删时不出现（空墙只有一个出路 —— 导入）
-    this.batchBtn = this.entries.length
-      ? mk('trash-2', t('shelf.batchDelete'), () => this.toggleBatch())
-      : null;
-    if (this.batchBtn) this.batchBtn.setAttribute('aria-pressed', 'false');
-    host = bar.createDiv({ cls: 'vinyl-shelf-import-group' });
-    this.importGroupEl = host;
-    mk('cloud-download', t('shelf.importAlbum'), () => this.plugin.openAlbumImport());
-    mk('upload', t('shelf.importAudio'), () => this.plugin.openLocalImport());
+    this.toolbarEl = bar; // 教程层要量它的高度（教程整块要躲开它）
+    this.renderToolbarContent(bar);
   }
 
-  /** 抽屉把手的状态回写（展开 / 收起 + 读屏状态 + 提示文案），不动 DOM 结构。
-   *  计数文案由 renderGrid 写好后调这里刷新 aria-label（筛选态下数字会变）。 */
-  private syncDrawer() {
-    const open = this.drawerForced || this.drawerOpen;
-    this.toolbarEl?.toggleClass('is-open', open);
-    if (!this.toolbarToggle) return; // 空墙：固定展开，没有把手
-    this.toolbarToggle.setAttribute('aria-expanded', String(open));
-    this.toolbarToggle.setAttribute(
-      'aria-label',
-      `${this.toolbarTitle?.textContent ?? ''}｜${t(open ? 'shelf.collapse' : 'shelf.expand')}`
-    );
+  private renderToolbarContent(bar: HTMLElement) {
+    bar.empty();
+    bar.toggleClass('is-batch', this.batch.active);
+    if (this.batch.active) {
+      this.renderBatchToolbar(bar);
+      return;
+    }
+
+    // —— 标题 + 计数（计数是手绘体；有搜索 / 来源筛选时改报「匹配数/总数」）——
+    const heading = bar.createDiv({ cls: 'vinyl-shelf-heading' });
+    this.headingEl = heading;
+    this.syncHeading(); // 工具栏可能是在选择模式之后重建的：计数要立刻回填（不能等下一次 renderGrid）
+
+    // —— 搜索：图标 ↔ 原位展开的输入框（输入框向左长，右侧三个按钮原地不动）——
+    const search = bar.createDiv({ cls: 'vinyl-shelf-search' });
+    this.searchEl = search;
+    search.toggleClass('is-open', this.searchOpen);
+    const toggle = search.createEl('button', { cls: 'clickable-icon vinyl-shelf-search-toggle' });
+    setIcon(toggle, 'search');
+    toggle.setAttribute('aria-label', t('toolbar.search'));
+    toggle.setAttribute('aria-expanded', String(this.searchOpen));
+    toggle.addEventListener('click', () => this.openSearch());
+
+    const box = search.createDiv({ cls: 'vinyl-shelf-search-box' });
+    const glyph = box.createSpan({ cls: 'vinyl-shelf-search-glyph' });
+    setIcon(glyph, 'search');
+    const input = box.createEl('input', {
+      attr: { type: 'search', placeholder: t('shelf.search'), 'aria-label': t('toolbar.search') },
+    });
+    this.searchInput = input;
+    input.value = this.state.query;
+    const clear = box.createEl('button', { cls: 'clickable-icon vinyl-shelf-search-clear' });
+    setIcon(clear, 'x');
+    clear.setAttribute('aria-label', t('shelf.searchClear'));
+    clear.addEventListener('click', () => {
+      input.value = '';
+      this.applySearch('');
+      input.focus(); // 清空后留在输入框里，接着敲下一个词
+    });
+
+    let timer: number | null = null;
+    const schedule = (delay: number) => {
+      if (timer != null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        timer = null;
+        this.applySearch(input.value.trim());
+      }, delay);
+    };
+    input.addEventListener('input', () => {
+      // 中文输入法组词中不筛墙：拼音字母会一个个进来，这时候筛等于白筛几轮（还闪）
+      if (this.composing) return;
+      schedule(200);
+    });
+    input.addEventListener('compositionstart', () => {
+      this.composing = true;
+    });
+    input.addEventListener('compositionend', () => {
+      this.composing = false;
+      schedule(0);
+    });
+    input.addEventListener('keydown', (ev) => {
+      ev.stopPropagation(); // 别把按键漏给 Obsidian 全局快捷键；Esc 只退焦点，不清条件
+      if (ev.key === 'Escape') {
+        ev.preventDefault();
+        input.blur();
+      }
+    });
+    input.addEventListener('focus', () => this.setSearchOpen(true));
+    input.addEventListener('blur', () => {
+      if (!input.value.trim()) this.setSearchOpen(false); // 无关键词失焦：收回图标
+    });
+
+    // —— 右侧：陈列 / 添加 / 更多 ——（文字都在浮层里，这里只留图标）
+    const actions = bar.createDiv({ cls: 'vinyl-shelf-actions' });
+    const mk = (icon: string, label: string, cls = '') => {
+      const b = actions.createEl('button', { cls: `clickable-icon vinyl-toolbar-icon ${cls}`.trim() });
+      setIcon(b, icon);
+      // 只设 aria-label：Obsidian 按它渲染样式化提示，再设 title 会多弹一个浏览器原生提示（两个气泡）
+      b.setAttribute('aria-label', label);
+      return b;
+    };
+    const display = mk('sliders-horizontal', t('toolbar.display'), 'vinyl-toolbar-display');
+    this.displayBtnEl = display;
+    display.addEventListener('click', () => this.toggleDisplayPanel(display));
+    const add = mk('plus', t('toolbar.add'), 'vinyl-toolbar-add');
+    this.addBtnEl = add;
+    add.addEventListener('click', () => this.toggleAddPanel(add));
+    const more = mk('more-horizontal', t('toolbar.more'));
+    more.addEventListener('click', (ev) => this.showMoreMenu(ev));
+    this.syncDisplayButton();
+  }
+
+  /** 标题计数：无筛选报总数，有搜索 / 来源筛选报「匹配/总数」（数量由 renderGrid 算好存进来，两处口径一致） */
+  private syncHeading(): void {
+    const el = this.headingEl;
+    if (!el) return;
+    const filtered = !!this.state.query || this.state.sourceFilter !== 'all';
+    el.empty();
+    el.createSpan({ text: t('shelf.heading'), cls: 'vinyl-shelf-heading-title' });
+    el.createSpan({
+      text: filtered ? `[${this.shownCount}/${this.entries.length}]` : `[${this.entries.length}]`,
+      cls: 'vinyl-shelf-heading-count',
+    });
+  }
+
+  /** 陈列按钮：筛了来源就把来源名挂在图标后面 —— 单行工具栏里条件要保持可见（方案 §4） */
+  private syncDisplayButton(): void {
+    const btn = this.displayBtnEl;
+    if (!btn) return;
+    const src = this.state.sourceFilter;
+    btn.empty();
+    setIcon(btn, 'sliders-horizontal');
+    if (src === 'all') {
+      btn.removeClass('has-filter');
+      btn.setAttribute('aria-label', t('toolbar.display'));
+      return;
+    }
+    const label = filterOptions().find(([key]) => key === src)?.[1] ?? '';
+    btn.addClass('has-filter');
+    btn.createSpan({ text: label, cls: 'vinyl-toolbar-icon-label' });
+    btn.setAttribute('aria-label', tf('toolbar.displayFiltered', { source: label }));
+  }
+
+  /** 展开搜索框并聚焦（点图标进入） */
+  private openSearch(): void {
+    this.setSearchOpen(true);
+    this.searchInput?.focus();
+  }
+
+  private setSearchOpen(open: boolean): void {
+    this.searchOpen = open;
+    this.searchEl?.toggleClass('is-open', open);
+    const toggle = this.searchEl?.querySelector<HTMLElement>('.vinyl-shelf-search-toggle');
+    toggle?.setAttribute('aria-expanded', String(open));
+  }
+
+  /** 应用关键词（防抖 / 组词结束后调用）：更新墙、管滚动位置。
+   *  进入搜索时先记住浏览位置，清空后回到那里；新关键词从结果顶部看起。 */
+  private applySearch(next: string): void {
+    if (next === this.state.query) return;
+    const wasEmpty = !this.state.query;
+    if (wasEmpty && next) this.preSearchScroll = this.contentEl.scrollTop;
+    this.state.query = next;
+    this.renderGrid();
+    if (next) this.contentEl.scrollTop = 0;
+    else this.contentEl.scrollTop = this.preSearchScroll;
   }
 
   // ============ 批量删除（选择模式）============
-  // 入口在工具栏；进模式后卡片变成「勾选框」：点 = 选 / 取消选、Ctrl / ⌘ 同义、Shift = 连选，
-  // 手势原语与播放器唱片区共用（core/multi-select）。底部浮出一条动作条（已选计数 / 全选 / 删除 / 退出）。
-
-  private toggleBatch() {
-    if (this.batch.active) this.exitBatch();
-    else this.enterBatch();
-  }
+  // 入口在「更多」菜单；进模式后工具栏整条切换用途（已选数量 / 全选当前 / 清空 / 删除… / 完成），
+  // 不再是底部浮条。卡片变成「勾选框」：点 = 选 / 取消选、Ctrl / ⌘ 同义、Shift = 连选，
+  // 手势原语与播放器唱片区共用（core/multi-select）。全选只作用于进入模式那一刻的结果（batch.scope）。
 
   private enterBatch() {
     if (!this.entries.length) return;
-    this.batch = { active: true, selection: [], anchor: '' };
+    this.closePanel();
+    // 全选只作用于「进入模式时的当前结果」：期间墙的增删（后台导入等）不改这个范围
+    const scope = this.visiblePaths();
+    this.batch = { active: true, selection: [], anchor: '', scope };
     this.syncBatch();
   }
 
-  /** 退出选择模式（Esc / 动作条退出按钮 / 删完收工都走这里） */
+  /** 退出选择模式（Esc / 工具栏「完成」/ 删完收工都走这里） */
   private exitBatch() {
     if (!this.batch.active) return;
-    this.batch = { active: false, selection: [], anchor: '' };
+    this.batch = { active: false, selection: [], anchor: '', scope: [] };
     this.syncBatch();
   }
 
-  /** 当前显示的专辑路径（按显示顺序）：Shift 连选 / 全选都以「眼前看到的」为准 */
+  /** 当前显示的专辑路径（按显示顺序）：Shift 连选以「眼前看到的」为准（全选看 batch.scope） */
   private visiblePaths(): string[] {
     return this.applyViewFilters().map((e) => e.album.path);
   }
@@ -480,15 +602,23 @@ export class VinylShelfView extends ItemView {
     this.syncBatch();
   }
 
-  /** 全选 / 清空（同一枚按钮：视窗里都选上了就切到「清空选择」） */
+  /** 全选当前 N 张（都选上了就是清空） */
   private toggleSelectAll() {
-    const all = this.visiblePaths();
+    const scope = this.batch.scope;
     const picked = new Set(this.batch.selection);
-    const allPicked = all.length > 0 && all.every((p) => picked.has(p));
-    this.batch.selection = allPicked
-      ? []
-      : [...this.batch.selection, ...all.filter((p) => !picked.has(p))];
-    this.batch.anchor = all.length && !allPicked ? all[all.length - 1] : '';
+    const allPicked = scope.length > 0 && scope.every((p) => picked.has(p));
+    if (allPicked) {
+      this.clearSelection();
+      return;
+    }
+    this.batch.selection = [...this.batch.selection, ...scope.filter((p) => !picked.has(p))];
+    this.batch.anchor = scope.length ? scope[scope.length - 1] : '';
+    this.syncBatch();
+  }
+
+  private clearSelection() {
+    this.batch.selection = [];
+    this.batch.anchor = '';
     this.syncBatch();
   }
 
@@ -499,25 +629,24 @@ export class VinylShelfView extends ItemView {
     this.plugin.openDeleteAlbums(albums, () => this.exitBatch());
   }
 
-  /** 底部动作条（选择模式）：居中悬浮的小圆条 —— 与顶部工具栏同一种「浮起来」的观感 */
-  private renderBatchBar(c: HTMLElement) {
-    const bar = c.createDiv({ cls: 'vinyl-shelf-batchbar' });
-    this.batchBarEl = bar;
-    this.batchCountEl = bar.createDiv({ cls: 'vinyl-shelf-batch-count' });
-    const mk = (icon: string, label: string, fn: () => void) => {
-      const b = bar.createEl('button', { cls: 'vinyl-btn vinyl-btn-small' });
-      setIcon(b, icon);
-      b.setAttribute('aria-label', label);
+  /** 选择模式的工具栏（整条切换用途）：左边已选数量，右边四个动作 */
+  private renderBatchToolbar(bar: HTMLElement) {
+    this.batchInfoEl = bar.createDiv({ cls: 'vinyl-shelf-batch-info' });
+    const actions = bar.createDiv({ cls: 'vinyl-shelf-batch-actions' });
+    const mk = (label: string, cls: string, fn: () => void) => {
+      const b = actions.createEl('button', { text: label, cls: `vinyl-toolbar-textbtn ${cls}`.trim() });
       b.addEventListener('click', fn);
       return b;
     };
-    this.batchAllBtn = mk('list-checks', t('batch.selectAll'), () => this.toggleSelectAll());
-    this.batchDeleteBtn = mk('trash-2', t('batch.delete'), () => this.openBatchDelete());
-    this.batchDeleteBtn.addClass('is-danger');
-    mk('x', t('batch.exit'), () => this.exitBatch());
+    this.batchAllBtn = mk('', 'vinyl-batch-all', () => this.toggleSelectAll());
+    this.batchClearBtn = mk(t('batch.clear'), 'vinyl-batch-clear', () => this.clearSelection());
+    this.batchDeleteBtn = mk(t('batch.delete'), 'is-danger vinyl-batch-delete', () =>
+      this.openBatchDelete()
+    );
+    this.batchDoneBtn = mk(t('batch.exit'), 'vinyl-batch-done', () => this.exitBatch());
   }
 
-  /** 选择模式的整体状态回写：进入 / 退出、卡片勾选态、动作条、工具栏入口按钮 */
+  /** 选择模式的整体状态回写：进入 / 退出（整条工具栏换用途）、卡片勾选态、各按钮的可用性 */
   private syncBatch() {
     const active = this.batch.active;
     const picked = new Set(this.batch.selection);
@@ -529,24 +658,20 @@ export class VinylShelfView extends ItemView {
       if (active) el.setAttribute('aria-pressed', on ? 'true' : 'false');
       else el.removeAttribute('aria-pressed');
     }
-    if (this.batchBarEl) {
-      this.batchBarEl.toggleClass('is-on', active);
-      if (this.batchCountEl) {
-        this.batchCountEl.textContent = tf('batch.selected', { n: this.batch.selection.length });
-      }
-      if (this.batchDeleteBtn) this.batchDeleteBtn.disabled = !this.batch.selection.length;
-      if (this.batchAllBtn && active) {
-        const all = this.visiblePaths();
-        const allPicked = all.length > 0 && all.every((p) => picked.has(p));
-        setIcon(this.batchAllBtn, allPicked ? 'x' : 'list-checks');
-        this.batchAllBtn.setAttribute('aria-label', t(allPicked ? 'batch.clear' : 'batch.selectAll'));
-      }
+    const bar = this.toolbarEl;
+    if (bar && bar.classList.contains('is-batch') !== active) this.renderToolbarContent(bar);
+    if (!active) return;
+    if (this.batchInfoEl) {
+      this.batchInfoEl.setText(tf('batch.selected', { n: this.batch.selection.length }));
     }
-    if (this.batchBtn) {
-      this.batchBtn.toggleClass('is-active', active);
-      this.batchBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
-      this.batchBtn.setAttribute('aria-label', t(active ? 'batch.exit' : 'shelf.batchDelete'));
+    const scope = this.batch.scope;
+    if (this.batchAllBtn) {
+      const allPicked = scope.length > 0 && scope.every((p) => picked.has(p));
+      this.batchAllBtn.setText(tf('batch.selectAll', { n: scope.length }));
+      this.batchAllBtn.disabled = allPicked || !scope.length; // 都选上了就没有「全选」可点
     }
+    if (this.batchClearBtn) this.batchClearBtn.disabled = !this.batch.selection.length;
+    if (this.batchDeleteBtn) this.batchDeleteBtn.disabled = !this.batch.selection.length;
   }
 
   private renderGrid() {
@@ -555,22 +680,18 @@ export class VinylShelfView extends ItemView {
     this.cardEls.clear();
     this.clearTutorial(); // 教程层挂在视图上而不是网格里，要单独收
 
-    // 选择模式：专辑可能已被删掉 / 改名（卡片是快照）→ 选择表里去掉不存在的；
-    // 墙空了就自动退出模式（否则底下还浮着一条「已选 N 张」却没东西可选）
+    // 选择模式：专辑可能已被删掉 / 改名（卡片是快照）→ 选择表与全选范围里去掉不存在的；
+    // 墙空了就自动退出模式（否则工具栏还停着「已选 N 张」却没东西可选）
     if (this.batch.active) {
       const alive = new Set(this.entries.map((e) => e.album.path));
       this.batch.selection = this.batch.selection.filter((p) => alive.has(p));
+      this.batch.scope = this.batch.scope.filter((p) => alive.has(p));
       if (!this.entries.length) this.batch.active = false;
     }
 
     const shown = this.applyViewFilters();
-    const filtered = !!this.state.query || this.state.sourceFilter !== 'all';
-    if (this.toolbarTitle) {
-      this.toolbarTitle.textContent = filtered
-        ? tf('shelf.titleFiltered', { shown: shown.length, total: this.entries.length })
-        : tf('shelf.titleWithCount', { n: this.entries.length });
-    }
-    this.syncDrawer(); // 计数变了：把手上的 aria-label 跟着换
+    this.shownCount = shown.length;
+    this.syncHeading(); // 计数（手绘体）：筛选态报「匹配/总数」
 
     if (!this.entries.length) {
       // 一张专辑都没有（新装也是这样）：直接给图纸上那份「图文教程」
@@ -582,6 +703,15 @@ export class VinylShelfView extends ItemView {
       const empty = this.gridHost.createDiv({ cls: 'vinyl-shelf-empty' });
       empty.createDiv({ text: t('shelf.filtered.title'), cls: 'vinyl-shelf-empty-title' });
       empty.createDiv({ text: t('shelf.filtered.hint'), cls: 'vinyl-muted' });
+      // 搜不到东西时给一条出路：拿这个词去在线找（点开添加面板并带入关键词）
+      const q = this.state.query;
+      if (q) {
+        const btn = empty.createEl('button', {
+          text: tf('shelf.searchOnline', { q }),
+          cls: 'mod-cta vinyl-shelf-empty-cta',
+        });
+        btn.addEventListener('click', () => this.openAddPanelWith(q));
+      }
       this.syncBatch();
       return;
     }
@@ -673,7 +803,7 @@ export class VinylShelfView extends ItemView {
    *  图形全部用 roughjs 现场重画（尺寸一变位置就变，静态路径没法复用），参数与设计稿逐项对齐。 */
   private layoutTutorial() {
     const T = this.tutorial;
-    const group = this.importGroupEl;
+    const group = this.addBtnEl; // 虚线圈圈住「添加」入口（工具栏方案：两个导入按钮合成一个面板入口）
     if (!T || !T.root.isConnected || !group || !group.isConnected) return;
     const base = T.root.getBoundingClientRect(); // 教程层铺满视图内容区，作为统一坐标原点
     const btn = group.getBoundingClientRect();
@@ -688,11 +818,19 @@ export class VinylShelfView extends ItemView {
     // 文本块：图纸上第一个虚线框顶 = 线圈底 + 82；框顶往上 20 是标题，所以整块再上移标题高 + 20。
     // 窄视图里工具栏会换行变高，这一条会把标题顶进工具栏 —— 加一道下限，最多贴到工具栏下方。
     const bar = this.toolbarEl?.getBoundingClientRect();
-    const belowBar = bar ? bar.bottom - base.top + 24 : 0;
+    const barTop = bar ? bar.top - base.top : 0;
+    // 工具栏在底部（外观页那六档里的 bottom-*）：整块要收在它上面，别被压住
+    const barAtBottom = isToolbarAtBottom(
+      normalizeToolbarPosition(this.plugin.settings.toolbarPosition)
+    );
+    const belowBar = bar && !barAtBottom ? bar.bottom - base.top + 24 : 0;
     const minTop = Math.max(ringBottom + TUT.boxTopFromRing - T.title.offsetHeight - 20, belowBar);
     // 视觉重心落在左下：整块默认压到视图底部（离底 bottomPad），视图不够高就退回 minTop（贴着线圈下方）。
     // 两道下限合起来保证任何尺寸下既不压工具栏、也不冒到视图外 —— 箭头跟着整块一起变长，不用单独调。
-    const top = Math.max(minTop, base.height - T.main.offsetHeight - TUT.bottomPad);
+    let top = Math.max(minTop, base.height - T.main.offsetHeight - TUT.bottomPad);
+    if (barAtBottom) {
+      top = Math.max(8, Math.min(top, barTop - T.main.offsetHeight - 12));
+    }
     T.main.style.top = `${Math.round(top)}px`;
 
     const b1 = T.box1.getBoundingClientRect();
@@ -700,10 +838,16 @@ export class VinylShelfView extends ItemView {
     const box1Mid = b1.top - base.top + b1.height / 2;
     const box2Mid = b2.top - base.top + b2.height / 2;
 
-    // 拐弯箭头：箭尖压在圈底（图纸比圈底低 1px、比圈心右偏 2px）；尾巴锚在第一个虚线框右缘中点
-    // —— 图纸里箭头就是绑在这个位置的，所以不管视图多宽，箭头都长在文本框上，不会飘出去。
+    // 指向「添加」那枚按钮的箭头（虚线圆圈住的地方）。图纸里按钮在右上角，所以箭头是
+    // 「框右缘中点 → 往右拐 → 戳到圈底」；现在工具栏是紧凑浮卡、还能摆到六档位置，
+    // 按钮未必在框的右边 —— 横向净空为负时老画法会被整条判掉（箭头就消失了，用户反馈）。
+    // 按圈相对文本框的位置分三种：旁边有横向净空走老画法；圈在框上方 / 下方改成竖箭头。
     const tip = { x: cx + 2, y: ringBottom + 1 };
     const box1Right = b1.right - base.left;
+    const box1Left = b1.left - base.left;
+    const box1Top = b1.top - base.top;
+    const box1Bottom = b1.bottom - base.top;
+    const ringTop = cy - ry;
     const roomX = tip.x - (box1Right + TUT.tailPad); // 文本框右缘到箭尖的净空
     const tight = roomX < TUT.minRoomX;
 
@@ -740,24 +884,45 @@ export class VinylShelfView extends ItemView {
     // 虚线圈（图纸：roughness 2 的椭圆，curveFitting 1）
     inkAdd(rc.ellipse(cx, cy, rx * 2, ry * 2, { ...roughDashed(TUT.seed.ring, 2), curveFitting: 1 }));
 
-    // 拐弯箭头（图纸：roughness 2；杆是过三点的曲线，头是两笔实线）
+    // 箭头（图纸：roughness 2；杆是过三点的曲线，头是两笔实线）。三种走法共用同一对种子，
+    // 换布局时手绘抖动一致；竖箭头的尾锚在框的上 / 下缘（x 跟着圈心走，但夹在框内 30px）。
+    const arrowTipX = Math.round(Math.max(box1Left + 30, Math.min(tip.x, box1Right - 30)));
+    let arrow: { tail: { x: number; y: number }; bend: { x: number; y: number }; tip: { x: number; y: number } } | null = null;
     if (!tight) {
       const tail = { x: box1Right + TUT.tailPad, y: box1Mid };
-      const bend = {
-        x: tail.x + TUT.bendRatioX * (tip.x - tail.x),
-        y: tail.y + TUT.bendRatioY * (tip.y - tail.y),
+      // 箭尖：圈整体在框下方时戳圈顶（工具栏摆到右下角那一档），否则照图纸戳圈底
+      const classicTip = { x: tip.x, y: ringTop > box1Bottom ? ringTop - 1 : ringBottom + 1 };
+      arrow = {
+        tail,
+        bend: {
+          x: tail.x + TUT.bendRatioX * (classicTip.x - tail.x),
+          y: tail.y + TUT.bendRatioY * (classicTip.y - tail.y),
+        },
+        tip: classicTip,
       };
+    } else if (ringBottom < box1Top) {
+      // 工具栏在顶部那一排：框在下面，箭头从框顶竖着往上指
+      const tail = { x: arrowTipX, y: box1Top - TUT.tailPad };
+      const up = { x: arrowTipX + 2, y: ringBottom + 1 };
+      arrow = { tail, bend: { x: tail.x + 6, y: (tail.y + up.y) / 2 }, tip: up };
+    } else if (ringTop > box1Bottom) {
+      // 工具栏摆到了底部：圈在框的下方，箭头从框底往下指
+      const tail = { x: arrowTipX, y: box1Bottom + TUT.tailPad };
+      const down = { x: arrowTipX + 2, y: ringTop - 1 };
+      arrow = { tail, bend: { x: tail.x + 6, y: (tail.y + down.y) / 2 }, tip: down };
+    }
+    if (arrow) {
       inkAdd(
         rc.curve(
           [
-            [tail.x, tail.y],
-            [bend.x, bend.y],
-            [tip.x, tip.y],
+            [arrow.tail.x, arrow.tail.y],
+            [arrow.bend.x, arrow.bend.y],
+            [arrow.tip.x, arrow.tip.y],
           ],
           roughDashed(TUT.seed.arrowBent, 2)
         )
       );
-      const h = arrowHeadPoints(tip, unitVector(bend, tip));
+      const h = arrowHeadPoints(arrow.tip, unitVector(arrow.bend, arrow.tip));
       inkAdd([rc.line(h.tip.x, h.tip.y, h.a.x, h.a.y, roughSolid(TUT.seed.arrowBent + 1)), rc.line(h.tip.x, h.tip.y, h.b.x, h.b.y, roughSolid(TUT.seed.arrowBent + 2))]);
     }
 
@@ -811,116 +976,361 @@ export class VinylShelfView extends ItemView {
     return sortShelfEntries(list, this.state.sort, this.plugin.settings.stats);
   }
 
-  // ============ 工具栏菜单 / 弹层 ============
+  // ============ 浮层：陈列 / 添加 ============
+  // 同一时刻最多一个浮层；点外 / Esc 关闭；关闭后焦点还给入口按钮。
+  // 浮层挂在 body（position: fixed），但位置夹在专辑墙窗格内 —— 不遮住别的窗格里的播放器。
 
-  private showSortMenu(ev: MouseEvent) {
-    // 属性列表要弹在排序按钮下面：菜单关闭后事件早已结束，先把按钮元素抓在手里
-    const anchor = ev.currentTarget as HTMLElement | null;
-    const labels = this.plugin.settings.shelfPropLabels;
-    const menu = new Menu();
-    for (const basis of SORT_BASES) {
-      menu.addItem((it) =>
-        it
-          .setTitle(sortItemLabel(basis, this.state.sort, labels))
-          .setChecked(this.state.sort.basis === basis)
-          .onClick(() => {
-            // 自定义依据要先选属性：未选中时弹属性列表；已在自定义上则与固定项一样翻转方向
-            if (basis === 'custom' && this.state.sort.basis !== 'custom') {
-              this.showCustomSortMenu(ev, anchor);
-              return;
-            }
-            this.state.sort = switchSort(this.state.sort, basis);
-            this.renderGrid();
-          })
-      );
-    }
-    menu.showAtMouseEvent(ev);
-  }
-
-  /** 「自定义排序依据」的属性列表：专辑笔记当前的 frontmatter 属性（按出现次数排序），点一个即按它升序排 */
-  private showCustomSortMenu(ev: MouseEvent, anchor: HTMLElement | null) {
-    const menu = new Menu();
-    const usage = collectShelfPropKeys(this.entries.map((e) => e.album));
-    if (!usage.length) {
-      menu.addItem((it) => it.setTitle(t('sort.noProps')).setDisabled(true));
-    }
-    for (const u of usage) {
-      const label = propLabel(u.key, this.plugin.settings.shelfPropLabels);
-      menu.addItem((it) =>
-        it
-          .setTitle(`${label} · ${tf('props.albumCount', { count: u.count })}`)
-          .onClick(() => {
-            this.state.sort = pickCustomSort(this.state.sort, u.key);
-            this.renderGrid();
-          })
-      );
-    }
-    const rect = anchor?.getBoundingClientRect();
-    menu.showAtPosition(rect ? { x: rect.left, y: rect.bottom } : { x: ev.clientX, y: ev.clientY });
-  }
-
-  private showFilterMenu(ev: MouseEvent) {
-    const menu = new Menu();
-    for (const [key, label] of filterOptions()) {
-      menu.addItem((it) =>
-        it
-          .setTitle(label)
-          .setChecked(this.state.sourceFilter === key)
-          .onClick(() => {
-            this.state.sourceFilter = key;
-            this.renderGrid();
-          })
-      );
-    }
-    menu.showAtMouseEvent(ev);
-  }
-
-  // ============ 卡片属性弹层 ============
-  // 两区（已显示 / 可添加）+ 计数；已显示区可拖拽调序、✎ 改显示名、✕ 移除。
-  // 内容重绘与事件注册分离：任何变更只重绘本区，弹层保持打开、逐项即时生效。
-
-  private showPropsPopover(ev: MouseEvent) {
-    this.closePropsPopover();
-    const pop = document.body.createDiv({ cls: 'vinyl-props-popover' });
-    this.propsPopover = pop;
-    this.renderPropsPopover(pop);
-    this.placePropsPopover(pop, ev.currentTarget as HTMLElement);
-    this.onDocClick = (docEv: MouseEvent) => {
-      if (pop.contains(docEv.target as Node)) return;
-      this.closePropsPopover();
+  private openPanel(kind: 'display' | 'add', anchor: HTMLElement): void {
+    this.closePanel();
+    const el = document.body.createDiv({ cls: `vinyl-panel vinyl-${kind}-panel` });
+    this.panel = { el, kind, anchor };
+    this.displayLayer = 'main';
+    if (kind === 'display') this.renderDisplayPanel(el);
+    else this.renderAddPanel(el);
+    this.placePanel(el, anchor);
+    // 点外关闭：pointerdown 的捕获阶段（click 太晚 —— 浮层里的按钮会先响应）
+    this.onPanelDocPointer = (ev: PointerEvent) => {
+      const target = ev.target as Node | null;
+      const p = this.panel;
+      if (!target || !p) return;
+      if (p.el.contains(target) || p.anchor.contains(target)) return; // 点入口本身交给切换逻辑
+      this.closePanel();
     };
-    document.addEventListener('click', this.onDocClick, true);
+    document.addEventListener('pointerdown', this.onPanelDocPointer, true);
+    this.onPanelKey = (ev: KeyboardEvent) => {
+      if (ev.key !== 'Escape') return;
+      ev.preventDefault();
+      const anchorEl = this.panel?.anchor ?? null;
+      this.closePanel();
+      anchorEl?.focus(); // 键盘用户：关掉之后焦点回到入口，不用重新找
+    };
+    document.addEventListener('keydown', this.onPanelKey, true);
   }
 
-  // 内容重绘（不重建弹层、不重注册 document 监听）：勾选 / 排序 / 改名后调用
-  private renderPropsPopover(pop: HTMLElement) {
-    pop.empty();
+  /** 视图重建后把浮层接回来：锚点换成新的入口按钮、重新摆位（内容与搜索状态原地保留） */
+  private reattachPanel(kind: 'display' | 'add'): void {
+    const panel = this.panel;
+    if (!panel || panel.kind !== kind) return;
+    const anchor = kind === 'add' ? this.addBtnEl : this.displayBtnEl;
+    if (!anchor) return;
+    panel.anchor = anchor;
+    this.placePanel(panel.el, anchor);
+  }
+
+  /** 原位切换：点同一个入口 = 收起 */
+  private toggleDisplayPanel(anchor: HTMLElement): void {
+    if (this.panel?.kind === 'display') {
+      this.closePanel();
+      return;
+    }
+    this.openPanel('display', anchor);
+  }
+
+  private toggleAddPanel(anchor: HTMLElement): void {
+    if (this.panel?.kind === 'add') {
+      this.closePanel();
+      return;
+    }
+    this.openPanel('add', anchor);
+  }
+
+  private closePanel(): void {
+    const panel = this.panel;
+    const addPanel = this.addPanel;
+    this.panel = null;
+    this.propsHost = null;
+    this.addPanel = null;
+    if (this.onPanelDocPointer) {
+      document.removeEventListener('pointerdown', this.onPanelDocPointer, true);
+      this.onPanelDocPointer = null;
+    }
+    if (this.onPanelKey) {
+      document.removeEventListener('keydown', this.onPanelKey, true);
+      this.onPanelKey = null;
+    }
+    addPanel?.destroy(); // 在途搜索作废：结果回来也不许再往 DOM 上画
+    panel?.el.remove();
+  }
+
+  /** 浮层内容就地重绘（属性 / 计数变了；浮层保持打开） */
+  private refreshPanelContent(): void {
+    const p = this.panel;
+    if (!p || p.kind !== 'display') return;
+    this.renderDisplayPanel(p.el);
+  }
+
+  /** 位置与宽度：贴入口按钮下方、右缘对齐 —— 宽度优先收在专辑墙窗格里，窗格太窄时保底一个可读下限
+   *  （搜索结果是「封面 + 标题 + 操作」三栏，320px 以下就挤成一团）；下方放不下上翻；内容超高限高滚动。 */
+  private placePanel(el: HTMLElement, anchor: HTMLElement): void {
+    const rect = anchor.getBoundingClientRect();
+    const pane = this.contentEl.getBoundingClientRect();
+    const win = el.ownerDocument.defaultView ?? window;
+    const kind = this.panel?.kind ?? 'display';
+    // 添加浮层里有搜索结果，比陈列那种表单行宽一档；下限保证窄窗格里信息仍看得清
+    const preferred = kind === 'add' ? 440 : 340;
+    const floor = kind === 'add' ? 340 : 260;
+    const available = Math.max(pane.width - 24, floor);
+    const width = Math.round(Math.min(preferred, available, win.innerWidth - 24));
+    el.style.width = `${width}px`;
+    const paneClamped = Math.min(rect.right - width, Math.max(pane.left + 8, pane.right - width - 8));
+    const left = Math.max(8, Math.min(paneClamped, win.innerWidth - width - 8));
+    const below = win.innerHeight - rect.bottom - 12;
+    const above = rect.top - 12;
+    const flip = below < 240 && above > below;
+    el.style.maxHeight = `${Math.round(
+      Math.max(200, Math.min(win.innerHeight * 0.7, flip ? above : below))
+    )}px`;
+    el.style.left = `${Math.round(left)}px`;
+    el.style.top = flip ? 'auto' : `${Math.round(rect.bottom + 6)}px`;
+    el.style.bottom = flip ? `${Math.round(win.innerHeight - rect.top + 6)}px` : 'auto';
+  }
+
+  // ============ 陈列浮层（来源 / 排列 / 显示 + 第二层：封面下的信息）============
+
+  private renderDisplayPanel(el: HTMLElement): void {
+    el.empty();
+    // 标题栏（学设置页的分区块）：主层是图标芯片 + 「陈列」，第二层是「‹ 返回陈列」+ 「封面下的信息」
+    const props = this.displayLayer === 'props';
+    const head = el.createDiv({ cls: 'vinyl-panel-head' });
+    if (props) {
+      const back = head.createEl('button', { cls: 'vinyl-panel-back' });
+      const backIcon = back.createSpan({ cls: 'vinyl-panel-back-icon' });
+      setIcon(backIcon, 'chevron-left');
+      back.createSpan({ text: t('display.back') });
+      back.addEventListener('click', () => {
+        this.displayLayer = 'main';
+        this.renderDisplayPanel(el);
+      });
+      head.createDiv({ text: t('display.props'), cls: 'vinyl-panel-title' });
+    } else {
+      const icon = head.createSpan({ cls: 'vinyl-panel-icon' });
+      setIcon(icon, 'sliders-horizontal');
+      head.createDiv({ text: t('toolbar.display'), cls: 'vinyl-panel-title' });
+    }
+    if (props) {
+      this.renderPropsLayer(el);
+      return;
+    }
+    const body = el.createDiv({ cls: 'vinyl-panel-body' });
+
+    // —— 来源：分段控件（单选），与关键词叠加筛选 ——
+    body.createDiv({ text: t('display.source'), cls: 'vinyl-panel-section' });
+    const segments = body.createDiv({ cls: 'vinyl-segments' });
+    for (const [key, label] of filterOptions()) {
+      const on = this.state.sourceFilter === key;
+      const seg = segments.createEl('button', { text: sourceShortLabel(key), cls: 'vinyl-segment' });
+      seg.setAttribute('aria-label', label); // 完整名字（如「仅收藏（无音源）」）在提示里
+      seg.setAttribute('aria-pressed', String(on));
+      seg.toggleClass('is-on', on);
+      seg.addEventListener('click', () => {
+        if (this.state.sourceFilter === key) return;
+        this.state.sourceFilter = key;
+        this.renderGrid();
+        this.contentEl.scrollTop = 0; // 换来源：从结果顶部看起
+        this.syncDisplayButton(); // 单行工具栏里的条件保持可见
+        this.refreshPanelContent();
+      });
+    }
+
+    // —— 排列：依据 + 方向，两个独立下拉（不再靠重复点击翻转）——
+    body.createDiv({ text: t('display.arrange'), cls: 'vinyl-panel-section' });
+    const basisSel = this.panelValueRow(body, t('display.sortBy'));
+    for (const basis of SORT_BASES) {
+      if (basis === 'custom') continue; // 自定义属性走下面的分组
+      const opt = basisSel.createEl('option', { text: basisName(basis), value: basis });
+      if (this.state.sort.basis === basis) opt.selected = true;
+    }
+    const usage = collectShelfPropKeys(this.entries.map((e) => e.album));
+    if (usage.length) {
+      const group = basisSel.createEl('optgroup', { attr: { label: t('display.customGroup') } });
+      for (const u of usage) {
+        const label = propLabel(u.key, this.plugin.settings.shelfPropLabels);
+        const opt = group.createEl('option', {
+          text: `${label} · ${tf('props.albumCount', { count: u.count })}`,
+          value: `custom:${u.key}`,
+        });
+        if (this.state.sort.basis === 'custom' && this.state.sort.custom === u.key) opt.selected = true;
+      }
+    }
+    basisSel.addEventListener('change', () => {
+      const v = basisSel.value;
+      this.state.sort = v.startsWith('custom:')
+        ? setCustomSortKey(this.state.sort, v.slice('custom:'.length))
+        : setSortBasis(this.state.sort, v as SortBasis);
+      this.renderGrid();
+      this.contentEl.scrollTop = 0; // 换依据：从结果顶部看起
+      this.refreshPanelContent(); // 方向下拉的文案跟着依据换
+    });
+
+    const dirSel = this.panelValueRow(body, t('display.dir'));
+    for (const o of sortDirOptions(this.state.sort.basis)) {
+      const opt = dirSel.createEl('option', { text: o.label, value: o.dir });
+      if (this.state.sort.dir === o.dir) opt.selected = true;
+    }
+    dirSel.addEventListener('change', () => {
+      this.state.sort = setSortDir(this.state.sort, dirSel.value as SortDir);
+      this.renderGrid();
+      this.contentEl.scrollTop = 0;
+    });
+
+    // —— 显示：每行数量（即时预览）+ 封面下的信息（第二层）——
+    body.createDiv({ text: t('display.view'), cls: 'vinyl-panel-section' });
+    const colSel = this.panelValueRow(body, t('display.columns'));
+    colSel.createEl('option', { text: t('settings.columnsAuto'), value: 'auto' });
+    for (const n of SHELF_COLUMN_CHOICES) {
+      colSel.createEl('option', { text: tf('settings.columnsN', { n }), value: String(n) });
+    }
+    colSel.value = String(this.plugin.settings.shelfColumns ?? 'auto');
+    colSel.addEventListener('change', () => void this.applyShelfColumns(colSel.value));
+
+    // 「封面下的信息」：与上面同一套行（标签在左），但整行不是按钮 ——
+    // 只有右边一小枚按键（当前显示的信息 + ›）可点，进第二层
+    const propsRow = body.createDiv({ cls: 'vinyl-panel-row is-static' });
+    propsRow.createSpan({ text: t('display.props'), cls: 'vinyl-panel-row-label' });
+    const propsBtn = propsRow.createEl('button', { cls: 'vinyl-panel-value-btn' });
+    propsBtn.setAttribute('aria-label', t('display.props'));
+    propsBtn.createSpan({ text: this.propsSummary(), cls: 'vinyl-panel-value-btn-text' });
+    const chev = propsBtn.createSpan({ cls: 'vinyl-panel-value-btn-chevron' });
+    setIcon(chev, 'chevron-right');
+    propsBtn.addEventListener('click', () => {
+      this.displayLayer = 'props';
+      this.renderDisplayPanel(el);
+    });
+  }
+
+  /** 一行「标签 + 值 ▾」：值由原生 select 承载，视觉做成苹果那种「右侧弱化值 + 上下箭头」。
+   *  整行都可点（点标签也开下拉，与系统设置行的手感一致）；点 select 自己时不再转一次（会开两次）。 */
+  private panelValueRow(parent: HTMLElement, label: string): HTMLSelectElement {
+    const row = parent.createDiv({ cls: 'vinyl-panel-row is-value' });
+    row.createSpan({ text: label, cls: 'vinyl-panel-row-label' });
+    const sel = row.createEl('select', { cls: 'vinyl-panel-value' });
+    const chev = row.createSpan({ cls: 'vinyl-panel-row-chevron' });
+    setIcon(chev, 'chevrons-up-down'); // macOS 弹出按钮上的那个上下箭头
+    row.addEventListener('click', (ev) => {
+      if (ev.target === sel) return; // 点值本身：浏览器自己会开
+      const picker = sel as HTMLSelectElement & { showPicker?: () => void };
+      if (typeof picker.showPicker === 'function') picker.showPicker();
+      else sel.focus();
+    });
+    return sel;
+  }
+
+  /** 封面下的信息那一行右侧的摘要（当前显示属性的名字，逗号分隔） */
+  private propsSummary(): string {
+    const props = this.plugin.settings.shelfProps;
+    if (!props.length) return t('display.propsNone');
+    return props.map((k) => propLabel(k, this.plugin.settings.shelfPropLabels)).join(t('common.listSep'));
+  }
+
+  /** 每行数量（设置项）：即时预览 —— 只换 CSS 变量，不重建卡片、不动滚动位置 */
+  private async applyShelfColumns(value: string) {
+    this.plugin.settings.shelfColumns =
+      value === 'auto' ? 'auto' : Number(value) || this.plugin.settings.shelfColumns;
+    await this.plugin.saveSettings();
+    this.applyAppearance();
+  }
+
+  /** 陈列第二层：封面下的信息（返回键在标题栏里）。改完即时生效、落盘，浮层保持打开。 */
+  private renderPropsLayer(el: HTMLElement): void {
+    const host = el.createDiv({ cls: 'vinyl-panel-body vinyl-props-host' });
+    this.propsHost = host;
+    this.renderProps(host);
+  }
+
+  // ============ 更多菜单 ============
+
+  private showMoreMenu(ev: MouseEvent) {
+    const menu = new Menu();
+    markVinylMenu(menu); // 全直角：菜单壳与悬停底一起收（见 styles.css「全直角」段）
+    menu.addItem((it) =>
+      it
+        .setTitle(t('more.select'))
+        .setIcon('list-checks')
+        .setDisabled(!this.entries.length)
+        .onClick(() => this.enterBatch())
+    );
+    menu.addItem((it) =>
+      it
+        .setTitle(t('more.refresh'))
+        .setIcon('refresh-cw')
+        .onClick(() => this.render()) // 保留搜索 / 筛选 / 陈列状态（state 不动，只是重扫库）
+    );
+    menu.showAtMouseEvent(ev);
+  }
+
+  // ============ 添加浮层 ============
+
+  private renderAddPanel(el: HTMLElement): void {
+    // 本地导入的目标列表：库里的专辑按标题排（与「导入本地音频…」弹窗同一套口径）
+    const albums = this.entries
+      .map((e) => e.album)
+      .sort((a, b) => a.title.localeCompare(b.title, 'zh-CN'));
+    this.addPanel = new AddPanel(this.plugin.importCtx(), albums, {
+      openFile: (file) => void this.openNote(file),
+      onImported: (file) => this.flashAlbum(file.path),
+      onLocalDone: (path) => this.flashAlbum(path),
+      close: () => this.closePanel(),
+    });
+    this.addPanel.mount(el); // 标题栏由面板自己画（两层各有标题与返回键）
+    window.setTimeout(() => this.addPanel?.focus(), 30);
+  }
+
+  /** 空态出路：打开「添加」面板并把关键词带进去（用户点的是「在线查找『词』」） */
+  private openAddPanelWith(query: string): void {
+    const anchor = this.addBtnEl;
+    if (!anchor) return;
+    this.openPanel('add', anchor);
+    this.addPanel?.prefill(query);
+  }
+
+  /** 刚入库的专辑：在当前视野里就描边闪一下；不可见时导入本身已有回执，不再打扰 */
+  private flashAlbum(path: string): void {
+    window.setTimeout(() => {
+      const el = this.cardEls.get(path);
+      if (!el) return;
+      el.addClass('is-just-added');
+      window.setTimeout(() => el.removeClass('is-just-added'), 1200);
+    }, 600); // 等专辑墙刷新（scheduleRefresh 500ms 防抖）之后再来找卡片
+  }
+
+  private async openNote(file: TFile): Promise<void> {
+    this.closePanel();
+    await this.app.workspace.getLeaf(false).openFile(file);
+  }
+
+  // ============ 卡片属性（陈列第二层的内容）============
+  // 两区（已显示 / 可添加）+ 计数；已显示区可拖拽调序、✎ 改显示名、✕ 移除。
+  // 内容重绘与事件注册分离：任何变更只重绘本区，浮层保持打开、逐项即时生效。
+
+  // 内容重绘（不重建浮层、不重注册 document 监听）：勾选 / 排序 / 改名后调用
+  private renderProps(host: HTMLElement) {
+    host.empty();
     this.dragKey = null;
     this.dropAt = null;
     const selected = this.plugin.settings.shelfProps;
     const usage = collectShelfPropKeys(this.entries.map((e) => e.album));
     const counts = new Map(usage.map((u) => [u.key, u.count]));
 
-    pop.createDiv({ text: t('props.shown'), cls: 'vinyl-props-section' });
+    host.createDiv({ text: t('props.shown'), cls: 'vinyl-props-section' });
     if (!selected.length) {
-      pop.createDiv({
+      host.createDiv({
         text: t('props.nonePicked'),
         cls: 'vinyl-props-hint',
       });
     }
-    for (const key of selected) this.propsSelectedRow(pop, key, counts.get(key));
+    for (const key of selected) this.propsSelectedRow(host, key, counts.get(key));
 
-    pop.createDiv({ cls: 'vinyl-props-divider' });
+    host.createDiv({ cls: 'vinyl-props-divider' });
     const rest = usage.filter((u) => !selected.includes(u.key));
     if (!this.entries.length) {
-      pop.createDiv({ text: t('props.noAlbums'), cls: 'vinyl-props-hint' });
+      host.createDiv({ text: t('props.noAlbums'), cls: 'vinyl-props-hint' });
     } else if (!rest.length) {
-      pop.createDiv({ text: t('props.allAdded'), cls: 'vinyl-props-hint' });
+      host.createDiv({ text: t('props.allAdded'), cls: 'vinyl-props-hint' });
     } else {
-      for (const u of rest) this.propsAvailableRow(pop, u.key, u.count);
+      for (const u of rest) this.propsAvailableRow(host, u.key, u.count);
     }
 
-    pop.createDiv({
+    host.createDiv({
       text: t('props.footer'),
       cls: 'vinyl-props-hint',
     });
@@ -1032,7 +1442,7 @@ export class VinylShelfView extends ItemView {
       if (done) return;
       done = true;
       if (!save) {
-        if (this.propsPopover) this.renderPropsPopover(this.propsPopover); // Esc：原样重绘
+        if (this.propsHost) this.renderProps(this.propsHost); // Esc：原样重绘
         return;
       }
       const value = input.value.trim();
@@ -1069,10 +1479,10 @@ export class VinylShelfView extends ItemView {
 
   // 拖拽落点指示：清掉旧指示，标记当前行前/后插入位
   private setDropIndicator(key: string, after: boolean) {
-    const pop = this.propsPopover;
-    if (!pop) return;
+    const host = this.propsHost;
+    if (!host) return;
     let target: HTMLElement | null = null;
-    for (const el of Array.from(pop.querySelectorAll<HTMLElement>('.vinyl-props-row'))) {
+    for (const el of Array.from(host.querySelectorAll<HTMLElement>('.vinyl-props-row'))) {
       el.removeClass('is-drop-before', 'is-drop-after');
       if (el.dataset.propKey === key) target = el;
     }
@@ -1082,38 +1492,10 @@ export class VinylShelfView extends ItemView {
 
   private clearDropIndicators() {
     this.dropAt = null;
-    const pop = this.propsPopover;
-    if (!pop) return;
-    for (const el of Array.from(pop.querySelectorAll<HTMLElement>('.vinyl-props-row'))) {
+    const host = this.propsHost;
+    if (!host) return;
+    for (const el of Array.from(host.querySelectorAll<HTMLElement>('.vinyl-props-row'))) {
       el.removeClass('is-drop-before', 'is-drop-after');
-    }
-  }
-
-  // 弹层定位：默认贴按钮下方；下方空间不足则上翻；限高滚动（候选属性多时必需）
-  private placePropsPopover(pop: HTMLElement, anchor: HTMLElement) {
-    const rect = anchor.getBoundingClientRect();
-    const win = pop.ownerDocument.defaultView ?? window;
-    const below = win.innerHeight - rect.bottom - 12;
-    const above = rect.top - 12;
-    const flip = below < 220 && above > below;
-    pop.style.maxHeight = `${Math.round(
-      Math.max(160, Math.min(win.innerHeight * 0.6, flip ? above : below))
-    )}px`;
-    pop.style.top = flip ? 'auto' : `${rect.bottom + 4}px`;
-    pop.style.bottom = flip ? `${win.innerHeight - rect.top + 4}px` : 'auto';
-    pop.style.left = `${Math.max(8, Math.min(rect.left, win.innerWidth - 240))}px`;
-  }
-
-  private closePropsPopover() {
-    if (this.propsPopover) {
-      this.propsPopover.remove();
-      this.propsPopover = null;
-    }
-    this.dragKey = null;
-    this.dropAt = null;
-    if (this.onDocClick) {
-      document.removeEventListener('click', this.onDocClick, true);
-      this.onDocClick = null;
     }
   }
 
@@ -1249,6 +1631,7 @@ export class VinylShelfView extends ItemView {
   private showMenu(e: ShelfEntry, ev: MouseEvent) {
     const { album } = e;
     const menu = new Menu();
+    markVinylMenu(menu); // 全直角：菜单壳与悬停底一起收（见 styles.css「全直角」段）
     if (e.local || e.netease || e.qq) {
       menu.addItem((it) =>
         it
@@ -1299,6 +1682,20 @@ export class VinylShelfView extends ItemView {
       );
     }
     menu.addSeparator();
+    if (this.entries.length) {
+      // 从这张卡进选择模式：自动选中它（工具栏方案 §6）
+      menu.addItem((it) =>
+        it
+          .setTitle(t('menu.selectMany'))
+          .setIcon('list-checks')
+          .onClick(() => {
+            this.enterBatch();
+            this.batch.selection = [album.path];
+            this.batch.anchor = album.path;
+            this.syncBatch();
+          })
+      );
+    }
     menu.addItem((it) =>
       it
         .setTitle(t('menu.deleteAlbum'))
