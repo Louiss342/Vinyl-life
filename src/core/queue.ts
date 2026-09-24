@@ -1,18 +1,19 @@
 // 队列构建：专辑 → Track[]。
-// 源判定：笔记 source 显式优先；auto = 本地有音轨先播本地，否则 neteaseId → 网易云，
-// 再次 qqId → QQ 音乐（两条在线源都没有时按收藏展示）。
+// 源判定：笔记 source 显式优先；auto = 本地有音轨先播本地，否则 neteaseId → 网易云、
+// 再次 qqId → QQ 音乐、最后 kugouId → 酷狗（三条在线源都没有时按收藏展示）。
 import { AlbumInfo } from './album-index';
 import { Track, sourceName } from './track';
 import { LocalSource } from './local-source';
 import { songsToTracks } from './server-client';
 import { qqSongsToTracks, QqService } from './qq';
+import { kugouSongsToTracks, KugouService } from './kugou';
 import { NeteaseService } from './netease';
 import { t, tf } from './i18n';
 
-export type QueueSource = 'local' | 'netease' | 'qq' | 'none';
-export type SourcePolicy = 'auto' | 'local' | 'netease' | 'qq';
+export type QueueSource = 'local' | 'netease' | 'qq' | 'kugou' | 'none';
+export type SourcePolicy = 'auto' | 'local' | 'netease' | 'qq' | 'kugou';
 /** 已解析出的实际播放源（非 'none'） */
-export type ActiveSource = 'local' | 'netease' | 'qq';
+export type ActiveSource = 'local' | 'netease' | 'qq' | 'kugou';
 
 /** 播放源显示名：与曲目角标同源（track.ts 的 sourceName），调用时按当前语言求值 */
 export function sourceLabel(s: ActiveSource): string {
@@ -37,6 +38,7 @@ export interface BuildQueueResult {
   reason?: string;
   neteaseSongs?: number;
   qqSongs?: number;
+  kugouSongs?: number;
 }
 
 export interface QueueDeps {
@@ -45,6 +47,8 @@ export interface QueueDeps {
   netease: NeteaseService | null;
   /** QQ 音乐入口（网关单通道） */
   qq: QqService | null;
+  /** 酷狗音乐入口（网关单通道） */
+  kugou: KugouService | null;
   defaultSource: SourcePolicy;
 }
 
@@ -75,10 +79,15 @@ export async function buildAlbumQueue(
     return buildQq(album, deps);
   }
 
-  // auto：本地优先，其次网易云，再次 QQ 音乐
+  if (policy === 'kugou') {
+    return buildKugou(album, deps);
+  }
+
+  // auto：本地优先，其次网易云，再次 QQ 音乐，最后酷狗
   if (localTracks.length) return { tracks: localTracks, resolvedSource: 'local', policy };
   if (album.neteaseId) return buildNetease(album, deps);
   if (album.qqId) return buildQq(album, deps);
+  if (album.kugouId) return buildKugou(album, deps);
   return {
     tracks: [],
     resolvedSource: 'none',
@@ -119,6 +128,42 @@ async function buildNetease(album: AlbumInfo, deps: QueueDeps): Promise<BuildQue
       resolvedSource: 'none',
       policy,
       reason: tf('queue.neteaseFailed', { msg: (e as Error).message }),
+    };
+  }
+}
+
+async function buildKugou(album: AlbumInfo, deps: QueueDeps): Promise<BuildQueueResult> {
+  const policy: SourcePolicy = 'kugou';
+  if (!album.kugouId) {
+    return {
+      tracks: [],
+      resolvedSource: 'none',
+      policy,
+      reason: t('queue.noKugouId'),
+    };
+  }
+  if (!deps.kugou) {
+    return { tracks: [], resolvedSource: 'none', policy, reason: t('queue.kugouUnavailable') };
+  }
+  try {
+    const body = await deps.kugou.album(album.kugouId);
+    const songs = body?.data?.songs || [];
+    if (!songs.length) {
+      return {
+        tracks: [],
+        resolvedSource: 'none',
+        policy,
+        reason: tf('queue.kugouNoTracks', { msg: 'code=' + (body?.code ?? '?') }),
+      };
+    }
+    const tracks = kugouSongsToTracks(songs, album.path);
+    return { tracks, resolvedSource: 'kugou', policy, kugouSongs: tracks.length };
+  } catch (e) {
+    return {
+      tracks: [],
+      resolvedSource: 'none',
+      policy,
+      reason: tf('queue.kugouFailed', { msg: (e as Error).message }),
     };
   }
 }

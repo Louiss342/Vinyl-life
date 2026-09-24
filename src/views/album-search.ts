@@ -12,8 +12,11 @@ import {
 import {
   AlbumSearchCandidate,
   AlbumSearchResult,
+  SEARCH_SCOPES,
+  SearchScope,
   discoverAlbums,
   loadMoreAlbums,
+  normalizeSearchScope,
 } from '../core/album-discovery';
 import { t, tf } from '../core/i18n';
 
@@ -44,6 +47,9 @@ export class AlbumSearchPane {
   private importedPaths = new Map<string, string>();
   /** 本轮已经导入了多少张：导入后不跳转，要有个进度给用户看（连续添加就靠它） */
   private importedCount = 0;
+  /** 搜索来源（搜索框下的分段控件）：聚合 / 仅网易云 / 仅 QQ —— 面板打开时从设置里取上次的选择 */
+  private scope: SearchScope;
+  private scopeButtons = new Map<SearchScope, HTMLButtonElement>();
   private inputEl!: HTMLInputElement;
   private searchBtn: HTMLButtonElement | null = null;
   private statusEl!: HTMLElement;
@@ -54,9 +60,12 @@ export class AlbumSearchPane {
   constructor(
     private ctx: ImportContext,
     private host: AlbumSearchHost
-  ) {}
+  ) {
+    this.scope = normalizeSearchScope(ctx.settings().searchSource);
+  }
 
-  /** 建界面：搜索行（输入框 [+ 搜索按钮]）→ 状态行 → 结果区 → 展开 / 翻页入口（在滚动区外，列表再长也点得到） */
+  /** 建界面：搜索行（输入框 [+ 搜索按钮]）→ 搜索来源（聚合 / 仅网易云 / 仅 QQ）→ 状态行 →
+   *  结果区 → 展开 / 翻页入口（在滚动区外，列表再长也点得到） */
   mount(
     container: HTMLElement,
     opts: { withButton: boolean; placeholder?: string } = { withButton: true }
@@ -73,6 +82,20 @@ export class AlbumSearchPane {
     if (opts.withButton) {
       this.searchBtn = searchRow.createEl('button', { text: t('import.searchAction'), cls: 'mod-cta' });
       this.searchBtn.addEventListener('click', () => void this.runSearch());
+    }
+    // 搜索来源：聚合 / 仅网易云 / 仅 QQ —— 搜索前先选；换档立即按新范围重搜（已有关键词时）
+    const scopeRow = container.createDiv({ cls: 'vinyl-import-scope' });
+    scopeRow.setAttribute('role', 'group');
+    scopeRow.setAttribute('aria-label', t('import.searchScope'));
+    const segments = scopeRow.createDiv({ cls: 'vinyl-segments' });
+    for (const scope of SEARCH_SCOPES) {
+      const seg = segments.createEl('button', { text: scopeLabel(scope), cls: 'vinyl-segment' });
+      // 「聚合」两字太短，说明放提示里（另两档的名字本身就是说明）
+      seg.setAttribute('aria-label', scope === 'all' ? t('import.scopeAllHint') : scopeLabel(scope));
+      seg.setAttribute('aria-pressed', String(scope === this.scope));
+      seg.toggleClass('is-on', scope === this.scope);
+      seg.addEventListener('click', () => this.setScope(scope));
+      this.scopeButtons.set(scope, seg);
     }
     this.statusEl = container.createDiv({ cls: 'vinyl-muted vinyl-import-status' });
     this.resultsEl = container.createDiv({ cls: 'vinyl-import-results' });
@@ -104,6 +127,32 @@ export class AlbumSearchPane {
     this.inputEl.value = query;
     this.cancelPending();
     void this.runSearch();
+  }
+
+  // ============ 搜索来源 ============
+
+  /** 换来源：写回设置（下次打开面板 / 重启后仍是这一档），已有关键词时立刻按新范围重搜一轮，
+   *  不用再点一次搜索。纯链接输入不重跑 —— 那是导入动作，不该因为换档被触发第二次。 */
+  private setScope(scope: SearchScope): void {
+    if (scope === this.scope) return;
+    this.scope = scope;
+    this.syncScope();
+    this.rememberScope(scope);
+    const query = this.inputEl.value.trim();
+    if (query.length >= 2 && !parseAlbumInput(query)) void this.runSearch();
+  }
+
+  private syncScope(): void {
+    for (const [scope, button] of this.scopeButtons) {
+      const on = scope === this.scope;
+      button.toggleClass('is-on', on);
+      button.setAttribute('aria-pressed', String(on));
+    }
+  }
+
+  private rememberScope(scope: SearchScope): void {
+    this.ctx.settings().searchSource = scope;
+    void this.ctx.saveSettings?.();
   }
 
   /** 面板关掉时收尾：让在途请求作废（结果回来也不许再往 DOM 上画） */
@@ -190,8 +239,8 @@ export class AlbumSearchPane {
         : ''].filter(Boolean).join(' · ');
       const metaRow = body.createDiv({ cls: 'vinyl-import-result-meta' });
       metaRow.createSpan({
-        cls: `vinyl-badge ${candidate.source === 'qq' ? 'is-qq' : 'is-net'}`,
-        text: candidate.source === 'qq' ? t('import.sourceQq') : t('import.sourceNetease'),
+        cls: `vinyl-badge ${sourceBadgeClass(candidate.source)}`,
+        text: scopeName(candidate.source),
       });
       if (meta) metaRow.createSpan({ cls: 'vinyl-muted', text: meta });
       if (candidate.matchedBy === 'track' && candidate.matchedTrack) {
@@ -237,9 +286,12 @@ export class AlbumSearchPane {
     button.setText(t('import.adding'));
     rowStatus.setText(t('import.fetchingShort'));
     rowStatus.removeClass('is-error');
-    const ref = candidate.source === 'qq'
-      ? { source: 'qq' as const, mid: candidate.sourceAlbumId }
-      : { source: 'netease' as const, id: Number(candidate.sourceAlbumId) };
+    const ref =
+      candidate.source === 'qq'
+        ? { source: 'qq' as const, mid: candidate.sourceAlbumId }
+        : candidate.source === 'kugou'
+          ? { source: 'kugou' as const, id: candidate.sourceAlbumId }
+          : { source: 'netease' as const, id: Number(candidate.sourceAlbumId) };
     try {
       const res = await importAlbumRef(this.ctx, ref);
       rowStatus.setText((res.status === 'failed' ? '❌ ' : '✅ ') + res.detail);
@@ -273,9 +325,7 @@ export class AlbumSearchPane {
   /** 状态行：上游的告警（限流 / 拒绝）优先说原因，其次报数量；有已在收藏的如实带一句 */
   private reportOutcome(result: AlbumSearchResult): void {
     const warned = result.warnings.length > 0;
-    const sources = result.warnings
-      .map((warning) => (warning.source === 'qq' ? t('import.sourceQq') : t('import.sourceNetease')))
-      .join(t('common.listSep'));
+    const sources = result.warnings.map((warning) => scopeName(warning.source)).join(t('common.listSep'));
     const reasons = result.warnings
       .map((warning) => warning.message)
       .filter(Boolean)
@@ -346,9 +396,14 @@ export class AlbumSearchPane {
     this.setSearchBusy(true);
     this.resetResults();
     this.resultsEl.addClass('is-loading');
-    this.setStatus(t('import.searching'));
+    const scope = this.scope;
+    this.setStatus(
+      scope === 'all'
+        ? t('import.searching')
+        : tf('import.searchingOne', { source: scopeName(scope) })
+    );
     try {
-      const result = await discoverAlbums(this.ctx, query);
+      const result = await discoverAlbums(this.ctx, query, scope);
       if (requestId !== this.latestRequestId) return;
       this.pool = result.items;
       this.shown = Math.min(REVEAL_FIRST, this.pool.length);
@@ -382,7 +437,7 @@ export class AlbumSearchPane {
     this.moreBtn.disabled = true;
     this.moreBtn.setText(t('import.loadingMore'));
     try {
-      const result = await loadMoreAlbums(this.ctx, this.query);
+      const result = await loadMoreAlbums(this.ctx, this.query, this.scope);
       if (requestId !== this.latestRequestId) return; // 这期间用户换了词：这一页已经不归它了
       // 整池换掉（重排过）：新到的一页全画出来 —— 用户点的就是「更多」，没有理由再把它折起来
       this.pool = result.items;
@@ -398,4 +453,23 @@ export class AlbumSearchPane {
       if (requestId === this.latestRequestId) this.renderMore();
     }
   }
+}
+
+/** 分段控件上的短名：聚合 / 网易云 / QQ 音乐 / 酷狗音乐（与结果里的来源徽章同一套名字） */
+function scopeLabel(scope: SearchScope): string {
+  return scope === 'all' ? t('import.scopeAll') : scopeName(scope);
+}
+
+/** 单源范围的来源名（网易云 / QQ 音乐 / 酷狗音乐） */
+function scopeName(scope: 'netease' | 'qq' | 'kugou'): string {
+  if (scope === 'qq') return t('import.sourceQq');
+  if (scope === 'kugou') return t('import.sourceKugou');
+  return t('import.sourceNetease');
+}
+
+/** 结果徽章的来源色（与 trackSourceClass 的 is-* 同一套口径） */
+function sourceBadgeClass(scope: 'netease' | 'qq' | 'kugou'): string {
+  if (scope === 'qq') return 'is-qq';
+  if (scope === 'kugou') return 'is-kugou';
+  return 'is-net';
 }

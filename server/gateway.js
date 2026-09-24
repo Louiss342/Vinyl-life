@@ -10,6 +10,7 @@ const path = require('path');
 const crypto = require('crypto');
 const QRCode = require('qrcode');
 const { registerQqRoutes } = require('./qq');
+const { registerKugouRoutes } = require('./kugou');
 const { resolveProxyConfig, createProxyFetch } = require('./proxy');
 
 const login_qr_key = require('NeteaseCloudMusicApi/module/login_qr_key');
@@ -142,6 +143,37 @@ const MSG = {
   'gw.qqBadAlbumId': { zh: '专辑 ID 无效', en: 'Invalid album ID' },
   'gw.qqBadSongId': { zh: '歌曲 ID 无效', en: 'Invalid song ID' },
   'gw.qqLyricFailed': { zh: 'QQ 音乐歌词获取失败', en: 'Could not fetch the QQ Music lyrics' },
+  // —— 酷狗（server/kugou.js）——
+  'gw.kugouDeviceFailed': {
+    zh: '酷狗设备注册失败（拿不到设备指纹），请稍后重试',
+    en: 'Could not register the Kugou device (no device fingerprint) — try again later',
+  },
+  'gw.kugouBadResponse': { zh: '酷狗接口返回异常', en: 'The Kugou API returned an unexpected response' },
+  'gw.kugouQrFailed': {
+    zh: '酷狗二维码获取失败，请重试',
+    en: 'Could not fetch the Kugou QR code — try again',
+  },
+  'gw.kugouMissingLoginKey': {
+    zh: '缺少有效的登录 key，请刷新二维码',
+    en: 'Missing a valid sign-in key — refresh the QR code',
+  },
+  'gw.kugouLoginIncomplete': {
+    zh: '酷狗登录成功但凭据不完整，请重试',
+    en: 'Kugou sign-in succeeded but the credentials are incomplete — try again',
+  },
+  'gw.kugouQrServiceUnavailable': {
+    zh: '酷狗扫码服务暂时不可用，请重试',
+    en: 'The Kugou QR service is temporarily unavailable — try again',
+  },
+  // 未登录时的昵称占位（切 en 界面时不能冒出中文）
+  'gw.kugouUser': { zh: '酷狗用户 {id}', en: 'Kugou user {id}' },
+  'gw.kugouBadAlbumId': { zh: '专辑 ID 无效', en: 'Invalid album ID' },
+  'gw.kugouBadSongId': { zh: '歌曲 ID 无效', en: 'Invalid song ID' },
+  'gw.kugouAlbumFailed': { zh: '酷狗专辑信息获取失败', en: 'Could not fetch the Kugou album info' },
+  'gw.kugouNoUrl': {
+    zh: '这首歌暂时拿不到播放地址（可能需要会员，或只有试听片段）',
+    en: 'No playable URL for this track right now (it may require membership, or only a preview is available)',
+  },
 };
 
 /** 取当前语言的文案；{name} 占位符按 params 替换（缺键 / 缺参数都原样保留，便于发现漏配） */
@@ -199,6 +231,11 @@ const QQ_COOKIE_FILE =
   process.env.VINYL_QQ_COOKIE_FILE || path.join(path.dirname(COOKIE_FILE), '.qq-cookie');
 const QQ_GUID_FILE =
   process.env.VINYL_QQ_GUID_FILE || path.join(path.dirname(COOKIE_FILE), '.qq-guid');
+// 酷狗：登录凭据 + 设备身份（dfid/mid/guid/dev）各一个文件
+const KUGOU_COOKIE_FILE =
+  process.env.VINYL_KUGOU_COOKIE_FILE || path.join(path.dirname(COOKIE_FILE), '.kugou-cookie');
+const KUGOU_DEVICE_FILE =
+  process.env.VINYL_KUGOU_DEVICE_FILE || path.join(path.dirname(COOKIE_FILE), '.kugou-device');
 
 // 凭据文件读写工厂（网易云 / QQ 共用；原子写 + 0600；仅用注入的 fs 方法，便于测试替换）
 function makeCookieStore(file) {
@@ -838,6 +875,21 @@ registerQqRoutes({
   crypto,
   cookieFile: QQ_COOKIE_FILE,
   guidFile: QQ_GUID_FILE,
+});
+
+// ==================== 酷狗音乐路由（/api/kugou/*） ====================
+// server/kugou.js 与 qq.js 同一套纪律：零 require、零裸 fetch（测试以 vm 替换本文件的 I/O）。
+// 比 QQ 多一个 deviceFile —— 酷狗取流强依赖设备指纹 dfid（首次使用时注册并落盘）。
+registerKugouRoutes({
+  route,
+  log: serverLog,
+  fetch: proxyFetch,
+  makeStore: makeCookieStore,
+  msg,
+  timeout: (ms) => AbortSignal.timeout(ms),
+  crypto,
+  cookieFile: KUGOU_COOKIE_FILE,
+  deviceFile: KUGOU_DEVICE_FILE,
 });
 
 const server = http.createServer(async (req, res) => {

@@ -14,9 +14,13 @@ src/core/style-bundle.ts
 .anon-token
 .qq-cookie
 .qq-guid
+.kugou-cookie
+.kugou-device
 .device-id
 # 插件设置与播放统计（含用户自己的目录配置与专辑播放记录，属个人数据）
 data.json
+# 统计页的历史封面副本（删除专辑时保留的缓存，可由统计页重建）
+.stats-covers/
 
 # 网关日志与临时文件
 gateway.log

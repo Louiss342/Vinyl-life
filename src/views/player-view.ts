@@ -766,7 +766,7 @@ export class VinylPlayerView extends ItemView {
       .filter((a): a is AlbumInfo => !!a)
       .map((album) => {
         const src = detectAlbumSources(app, album);
-        return { album, local: src.local, netease: src.netease, qq: src.qq };
+        return { album, local: src.local, netease: src.netease, qq: src.qq, kugou: src.kugou };
       })
       .sort((a, b) => a.album.title.localeCompare(b.album.title, 'zh-CN'));
   }
@@ -781,7 +781,7 @@ export class VinylPlayerView extends ItemView {
     }
     // 纯收藏（无任何音源）：与专辑墙一致 —— 打开笔记并提示，不换碟
     const src = detectAlbumSources(this.plugin.app, album);
-    if (!src.local && !src.netease && !src.qq) {
+    if (!src.local && !src.netease && !src.qq && !src.kugou) {
       const leaf = this.plugin.app.workspace.getLeaf(false);
       await leaf.openFile(album.file);
       notice(t('card.noSource'));

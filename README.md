@@ -16,7 +16,7 @@ Music and notes may have a natural affinity for each other.
 
 ## 中文
 
-Vinyl Life 把专辑笔记展示成一张张唱片，配有黑胶唱机样式的播放器。可以听电脑里的音乐，也可以接入自己的网易云音乐或 QQ 音乐账号。每张唱片对应一篇普通的 Markdown 笔记，用来记专辑资料、评分，或某次听歌时想到的事。
+Vinyl Life 把专辑笔记展示成一张张唱片，配有黑胶唱机样式的播放器。可以听电脑里的音乐，也可以接入自己的网易云音乐、QQ 音乐或酷狗音乐账号。每张唱片对应一篇普通的 Markdown 笔记，用来记专辑资料、评分，或某次听歌时想到的事。
 
 支持 Obsidian 1.13.0 及以上版本，仅限桌面端。界面可切换中文和 English。
 
@@ -32,7 +32,7 @@ Vinyl Life 把专辑笔记展示成一张张唱片，配有黑胶唱机样式的
 
 - **搜索**：点击原位展开输入框，输入即筛墙上的收藏（中文输入法组词期间不筛，组完再搜）；有搜索或来源筛选时，数量变成「匹配数/总数」。× 清空关键词并回到搜索前的浏览位置，Esc 只退出输入焦点。
 
-- **陈列**：一个浮层里统管「看哪些、怎么排、怎么显示」—— 来源（本地 / 网易云 / QQ 音乐 / 无音源收藏，与关键词叠加）、排列（依据与方向两个下拉，缺失排序属性的专辑排在最后）、显示（每行数量；「封面下的信息」进第二层，勾选卡片显示的笔记属性、拖拽调序、改显示名）。筛选非「全部」时按钮上跟着来源名，条件在单行里始终看得见。
+- **陈列**：一个浮层里统管「看哪些、怎么排、怎么显示」—— 来源（本地 / 网易云 / QQ 音乐 / 酷狗音乐 / 无音源收藏，与关键词叠加）、排列（依据与方向两个下拉，缺失排序属性的专辑排在最后）、显示（每行数量；「封面下的信息」进第二层，勾选卡片显示的笔记属性、拖拽调序、改显示名）。筛选非「全部」时按钮上跟着来源名，条件在单行里始终看得见。
 - **添加**：在线搜索与本地导入在同一个浮层，两层视图 —— 第一层搜专辑 / 艺人 / 粘贴专辑链接，结果逐条「添加 → 正在添加 → 已添加」（失败原位重试），已明确入库的同平台专辑标「已在收藏」；把本地音频拖到面板底部、或点「选择文件 / 选择文件夹」，就切到第二层的本地导入：选目标、选落库方式、按「开始导入」，导完留在原地接着导下一批，「返回添加」回到搜索层（原来的关键词与结果都还在）。不再另开一个导入窗口。
 - **更多**：选择专辑（进入选择模式，工具栏整条切换用途：全选当前 / 清空选择 / 删除… / 完成，Esc 也能退出），以及刷新专辑墙（保留当前的搜索、筛选与陈列状态）。
 
@@ -71,19 +71,19 @@ Vinyl Life 把专辑笔记展示成一张张唱片，配有黑胶唱机样式的
 
 可导入的文件扩展名包括 `mp3`、`flac`、`m4a`、`m4b`、`mp4`、`wav`、`ogg`、`oga`、`opus`、`aac`、`webm` 和 `weba`，实际能否播放取决于文件编码及 Obsidian 内置的解码器。其他格式会跳过并提示。本地曲目以文件名作为标题，尚不读取 ID3 等音频标签。
 
-### 网易云音乐和 QQ 音乐
+### 网易云音乐、QQ 音乐与酷狗音乐
 
 粘贴专辑链接或 ID，插件会获取专辑资料、创建笔记并下载封面。之后可以从专辑墙打开播放。
 
 也可以直接输入专辑或歌曲名搜索：结果里带封面、艺人、发行日期和曲目数，按歌曲搜出来的会注明它出自哪张专辑，点「导入」即按那张专辑建笔记；**已经在库里的专辑不再出现在结果里**（状态行会写明隐去了几张，避免看起来像搜索漏了）。
 
-搜索是模糊的：错一个字、专辑名和歌手名颠倒着写、只记得标题后半截，都能把对的那张排到前面；看不出关联的兜底结果会被剪掉。首屏 20 条，往下可以「显示更多」（本地展开，不花网络），展开完了点「加载更多」继续向平台要下一页，两个平台的结果都和前面的一起重排。
+搜索是模糊的：错一个字、专辑名和歌手名颠倒着写、只记得标题后半截，都能把对的那张排到前面；看不出关联的兜底结果会被剪掉。首屏 20 条，往下可以「显示更多」（本地展开，不花网络），展开完了点「加载更多」继续向平台要下一页，各平台的结果都和前面的一起重排。搜索框下可以选「搜索来源」：聚合、仅网易云、仅 QQ 音乐或仅酷狗音乐（换档立即按新范围重搜，选择会被记住）。
 
 搜索页可以连着导入：导入完成不会跳走，那张卡片就地变成「打开」——接着点下一张的「导入」就行；想立刻去看笔记时再点「打开」。
 
-在设置的「源」页面用手机扫码登录自己的账号（目前只保留扫码这一条登录路径）。QQ 的二维码是 QQ 互联二维码，需要用手机 QQ 扫描，QQ 音乐 App 的「扫一扫」识别不了。
+在设置的「源」页面用手机扫码登录自己的账号（目前只保留扫码这一条登录路径）。QQ 的二维码是 QQ 互联二维码，需要用手机 QQ 扫描，QQ 音乐 App 的「扫一扫」识别不了；酷狗的二维码用酷狗音乐 App 扫。
 
-搜索和导入专辑不需要登录：两个平台都能在没有账号时查到专辑资料并建笔记（QQ 侧另有一条匿名搜索通道兜底）。登录决定的是播放——没登录时导入的笔记一样完整，到播放那一步才需要账号。
+搜索和导入专辑不需要登录：三个平台都能在没有账号时查到专辑资料并建笔记（QQ 侧另有一条匿名搜索通道兜底，酷狗本身就有完整的匿名曲库）。登录决定的是播放——没登录时导入的笔记一样完整，到播放那一步才需要账号；酷狗未登录也能播放免费曲目，登录后解锁会员音质与付费曲目。
 
 在线音源不需要安装 Node.js：首次使用时插件会用 Obsidian 自带的 Node 在应用内启动本机网关；只听本地文件则完全不会启动网关。
 
@@ -136,7 +136,7 @@ cover: "[[Vinyl Life/covers/专辑封面.jpg]]"
 | 通用 | 界面语言、专辑和封面目录、本地笔记模板、默认音源、在线音质与自动播放。 |
 | 统计 | 日历热力图、当日唱片墙、最近/最多播放、自定义属性统计、清除与导出。 |
 | 外观 | 专辑墙每行数量与工具栏位置、唱片弹出方向、唱片颜色、唱机配色和转盘动画速度。 |
-| 源 | 网易云与 QQ 音乐登录、本地音频目录、默认导入方式，以及在线音源运行状态。 |
+| 源 | 网易云、QQ 音乐与酷狗音乐登录、本地音频目录、默认导入方式，以及在线音源运行状态。 |
 | 关于 | 版本、作者手记（中英对照）、项目地址和许可信息。整页手绘：文案用手写体，便签外框是一圈手画的虚线。 |
 
 面板由插件自己绘制，所以这些设置在 Obsidian 的全局设置搜索里搜不到 —— 直接打开「设置 → Vinyl Life」看标签页。
@@ -163,15 +163,15 @@ Vinyl Life/
 
 第一次打开时，空态教程会圈出两个导入按钮，并指出播放器的位置。
 
-如果准备使用网易云或 QQ 音乐，直接在插件的「源」设置页扫码登录即可，无需安装 Node.js。
+如果准备使用网易云、QQ 音乐或酷狗音乐，直接在插件的「源」设置页扫码登录即可，无需安装 Node.js。
 
 ## 在线音源与数据
 
-网易云和 QQ 音乐通过非官方接口接入，插件与网易、腾讯没有关联。播放范围和音质受账号权限及平台接口状态限制，不绕过付费或会员限制；使用这些接口可能涉及平台的服务条款。
+网易云、QQ 音乐和酷狗音乐通过非官方接口接入，插件与网易、腾讯、酷狗没有关联。播放范围和音质受账号权限及平台接口状态限制，不绕过付费或会员限制；使用这些接口可能涉及平台的服务条款。
 
 插件不收集遥测或上传播放统计。在线功能会连接所选音乐平台的登录、音乐与图片服务，本机网关只监听 `127.0.0.1`。网关请求外网时跟随系统的代理设置（与浏览器一致）；需要手动指定时，可用 `VINYL_PROXY` 环境变量覆盖。笔记中使用网络封面时，也会访问对应的图片地址。
 
-网易云的请求有两条通道：插件界面直连与本地网关，其中一条不可用时自动切换到另一条。搜索带节流保护——同一个关键词短时间内复用上次的结果，连续搜索之间保持最小间隔；平台明确限流时（网易云会回「操作频繁」），暂停该来源十几秒并在结果上方写明原因，而不是拿「网络失败」搪塞过去。
+网易云的请求有两条通道：插件界面直连与本地网关，其中一条不可用时自动切换到另一条（QQ 音乐与酷狗音乐只有网关通道；酷狗首次取流前会先注册一次本机设备指纹，之后一直沿用）。搜索带节流保护——同一个关键词短时间内复用上次的结果，连续搜索之间保持最小间隔；平台明确限流时（网易云会回「操作频繁」），暂停该来源十几秒并在结果上方写明原因，而不是拿「网络失败」搪塞过去。
 
 登录凭据、设置和播放统计保存在本机插件目录中。可以在设置里退出账号、清除统计；分享插件文件时，不要附带自己的 Cookie 和登录数据。
 
@@ -180,7 +180,7 @@ Vinyl Life/
 社区插件审核会列出插件用到的系统能力，这里逐条说明用途。插件只在你的机器上运行，这些能力都只服务于上面写的功能。
 
 - **本地文件读写（Node `fs`）**：按你填写的绝对路径读取库外的音频目录（外链模式）；在插件目录保存登录凭据、设备标识与播放统计；检查插件目录里的 `styles.css` 是否在位、是否与当前版本一致（手工安装漏了文件，或升级时只覆盖了 `main.js`，都会挂出内置副本，避免界面裸奔）；把内联的网关源码落到系统临时目录后再启动（用 Electron 自带的 Node 在应用内运行）。库内笔记、封面和复制进库的音频一律走 Obsidian 的 vault 接口，不直接读写文件系统。
-- **应用内网关进程**：在线音源需要本机网关去对接网易云 / QQ 音乐的接口——插件用 Electron 自带的 Node（utility process）在应用内把它启动起来，监听 `127.0.0.1` 上的随机空闲端口；纯本地音源不会启动任何网关。网关随插件卸载 / Obsidian 退出一起回收；启动时还会清理一次旧版本（1.0.8 及更早）用系统 Node 起的遗留进程（读一次进程命令行，确认目标确实是本插件启动的，以免误杀别的程序）。
+- **应用内网关进程**：在线音源需要本机网关去对接网易云 / QQ 音乐 / 酷狗音乐的接口——插件用 Electron 自带的 Node（utility process）在应用内把它启动起来，监听 `127.0.0.1` 上的随机空闲端口；纯本地音源不会启动任何网关。网关随插件卸载 / Obsidian 退出一起回收；启动时还会清理一次旧版本（1.0.8 及更早）用系统 Node 起的遗留进程（读一次进程命令行，确认目标确实是本插件启动的，以免误杀别的程序）。
 - **网关鉴权**：网关虽然只监听 `127.0.0.1`，但本机上任何程序、浏览器里的任何页面都能扫到这个端口。所以每次启动网关都会生成一个随机 token 交给它，插件发出的每个请求都必须带上；没有 token 的请求一律拒绝，网关也不发任何 CORS 头。封面的网络代理另有护栏：只允许 http(s)、目标地址不能是本机或内网、只接收图片，并限时 10 秒、限 12 MB。
 - **列举库内文件**：专辑墙要找出所有带 `tags: [album]` 的笔记，因此会枚举库内 Markdown 笔记与图片的路径（封面选择器）。除此之外不读取笔记内容。
 
@@ -201,7 +201,7 @@ npm test
 - `npm run typecheck`：类型检查。它依赖 build 先生成 `src/core/gateway-bundle.ts` 与 `src/core/style-bundle.ts`，两步顺序不能反。
 - `npm run lint`：ESLint（含官方审核规则集），提交前保持零报错。
 - `npm test`：跑测试，200 多项，纯 Node 环境，不需要 Obsidian。
-- `main.js` 有体积预算（384 KB，超出直接构建失败）：它是社区市场的下载主体，预算写在 `esbuild.config.mjs`。其中约 47 KB 是手写体（拉丁 Excalifont + 中文霞鹜文楷子集，空态教程与设置「关于」页共用，见 `assets/fonts/`）、约 26 KB 是手绘笔触引擎 roughjs。
+- `main.js` 有体积预算（460 KB，超出直接构建失败）：它是社区市场的下载主体，预算写在 `esbuild.config.mjs`。其中约 47 KB 是手写体（拉丁 Excalifont + 中文霞鹜文楷子集，空态教程与设置「关于」页共用，见 `assets/fonts/`）、约 26 KB 是手绘笔触引擎 roughjs。
 
 源码目录结构：
 
@@ -238,7 +238,7 @@ npm test
 
 ## English
 
-Vinyl Life presents album notes as records on a shelf, with a turntable-style player. You can listen to music on your computer, or connect your own NetEase Cloud Music or QQ Music account. Each record is an ordinary Markdown note, for album details, ratings, or whatever you happened to think about while listening.
+Vinyl Life presents album notes as records on a shelf, with a turntable-style player. You can listen to music on your computer, or connect your own NetEase Cloud Music, QQ Music, or Kugou Music account. Each record is an ordinary Markdown note, for album details, ratings, or whatever you happened to think about while listening.
 
 Requires Obsidian 1.13.0 or later, desktop only. The interface can be switched between Chinese and English.
 
@@ -252,7 +252,7 @@ The toolbar at the top lets you:
 
 - Search by album name, artist, or genre.
 - Sort by album title, artist, release date, play count, rating, or recently played; click the active option again to flip between ascending and descending. You can also pick any note property as a “custom sort”, with the same click-to-flip behavior.
-- Filter by local, NetEase, or QQ Music, as well as collected albums that have no audio.
+- Filter by local, NetEase, QQ Music, or Kugou Music, as well as collected albums that have no audio.
 - Choose which note properties the cards show, drag to reorder them, and rename how a property is displayed.
 - Import an album link or local audio.
 
@@ -289,19 +289,19 @@ You can also drag files straight onto the album shelf: drop them on an existing 
 
 The file extensions you can import are `mp3`, `flac`, `m4a`, `m4b`, `mp4`, `wav`, `ogg`, `oga`, `opus`, `aac`, `webm`, and `weba`; whether a file actually plays depends on its encoding and on Obsidian's built-in decoders. Other formats are skipped with a notice. Local tracks use the file name as their title; audio tags such as ID3 are not read yet.
 
-### NetEase Cloud Music and QQ Music
+### NetEase Cloud Music, QQ Music and Kugou Music
 
 Paste an album link or ID and the plugin fetches the album information, creates a note, and downloads the cover. After that you can open it from the album shelf and play it.
 
 You can also search by album or song name. Each result shows its cover, artists, release date, and track count; a song result tells you which album it comes from, and clicking Import creates that album's note. **Albums already in your vault no longer appear in the results at all** (the status line says how many were hidden, so it does not look like the search missed them).
 
-Searching is fuzzy: a typo, the album and artist names typed in either order, or only the second half of a title will still rank the right one first, and loosely-related filler from the platforms is trimmed away. The first 20 results are shown; Show more reveals the rest of the local pool for free, and Load more asks the platforms for the next page and re-ranks everything together.
+Searching is fuzzy: a typo, the album and artist names typed in either order, or only the second half of a title will still rank the right one first, and loosely-related filler from the platforms is trimmed away. The first 20 results are shown; Show more reveals the rest of the local pool for free, and Load more asks the platforms for the next page and re-ranks everything together. Below the search box you can pick the search source — all sources, NetEase only, QQ Music only, or Kugou Music only (switching re-runs the search immediately, and the choice is remembered).
 
 The search page is built for importing several albums in a row: importing does not navigate away, and that card turns into an Open button — just hit Import on the next result. Click Open only when you want to go to the note.
 
-Sign in by scanning a QR code on the Sources settings page (for now this is the only sign-in path). The QQ code is a QQ Connect QR code — scan it with mobile QQ; the QQ Music app's own scanner cannot read it.
+Sign in by scanning a QR code on the Sources settings page (for now this is the only sign-in path). The QQ code is a QQ Connect QR code — scan it with mobile QQ; the QQ Music app's own scanner cannot read it. The Kugou code is scanned with the Kugou Music app.
 
-Searching and importing albums need no account: both platforms can be searched and imported while signed out (QQ has an anonymous fallback channel). What signing in unlocks is playback — notes imported without an account are complete, and the account is only needed when you press play.
+Searching and importing albums need no account: all three platforms can be searched and imported while signed out (QQ has an anonymous fallback channel, and Kugou has a full anonymous catalogue). What signing in unlocks is playback — notes imported without an account are complete, and the account is only needed when you press play; Kugou also plays free tracks while signed out, and signing in unlocks member quality and paid tracks.
 
 Online sources do not require Node.js: on first use the plugin starts a local gateway in-app, on the Node bundled with Obsidian. If you only listen to local files, no gateway is started at all.
 
@@ -354,7 +354,7 @@ The settings panel is five tabs; clicking a tab switches the content in place:
 | General | Interface language, album and cover folders, the local note template, the default source, online audio quality, and autoplay. |
 | Statistics | Calendar heatmap, daily record wall, recent/most-played lists, custom property groupings, clearing, and export. |
 | Appearance | How many albums per row on the shelf, which way records slide out, record color, turntable color scheme, and platter animation speed. |
-| Sources | NetEase and QQ Music sign-in, the local audio folder, the default import method, and the status of the online source runtime. |
+| Sources | NetEase, QQ Music, and Kugou Music sign-in, the local audio folder, the default import method, and the status of the online source runtime. |
 | About | Version, the author's note (Chinese and English side by side), the project URL, and license information. The whole page is hand-drawn: the text uses a handwriting font, and a dashed frame is sketched around the note. |
 
 The panel is drawn by the plugin itself, so these settings do not show up in Obsidian's global settings search — open Settings → Vinyl Life and use the tabs.
@@ -381,15 +381,15 @@ Vinyl Life/
 
 The first time you open it, the empty-shelf tutorial rings the two import buttons and points out where the player lives.
 
-To use NetEase Cloud Music or QQ Music, just scan the QR code on the plugin's Sources settings page — no Node.js installation is required.
+To use NetEase Cloud Music, QQ Music, or Kugou Music, just scan the QR code on the plugin's Sources settings page — no Node.js installation is required.
 
 ## Online sources and data
 
-NetEase Cloud Music and QQ Music are reached through unofficial APIs, and the plugin is not affiliated with NetEase or Tencent. What you can play and at what quality is limited by your account's permissions and by the state of the platforms' APIs; paid or membership restrictions are not bypassed. Using these APIs may fall under the platforms' terms of service.
+NetEase Cloud Music, QQ Music, and Kugou Music are reached through unofficial APIs, and the plugin is not affiliated with NetEase, Tencent, or Kugou. What you can play and at what quality is limited by your account's permissions and by the state of the platforms' APIs; paid or membership restrictions are not bypassed. Using these APIs may fall under the platforms' terms of service.
 
 The plugin collects no telemetry and uploads no playback statistics. Online features connect to the login, music, and image services of the music platform you choose, and the local gateway only listens on `127.0.0.1`. Requests the gateway makes to the outside world follow your system proxy settings (the same ones your browser uses); set the `VINYL_PROXY` environment variable to override them. When a note uses a remote cover, the corresponding image URL is fetched as well.
 
-NetEase requests have two channels — a direct connection from the plugin window and the local gateway — and switch to the other automatically when one is unavailable. Search is throttled: the same keyword reuses its recent result, consecutive searches keep a minimum interval, and when a platform explicitly rate-limits a request (NetEase answers "too frequent"), that source is paused for a short while and the reason is shown above the results instead of being passed off as a network failure.
+NetEase requests have two channels — a direct connection from the plugin window and the local gateway — and switch to the other automatically when one is unavailable (QQ Music and Kugou Music go through the gateway only; Kugou registers a local device fingerprint once before its first stream request and reuses it afterwards). Search is throttled: the same keyword reuses its recent result, consecutive searches keep a minimum interval, and when a platform explicitly rate-limits a request (NetEase answers "too frequent"), that source is paused for a short while and the reason is shown above the results instead of being passed off as a network failure.
 
 Login credentials, settings, and playback statistics are stored in the plugin folder on your own machine. You can sign out and clear the statistics in the settings; when you share plugin files, do not include your own cookies and login data.
 
@@ -398,7 +398,7 @@ Login credentials, settings, and playback statistics are stored in the plugin fo
 Community plugin reviews list the system capabilities a plugin uses; here is what each one is for. The plugin runs only on your own machine, and every capability below serves the features described above.
 
 - **Local file access (Node `fs`)**: reading audio folders outside the vault that you reference by absolute path (linked mode); keeping login credentials, the device identifier, and playback statistics in the plugin folder; checking whether `styles.css` is present in the plugin folder and matches the installed version (if it is missing — or was left behind by a partial update that only replaced `main.js` — a built-in copy is applied so the UI stays styled); and writing the inlined gateway source to the system temp folder before launching it (it runs in-app on Electron's bundled Node). Notes, covers, and audio copied into the vault all go through Obsidian's vault API instead.
-- **In-app gateway process**: online sources need a local gateway to talk to the NetEase Cloud Music and QQ Music APIs — the plugin launches it in-app with Electron's bundled Node (utility process), listening on a random free port on `127.0.0.1`. Local audio starts no gateway. The gateway is reclaimed when the plugin unloads or Obsidian exits; on startup the plugin also cleans up the gateway process left behind by older versions (1.0.8 and earlier) that ran on system Node.js (that step reads the process command line once to confirm the target really is a gateway this plugin started, so it never kills an unrelated program).
+- **In-app gateway process**: online sources need a local gateway to talk to the NetEase Cloud Music, QQ Music, and Kugou Music APIs — the plugin launches it in-app with Electron's bundled Node (utility process), listening on a random free port on `127.0.0.1`. Local audio starts no gateway. The gateway is reclaimed when the plugin unloads or Obsidian exits; on startup the plugin also cleans up the gateway process left behind by older versions (1.0.8 and earlier) that ran on system Node.js (that step reads the process command line once to confirm the target really is a gateway this plugin started, so it never kills an unrelated program).
 - **Gateway authentication**: the gateway listens on `127.0.0.1` only, but any process on the machine — including a web page in a browser — can scan for that port. So every launch generates a random token for the gateway, and each request the plugin sends carries it; requests without the token are rejected, and the gateway sends no CORS headers at all. The cover proxy has its own guard rails: http(s) only, the target must not resolve to the local machine or a private network, only images are accepted, and it is capped at 10 seconds and 12 MB.
 - **Scanning vault files**: the album shelf needs to find every note tagged `tags: [album]`, so it enumerates the paths of Markdown notes in the vault, and the cover picker lists images in the vault. Nothing else is read from your notes.
 
@@ -419,7 +419,7 @@ npm test
 - `npm run typecheck`: type-check. It depends on `npm run build` having generated `src/core/gateway-bundle.ts` / `src/core/style-bundle.ts` first, so the order cannot be reversed.
 - `npm run lint`: ESLint with the official review rule set; keep it clean before committing.
 - `npm test`: run the tests — 200+ of them, in plain Node, with no Obsidian required.
-- `main.js` has a size budget (400 KB; exceeding it fails the build) because it is what the community store downloads — the budget lives in `esbuild.config.mjs`. About 47 KB of it is the handwriting fonts (Latin Excalifont + Chinese LXGW WenKai subsets, shared by the empty-shelf tutorial and the About settings page; see `assets/fonts/`) and ~26 KB is roughjs, the hand-drawn stroke engine.
+- `main.js` has a size budget (460 KB; exceeding it fails the build) because it is what the community store downloads — the budget lives in `esbuild.config.mjs`. About 47 KB of it is the handwriting fonts (Latin Excalifont + Chinese LXGW WenKai subsets, shared by the empty-shelf tutorial and the About settings page; see `assets/fonts/`) and ~26 KB is roughjs, the hand-drawn stroke engine.
 
 Source layout:
 

@@ -10,7 +10,7 @@
 // 藏起来的元素量出来是 0。语言 / 取值变了走 render()：整面板重建，仍停在当前标签页。
 import { App, PluginSettingTab, Setting } from 'obsidian';
 import type VinylLifePlugin from './main';
-import { QrLoginModal, qqQrProvider } from './views/qr-login-modal';
+import { QrLoginModal, kugouQrProvider, qqQrProvider } from './views/qr-login-modal';
 import { StatsPage } from './views/stats-page';
 import { SettingsSection, settingsSection } from './views/settings-section';
 import { attachAboutInk, renderAboutPage } from './views/about-page';
@@ -20,6 +20,7 @@ import { notice } from './util';
 import { Lang, LANGUAGES, t, tf } from './core/i18n';
 import { EMPTY_STATS, VinylStats } from './core/stats';
 import type { PlayMode } from './core/player-state';
+import type { SearchScope } from './core/album-discovery';
 import { DEFAULT_SHELF_PROPS } from './core/shelf-props';
 import type { LoginState } from './core/auth';
 import {
@@ -63,7 +64,10 @@ export interface VinylSettings {
   audioFolder: string;
   /** 本地音频导入落库模式 */
   importMode: 'copy' | 'link';
-  defaultSource: 'auto' | 'local' | 'netease' | 'qq';
+  defaultSource: 'auto' | 'local' | 'netease' | 'qq' | 'kugou';
+  /** 在线搜索的来源范围（「添加」面板的搜索选择）：聚合 / 仅网易云 / 仅 QQ；
+   *  默认聚合。记忆型字段：面板里换档即写回，没有设置页入口（与音量、上次播放位置同类） */
+  searchSource: SearchScope;
   quality: 'standard' | 'higher' | 'exhigh' | 'lossless';
   /** 加载队列后立即播放（交接后即“落盘即播”） */
   autoPlay: boolean;
@@ -105,6 +109,7 @@ export const DEFAULT_SETTINGS: VinylSettings = {
   audioFolder: 'Vinyl Life/audio',
   importMode: 'copy',
   defaultSource: 'auto',
+  searchSource: 'all',
   quality: 'higher',
   autoPlay: true,
   playerLocation: 'sidebar',
@@ -191,9 +196,11 @@ export class VinylSettingTab extends PluginSettingTab {
   // 登录状态行的当前元素：回填时写这一份（重绘会换新元素，旧的自然作废）
   private neteaseStatusEl: HTMLElement | null = null;
   private qqStatusEl: HTMLElement | null = null;
+  private kugouStatusEl: HTMLElement | null = null;
   // 同一平台可能有多次并发检测（渲染 / 登录回调 / 退出），只认最后一次
   private neteaseRefresh = 0;
   private qqRefresh = 0;
+  private kugouRefresh = 0;
   // 「关于」页手绘笔触的停止函数：重绘 / 关闭面板时要断开 ResizeObserver
   private aboutInkStop: (() => void) | null = null;
   private statsPage: StatsPage;
@@ -299,6 +306,7 @@ export class VinylSettingTab extends PluginSettingTab {
             .addOption('local', t('settings.sourceLocal'))
             .addOption('netease', t('settings.sourceNetease'))
             .addOption('qq', t('settings.sourceQq'))
+            .addOption('kugou', t('settings.sourceKugou'))
             .setValue(p.settings.defaultSource)
             .onChange(async (v) => {
               p.settings.defaultSource = v as VinylSettings['defaultSource'];
@@ -472,7 +480,7 @@ export class VinylSettingTab extends PluginSettingTab {
     });
   }
 
-  // ============ 源：网易云 / QQ 音乐 / 本地源 ============
+  // ============ 源：网易云 / QQ 音乐 / 酷狗音乐 / 本地源 ============
 
   private renderSourceTab(el: HTMLElement): void {
     const p = this.plugin;
@@ -530,6 +538,33 @@ export class VinylSettingTab extends PluginSettingTab {
       );
     });
 
+    settingsSection(el, t('settings.sub.kugou'), 'kugou', 'headphones', (body) => {
+      this.statusRow(body, 'kugou');
+      row(body, t('settings.qrLogin'), (s) =>
+        void s.addButton((b) =>
+          b.setButtonText(t('settings.qrLogin')).onClick(() => {
+            new QrLoginModal(
+              this.app,
+              { server: p.server, auth: p.kugouAuth },
+              { provider: kugouQrProvider(), onLogin: () => void this.refreshKugou() }
+            ).open();
+          })
+        )
+      );
+      row(body, t('settings.logout'), (s) =>
+        void s.addButton((b) =>
+          b
+            .setButtonText(t('settings.logoutAction'))
+            .setDestructive()
+            .onClick(async () => {
+              await p.kugouAuth.clear();
+              notice(t('notice.kugouLoggedOut'));
+              await this.refreshKugou();
+            })
+        )
+      );
+    });
+
     settingsSection(el, t('settings.section.local'), 'local', 'hard-drive', (body) => {
       row(body, t('settings.audioFolder'), (s) =>
         void s.addText((txt) =>
@@ -569,13 +604,16 @@ export class VinylSettingTab extends PluginSettingTab {
   /** 状态行：控件区放状态文案，行渲染后异步回填 —— 先渲染设置项再取状态，
    *  两个平台并行检测，避免一个慢源阻塞另一个。
    *  行说明（账号与网关连通性）刻意不写：状态就在控件区，再来一行只是重复。 */
-  private statusRow(parent: HTMLElement, platform: 'netease' | 'qq'): void {
+  private statusRow(parent: HTMLElement, platform: 'netease' | 'qq' | 'kugou'): void {
     row(parent, t('settings.loginStatus'), (s) => {
       s.settingEl.addClass('vinyl-auth-setting');
       const el = s.controlEl.createDiv({ cls: 'vinyl-auth-status' });
       if (platform === 'netease') {
         this.neteaseStatusEl = el;
         void this.refreshNetease();
+      } else if (platform === 'kugou') {
+        this.kugouStatusEl = el;
+        void this.refreshKugou();
       } else {
         this.qqStatusEl = el;
         void this.refreshQq();
@@ -669,7 +707,52 @@ export class VinylSettingTab extends PluginSettingTab {
     }
   }
 
-  /** 登录状态只用结构化类表达，不把对号 / 叉号写进可见文案。 */
+  /** 酷狗音乐登录态回填（同上）。未登录是常态：免费曲库与搜索不需要登录，
+   *  登录只影响会员音质与付费曲目 —— 状态行事照实报「未登录」，不渲染成错误。 */
+  private async refreshKugou() {
+    const el = this.kugouStatusEl;
+    if (!el) return;
+    const request = ++this.kugouRefresh;
+    el.empty();
+    this.setAuthState(el, 'loading');
+    el.createSpan({ text: t('settings.checkingLogin'), cls: 'vinyl-auth-primary' });
+    let st: LoginState;
+    try {
+      st = await this.plugin.kugouAuth.getStatus();
+    } catch (e) {
+      if (request !== this.kugouRefresh) return;
+      el.empty();
+      this.setAuthState(el, 'error');
+      el.createSpan({
+        text: tf('settings.checkFailed', { msg: (e as Error).message }),
+        cls: 'vinyl-auth-primary',
+      });
+      return;
+    }
+    if (request !== this.kugouRefresh) return;
+    el.empty();
+    this.setAuthState(el, st.loggedIn ? 'online' : st.cookieBytes > 0 ? 'warning' : 'offline');
+    el.createSpan({
+      text: st.loggedIn
+        ? tf('settings.statusLoggedInKugou', {
+            name: st.nick || t('settings.loggedIn'),
+            id: st.userId ?? '',
+          })
+        : st.cookieBytes > 0
+          ? t('settings.cookieInvalid')
+          : t('settings.notLoggedIn'),
+      cls: 'vinyl-auth-primary',
+    });
+    // 与另外两个平台同一取舍：登录后不再报 Cookie 体积，只在未登录时报网关状态。
+    if (!st.loggedIn) {
+      el.createSpan({
+        text: st.serverOk ? t('settings.gatewayOk') : t('settings.gatewayDown'),
+        cls: 'vinyl-auth-meta',
+      });
+    }
+  }
+
+  /** 登录状态只用结构化类表达，不把对号 / 叉号写进文案。 */
   private setAuthState(
     el: HTMLElement,
     state: 'loading' | 'online' | 'offline' | 'warning' | 'error'

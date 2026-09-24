@@ -3,7 +3,7 @@
 import { TFile } from 'obsidian';
 import { t } from './i18n';
 
-export type TrackSource = 'local-vault' | 'local-external' | 'netease' | 'qq';
+export type TrackSource = 'local-vault' | 'local-external' | 'netease' | 'qq' | 'kugou';
 
 export interface TrackMeta {
   title: string;
@@ -29,6 +29,17 @@ export type Track =
       /** QQ 侧付费标记（1=付费）与试听标记（限制文案用） */
       pay?: number;
       trial?: boolean;
+    })
+  | (TrackMeta & {
+      source: 'kugou';
+      /** 音频 hash（32 位小写十六进制；酷狗取流的主键） */
+      id: string;
+      /** 取流附带：专辑 id 与 mixsongid（album_audio_id）—— 与 hash 一起决定能不能拿到完整音源 */
+      albumId?: string;
+      albumAudioId?: string;
+      duration: number;
+      pay?: number;
+      trial?: boolean;
     });
 
 export function trackKey(t: Track): string {
@@ -41,6 +52,8 @@ export function trackKey(t: Track): string {
       return 'ne:' + t.id;
     case 'qq':
       return 'qq:' + t.id;
+    case 'kugou':
+      return 'kg:' + t.id;
     default:
       // 兜底：未知来源也不得静默归并（stats / 播放缓存的键必须唯一）
       return 'unknown:' + String((t as { source?: string }).source || '?');
@@ -65,21 +78,24 @@ export function reorderTracks(tracks: Track[], from: number, to: number): Track[
 
 /** 播放源显示名（三个来源的唯一出处：队列角标与播放器读数共用）。
  *  必须保持「函数」形态：写进模块级常量会在加载期定型，切语言后不跟着变。 */
-export function sourceName(s: 'local' | 'netease' | 'qq'): string {
+export function sourceName(s: 'local' | 'netease' | 'qq' | 'kugou'): string {
   if (s === 'netease') return t('src.netease');
   if (s === 'qq') return t('src.qq');
+  if (s === 'kugou') return t('src.kugou');
   return t('src.local');
 }
 
 export function trackSourceLabel(t: Track): string {
   if (t.source === 'netease') return sourceName('netease');
   if (t.source === 'qq') return sourceName('qq');
+  if (t.source === 'kugou') return sourceName('kugou');
   return sourceName('local');
 }
 
-export function trackSourceClass(t: Track): 'is-local' | 'is-net' | 'is-qq' {
+export function trackSourceClass(t: Track): 'is-local' | 'is-net' | 'is-qq' | 'is-kugou' {
   if (t.source === 'netease') return 'is-net';
   if (t.source === 'qq') return 'is-qq';
+  if (t.source === 'kugou') return 'is-kugou';
   return 'is-local';
 }
 

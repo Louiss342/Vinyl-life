@@ -31,6 +31,8 @@ export const SHELF_PROP_BLACKLIST: readonly string[] = Object.freeze([
   'neteaseId',
   'qq',
   'qqId',
+  'kugou',
+  'kugouId',
   'audio',
   'audioFolder',
   'source',

@@ -13,6 +13,7 @@ export interface PickerEntry {
   local: boolean;
   netease: boolean;
   qq: boolean;
+  kugou: boolean;
 }
 
 /** 唱片架初始可见行数与每行容量。 */
@@ -155,7 +156,7 @@ export class AlbumPicker {
     // 专辑名在悬停 / 键盘焦点时浮在封面底部，不参与排版。
     tile.createSpan({ cls: 'vinyl-pick-name', text: album.title });
     tile.createSpan({ cls: 'vinyl-pick-mark' });
-    if (!entry.local && !entry.netease && !entry.qq) tile.addClass('is-collect');
+    if (!entry.local && !entry.netease && !entry.qq && !entry.kugou) tile.addClass('is-collect');
   }
 
   /** 语言切换后就地更新文案（不重建唱片架：展开态 / 滚动位置都保留） */

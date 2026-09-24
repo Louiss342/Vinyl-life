@@ -53,7 +53,7 @@ class TFile {
 function setup() {
   const files = new Map();
   const binaries = new Map();
-  const calls = { qqAlbum: [], neteaseAlbum: [], covers: [], notices: [] };
+  const calls = { qqAlbum: [], neteaseAlbum: [], kugouAlbum: [], covers: [], notices: [] };
 
   // 目录单独登记（不混进 getMarkdownFiles），模拟 Obsidian「createFolder 逐级建目录」
   const folders = new Set();
@@ -173,6 +173,21 @@ function setup() {
     },
   };
 
+  const kugouAlbum = {
+    code: 0,
+    data: {
+      album: {
+        id: '12345678',
+        name: '测试酷狗专辑',
+        artist: '测试歌手',
+        cover: 'https://imge.kugou.com/480/album.jpg',
+        publishDate: '2019-03-01',
+        songCount: 9,
+      },
+      songs: [],
+    },
+  };
+
   const ctx = {
     app,
     settings: () => settings,
@@ -192,9 +207,15 @@ function setup() {
         return qqAlbum;
       },
     },
+    kugou: {
+      album: async (id) => {
+        calls.kugouAlbum.push(id);
+        return kugouAlbum;
+      },
+    },
   };
 
-  return { mod, ctx, files, folders, binaries, calls, app, settings };
+  return { mod, ctx, files, folders, binaries, calls, app, settings, kugouAlbum };
 }
 
 // ============ 链接识别 ============
@@ -507,6 +528,77 @@ test('导入专辑：接口抛错 → 中文失败信息，不建笔记', async 
     throw new Error('网关未就绪');
   };
   const res = await h.mod.importAlbum(h.ctx, QQ_URL);
+  assert.equal(res.ok, false);
+  assert.match(res.detail, /获取专辑失败/);
+  assert.equal(h.files.size, 0);
+});
+
+// ============ 酷狗音乐（第三来源） ============
+
+const KUGOU_ID = '12345678';
+const KUGOU_URL = `https://www.kugou.com/yy/album/single/${KUGOU_ID}.html`;
+
+test('parseAlbumInput：酷狗链接（网页版 / 移动版）与裸 kugouId', () => {
+  const h = setup();
+  assert.deepEqual({ ...h.mod.parseAlbumInput(KUGOU_URL) }, { source: 'kugou', id: KUGOU_ID });
+  assert.deepEqual(
+    { ...h.mod.parseAlbumInput('https://m.kugou.com/album/12345678.html') },
+    { source: 'kugou', id: KUGOU_ID },
+    '移动版链接同样识别'
+  );
+  // 裸数字仍是网易云 ID：酷狗 id 也是数字，无法从裸数字区分（README 写明请粘贴链接）
+  assert.deepEqual({ ...h.mod.parseAlbumInput(KUGOU_ID) }, { source: 'netease', id: Number(KUGOU_ID) });
+});
+
+test('导入专辑：酷狗链接 → 走酷狗，写出 kugouId / kugou 链接 / 封面（无 netease / qq 字段）', async () => {
+  const h = setup();
+  const res = await h.mod.importAlbum(h.ctx, KUGOU_URL);
+  assert.equal(res.ok, true, res.detail);
+  assert.deepEqual(h.calls.kugouAlbum, [KUGOU_ID]);
+  assert.equal(h.calls.neteaseAlbum.length + h.calls.qqAlbum.length, 0, '不得误走另两个接口');
+  const note = h.files.get('Vinyl Life/Vinyl Note/测试酷狗专辑.md');
+  assert.ok(note, '应建立专辑笔记');
+  assert.match(note._content, /tags: \[album\]/);
+  assert.match(note._content, new RegExp(`kugouId: ${KUGOU_ID}`));
+  assert.match(
+    note._content,
+    new RegExp(`kugou: "https://www\\.kugou\\.com/yy/album/single/${KUGOU_ID}\\.html"`)
+  );
+  assert.match(note._content, /artist: "测试歌手"/);
+  assert.match(note._content, /year: 2019/, 'publishDate 解析出年份');
+  assert.doesNotMatch(note._content, /neteaseId:|qqId:/, '酷狗导入不得写入其它平台的 id');
+  assert.match(note._content, /cover: "\[\[Vinyl Life\/covers\/测试酷狗专辑\.jpg\]\]"/);
+  assert.ok(h.binaries.has('Vinyl Life/covers/测试酷狗专辑.jpg'));
+});
+
+test('导入专辑：已存在同 kugouId 的笔记 → 指路而不新建', async () => {
+  const h = setup();
+  h.files.set(
+    'Vinyl Life/Vinyl Note/测试酷狗专辑.md',
+    new TFile('Vinyl Life/Vinyl Note/测试酷狗专辑.md', `---\ntags: [album]\nkugouId: ${KUGOU_ID}\n---\n`)
+  );
+  const res = await h.mod.importAlbum(h.ctx, KUGOU_URL);
+  assert.equal(res.ok, false);
+  assert.match(res.detail, /已存在「测试酷狗专辑」/);
+  assert.equal(res.file?.path, 'Vinyl Life/Vinyl Note/测试酷狗专辑.md');
+  assert.equal(h.calls.kugouAlbum.length, 0, '查重命中不应再打接口');
+});
+
+test('导入专辑：酷狗专辑查无数据 → 友好失败且不建笔记', async () => {
+  const h = setup();
+  h.ctx.kugou.album = async () => ({ code: 0, data: { album: null, songs: [] } });
+  const res = await h.mod.importAlbum(h.ctx, KUGOU_URL);
+  assert.equal(res.ok, false);
+  assert.match(res.detail, /酷狗音乐专辑接口无数据/);
+  assert.equal(h.files.size, 0);
+});
+
+test('导入专辑：酷狗接口抛错 → 中文失败信息，不建笔记', async () => {
+  const h = setup();
+  h.ctx.kugou.album = async () => {
+    throw new Error('网关未就绪');
+  };
+  const res = await h.mod.importAlbum(h.ctx, KUGOU_URL);
   assert.equal(res.ok, false);
   assert.match(res.detail, /获取专辑失败/);
   assert.equal(h.files.size, 0);

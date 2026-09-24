@@ -4,7 +4,9 @@ import { isRateLimited } from './request-error';
 import { tf } from './i18n';
 import type { NeteaseService } from './netease';
 import type { QqService } from './qq';
+import type { KugouService } from './kugou';
 import type {
+  KugouSearchResponse,
   NeteaseSearchAlbum,
   NeteaseSearchResponse,
   NeteaseSearchSong,
@@ -13,7 +15,7 @@ import type {
   QqSearchSong,
 } from './api-types';
 
-export type MusicSource = 'netease' | 'qq';
+export type MusicSource = 'netease' | 'qq' | 'kugou';
 export type AlbumMatchKind = 'album' | 'track';
 
 export interface AlbumSearchCandidate {
@@ -48,6 +50,8 @@ export interface AlbumDiscoveryContext {
   app: App;
   client: Pick<NeteaseService, 'searchAlbums' | 'searchSongs'>;
   qq: Pick<QqService, 'search'>;
+  /** 酷狗搜索（网关单通道；未登录也能搜到免费曲库） */
+  kugou: Pick<KugouService, 'search'>;
 }
 
 function text(value: unknown): string {
@@ -153,6 +157,42 @@ export function normalizeQqSearch(body: QqSearchResponse): AlbumSearchCandidate[
       title,
       artists: text(song.artist) ? [text(song.artist)] : [],
       coverUrl: text(song.albumCover) || undefined,
+      matchedBy: 'track' as const,
+      matchedTrack: text(song.name) || undefined,
+    }];
+  });
+  return dedupe([...albums, ...songs]);
+}
+
+export function normalizeKugouSearch(body: KugouSearchResponse): AlbumSearchCandidate[] {
+  const albums = (body?.albums || []).flatMap((album) => {
+    const id = text(album.id);
+    const title = text(album.name);
+    if (!id || !title) return [];
+    return [{
+      key: `kugou:${id}`,
+      source: 'kugou' as const,
+      sourceAlbumId: id,
+      title,
+      artists: text(album.artist) ? [text(album.artist)] : [],
+      coverUrl: text(album.cover) || undefined,
+      releaseDate: yearOf(album.publishDate),
+      trackCount: Number(album.songCount) || undefined,
+      matchedBy: 'album' as const,
+    }];
+  });
+  const songs = (body?.songs || []).flatMap((song) => {
+    // 单曲命中：专辑 id 与名字都在曲目上（与 QQ 同形），捞的是「搜歌名找专辑」这条路
+    const id = text(song.albumId);
+    const title = text(song.albumName);
+    if (!id || !title) return [];
+    return [{
+      key: `kugou:${id}`,
+      source: 'kugou' as const,
+      sourceAlbumId: id,
+      title,
+      artists: text(song.artist) ? [text(song.artist)] : [],
+      coverUrl: text(song.cover) || undefined,
       matchedBy: 'track' as const,
       matchedTrack: text(song.name) || undefined,
     }];
@@ -327,6 +367,7 @@ function libraryIndex(app: App): { ids: Set<string>; names: Set<string> } {
     if (!album) continue;
     if (album.neteaseId != null) ids.add(`netease:${album.neteaseId}`);
     if (album.qqId) ids.add(`qq:${album.qqId}`);
+    if (album.kugouId) ids.add(`kugou:${album.kugouId}`);
     const name = nameKey(album.title, album.artist);
     if (name) names.add(name);
   }
@@ -343,7 +384,7 @@ const CACHE_TTL = 60_000;
 const MIN_INTERVAL = 600;
 const COOLDOWN = 20_000;
 
-const cooldownUntil: Record<MusicSource, number> = { netease: 0, qq: 0 };
+const cooldownUntil: Record<MusicSource, number> = { netease: 0, qq: 0, kugou: 0 };
 let lastDispatchAt = 0;
 
 /** 让两次实际发网至少隔 MIN_INTERVAL（首次不受限） */
@@ -361,7 +402,24 @@ function cooldownWarning(source: MusicSource): AlbumSearchResult['warnings'][num
   return { source, message: tf('import.sourceCoolingDown', { n: left }) };
 }
 
-const SOURCES: MusicSource[] = ['netease', 'qq'];
+const SOURCES: MusicSource[] = ['netease', 'qq', 'kugou'];
+
+/** 在线搜索的来源范围（「添加」面板的搜索选择）：聚合（默认，与旧行为一致）/ 仅网易云 / 仅 QQ / 仅酷狗。
+ *  单源不只是少打请求 —— 另一个来源的限流冷却、未登录提示也一并绕开。 */
+export type SearchScope = 'all' | 'netease' | 'qq' | 'kugou';
+
+/** 分段控件的档位顺序（界面按这个顺序排） */
+export const SEARCH_SCOPES: SearchScope[] = ['all', 'netease', 'qq', 'kugou'];
+
+/** data.json 里的脏值一律回落「聚合」（与其它记忆型设置同款兜底） */
+export function normalizeSearchScope(v: unknown): SearchScope {
+  return v === 'netease' || v === 'qq' || v === 'kugou' ? v : 'all';
+}
+
+/** 范围 → 实际要打请求的来源；聚合 = 全部来源都打 */
+export function scopeSources(scope: SearchScope | undefined): MusicSource[] {
+  return scope === 'netease' || scope === 'qq' || scope === 'kugou' ? [scope] : SOURCES;
+}
 
 // ============ 结果池 & 翻页 ============
 // 「只有二十条」的解法不是把上限调大一点，而是让池子能一直长：一页 30 条/类型/来源，
@@ -375,6 +433,8 @@ const MAX_SESSIONS = 6;
 
 interface SearchSession {
   at: number;
+  /** 这一池子属于哪个范围：换个范围就是另一个池子（聚合的结果不能端给「仅 QQ」） */
+  sources: MusicSource[];
   /** 去重后的原始池（含已在库中的 —— 隐去发生在返回前，删掉笔记重搜同一个词能立刻回来） */
   pool: AlbumSearchCandidate[];
   /** 下一页从哪开始（网易云是 offset；QQ 换算成页码，见 pageOf） */
@@ -387,6 +447,12 @@ interface SearchSession {
 }
 
 const sessions = new Map<string, SearchSession>();
+
+/** 池子的键 = 范围 + 词：同一个词换个范围必须另起一池 —— 否则「仅 QQ」会端出上一轮聚合的
+ *  网易云结果（或反过来，聚合里少一半），而池子里的翻页页码还各自属于不同的来源。 */
+function sessionKey(scope: SearchScope, query: string): string {
+  return `${scope}|${query.toLocaleLowerCase()}`;
+}
 
 function trimSessions(): void {
   while (sessions.size > MAX_SESSIONS) {
@@ -419,7 +485,7 @@ function present(app: App, query: string, session: SearchSession): AlbumSearchRe
     items,
     warnings: session.warnings,
     owned: items.filter((item) => item.inLibrary).length,
-    hasMore: SOURCES.some((source) => !session.exhausted.has(source)),
+    hasMore: session.sources.some((source) => !session.exhausted.has(source)),
   };
 }
 
@@ -429,7 +495,7 @@ interface SourcePage {
   raw: number;
 }
 
-/** QQ 的翻页是页码不是 offset：两端点的页大小都是 SEARCH_PAGE_SIZE（见 server/qq.js），除一下即可 */
+/** QQ / 酷狗的翻页是页码不是 offset：两端点的页大小都是 SEARCH_PAGE_SIZE（见 server/qq.js、server/kugou.js），除一下即可 */
 function pageOf(offset: number): number {
   return Math.floor(offset / SEARCH_PAGE_SIZE) + 1;
 }
@@ -444,6 +510,11 @@ async function fetchSource(
     const body = await ctx.qq.search(query, pageOf(offset));
     const raw = (body.data?.albums?.length || 0) + (body.data?.songs?.length || 0);
     return { items: normalizeQqSearch(body), raw };
+  }
+  if (source === 'kugou') {
+    const body = await ctx.kugou.search(query, pageOf(offset));
+    const raw = (body?.albums?.length || 0) + (body?.songs?.length || 0);
+    return { items: normalizeKugouSearch(body), raw };
   }
   const page = { limit: SEARCH_PAGE_SIZE, offset };
   const [albums, songs] = await Promise.all([
@@ -481,13 +552,15 @@ async function loadPage(
   query: string,
   session: SearchSession
 ): Promise<void> {
-  const targets = SOURCES.filter(
+  const targets = session.sources.filter(
     (source) => !session.exhausted.has(source) && Date.now() >= cooldownUntil[source]
   );
   // 已经没有可要的东西（都翻到底了 / 都在冷却）：一个请求都不发，也不动池子与页码。
   // 冷却中的来源还是要留个说法，否则用户会把「没发请求」当成「没有结果」。
   if (!targets.length) {
-    session.warnings = SOURCES.filter((source) => !session.exhausted.has(source)).map(cooldownWarning);
+    session.warnings = session.sources
+      .filter((source) => !session.exhausted.has(source))
+      .map(cooldownWarning);
     return;
   }
   await waitForSlot();
@@ -512,13 +585,13 @@ async function loadPage(
     const { items, raw } = result.value;
     const added = mergeInto(session.pool, items);
     // 「这个来源还有没有下一页」：网易云的 offset 翻页是准的（给少于要的即到底）；
-    // QQ 那边经典端点对页大小有夹取，只有「这一页没带来新东西」才可靠 —— 两条一起用，谁先到算谁
+    // QQ / 酷狗的页码端点对页大小有夹取，只有「这一页没带来新东西」才可靠 —— 两条一起用，谁先到算谁
     if (raw === 0 || added === 0 || (source === 'netease' && raw < SEARCH_PAGE_SIZE)) {
       session.exhausted.add(source);
     }
   });
   const attempted = new Set(attempts.map((attempt) => attempt.source));
-  for (const source of SOURCES) {
+  for (const source of session.sources) {
     // 到底了的来源不解释：那是「没有更多」，不是「被限流」
     if (attempted.has(source) || session.exhausted.has(source)) continue;
     if (Date.now() < cooldownUntil[source]) warnings.push(cooldownWarning(source));
@@ -528,15 +601,17 @@ async function loadPage(
   session.at = Date.now();
 }
 
-/** 首屏搜索：池子里没有这个词（或上一轮带错、已过期）时重打网络，否则直接复用池子。 */
+/** 首屏搜索：池子里没有这个词（或上一轮带错、已过期）时重打网络，否则直接复用池子。
+ *  scope 是「搜索来源」选择，默认聚合（老调用方不传就是旧行为）。 */
 export async function discoverAlbums(
   ctx: AlbumDiscoveryContext,
-  rawQuery: string
+  rawQuery: string,
+  scope: SearchScope = 'all'
 ): Promise<AlbumSearchResult> {
   const query = String(rawQuery || '').trim();
   if (!query) return emptyResult();
 
-  const key = query.toLocaleLowerCase();
+  const key = sessionKey(scope, query);
   const cached = sessions.get(key);
   if (cached && Date.now() - cached.at < SESSION_TTL && !cached.dirty) {
     return present(ctx.app, query, cached);
@@ -544,6 +619,7 @@ export async function discoverAlbums(
   // 过期 / 上一轮带错的：池子和页码一起重建，别把脏页码带到这一轮
   const session: SearchSession = {
     at: Date.now(),
+    sources: scopeSources(scope),
     pool: [],
     offset: 0,
     exhausted: new Set(),
@@ -562,13 +638,14 @@ export async function discoverAlbums(
  *  池子已经翻到底（或有来源在冷却）时不发请求，如实返回现有的池子。 */
 export async function loadMoreAlbums(
   ctx: AlbumDiscoveryContext,
-  rawQuery: string
+  rawQuery: string,
+  scope: SearchScope = 'all'
 ): Promise<AlbumSearchResult> {
   const query = String(rawQuery || '').trim();
   if (!query) return emptyResult();
-  const session = sessions.get(query.toLocaleLowerCase());
+  const session = sessions.get(sessionKey(scope, query));
   // 会话已被挤掉 / 过期：当作重新搜一次（此时池子是空的，能给出完整的一页）
-  if (!session) return discoverAlbums(ctx, query);
+  if (!session) return discoverAlbums(ctx, query, scope);
   await loadPage(ctx, query, session);
   return present(ctx.app, query, session);
 }

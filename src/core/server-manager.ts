@@ -262,6 +262,9 @@ export class ServerManager {
       VINYL_ANON_FILE: pluginAbsPath(this.plugin, '.anon-token'),
       VINYL_QQ_COOKIE_FILE: pluginAbsPath(this.plugin, '.qq-cookie'),
       VINYL_QQ_GUID_FILE: pluginAbsPath(this.plugin, '.qq-guid'),
+      VINYL_KUGOU_COOKIE_FILE: pluginAbsPath(this.plugin, '.kugou-cookie'),
+      // 酷狗设备指纹（dfid/mid/guid/dev）：首次取流前注册一次，之后一直沿用
+      VINYL_KUGOU_DEVICE_FILE: pluginAbsPath(this.plugin, '.kugou-device'),
       VINYL_LOG_FILE: pluginAbsPath(this.plugin, 'gateway.log'),
       // 系统代理 → 网关；'DIRECT' 不注入，留空让它回落读 HTTPS_PROXY 等环境变量
       VINYL_PROXY:

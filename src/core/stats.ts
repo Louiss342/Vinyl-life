@@ -13,9 +13,10 @@ export interface AlbumStatSnapshot {
   cachedCover?: string;
   neteaseId?: number;
   qqId?: string;
+  kugouId?: string;
   audioFolderRef?: string;
   audioRefs?: string[];
-  sourcePref?: 'auto' | 'local' | 'netease' | 'qq';
+  sourcePref?: 'auto' | 'local' | 'netease' | 'qq' | 'kugou';
   displayProps?: Record<string, string>;
   /** 删除前保留的原 YAML frontmatter（不保存正文） */
   frontmatter?: string;

@@ -20,6 +20,8 @@ import { NeteaseService } from './core/netease';
 import { Auth } from './core/auth';
 import { QqService } from './core/qq';
 import { QqAuth } from './core/qq-auth';
+import { KugouService } from './core/kugou';
+import { KugouAuth } from './core/kugou-auth';
 import { LocalSource } from './core/local-source';
 import { PlaybackEngine } from './core/player-state';
 import type { PlayerSnapshot } from './core/player-state';
@@ -42,6 +44,7 @@ import {
   normalizeRecordColor,
   normalizeToolbarPosition,
 } from './core/appearance';
+import { normalizeSearchScope } from './core/album-discovery';
 import {
   notice,
   pluginAbsPath,
@@ -107,6 +110,8 @@ export default class VinylLifePlugin extends Plugin {
   auth!: Auth;
   qq!: QqService;
   qqAuth!: QqAuth;
+  kugou!: KugouService;
+  kugouAuth!: KugouAuth;
   local!: LocalSource;
   engine!: PlaybackEngine;
   handoff!: HandoffController;
@@ -147,6 +152,11 @@ export default class VinylLifePlugin extends Plugin {
       () => this.server.token
     );
     this.qqAuth = new QqAuth(this, this.server, this.qq);
+    this.kugou = new KugouService(
+      () => this.server.base,
+      () => this.server.token
+    );
+    this.kugouAuth = new KugouAuth(this, this.server, this.kugou);
     this.local = new LocalSource(this.app);
 
     // 播放引擎
@@ -155,6 +165,7 @@ export default class VinylLifePlugin extends Plugin {
       local: this.local,
       netease: this.netease,
       qq: this.qq,
+      kugou: this.kugou,
       settings: () => this.settings,
       onTrackPlay: (track, albumPath, albumTitle) =>
         this.recordPlay(track, albumPath, albumTitle),
@@ -277,6 +288,8 @@ export default class VinylLifePlugin extends Plugin {
     this.settings.playerDeck = normalizeDeckStyle(data?.playerDeck);
     this.settings.recordColor = normalizeRecordColor(data?.recordColor);
     this.settings.toolbarPosition = normalizeToolbarPosition(data?.toolbarPosition);
+    // 在线搜索的来源范围（「添加」面板记住的上次选择；不认识的旧值回落聚合）
+    this.settings.searchSource = normalizeSearchScope(data?.searchSource);
   }
 
   /** 音量与播放位置的防抖持久化入口（引擎每次 emit 都会调，落盘由 5 秒防抖兜住） */
@@ -397,8 +410,11 @@ export default class VinylLifePlugin extends Plugin {
     return {
       app: this.app,
       settings: () => this.settings,
+      // 搜索来源这类界面偏好由面板自己写回设置，落盘走插件的统一出口
+      saveSettings: () => this.saveSettings(),
       client: this.netease,
       qq: this.qq,
+      kugou: this.kugou,
     };
   }
 
@@ -617,6 +633,7 @@ export default class VinylLifePlugin extends Plugin {
       coverVaultPath: coverFile?.path,
       neteaseId: album.neteaseId,
       qqId: album.qqId,
+      kugouId: album.kugouId,
       audioFolderRef: album.audioFolderRef,
       audioRefs: [...album.audioRefs],
       sourcePref: album.sourcePref,
@@ -713,6 +730,7 @@ export default class VinylLifePlugin extends Plugin {
         add('cover', snapshot.coverRaw);
         add('neteaseId', snapshot.neteaseId);
         add('qqId', snapshot.qqId);
+        add('kugouId', snapshot.kugouId);
         add('audioFolder', snapshot.audioFolderRef);
         if (snapshot.audioRefs?.length) {
           lines.push('audio:');

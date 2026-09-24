@@ -52,7 +52,7 @@ test('i18n：专辑墙用到的键在中英两套里都有且非空', () => {
     'sort.dir.newestFirst', 'sort.dir.earliestFirst', 'sort.dir.mostFirst',
     'sort.dir.leastFirst', 'sort.dir.highFirst', 'sort.dir.lowFirst',
     'sort.dir.recentFirst', 'sort.dir.asc', 'sort.dir.desc',
-    'filter.all', 'filter.local', 'filter.netease', 'filter.qq', 'filter.collect',
+    'filter.all', 'filter.local', 'filter.netease', 'filter.qq', 'filter.kugou', 'filter.collect',
     'shelf.title', 'shelf.heading', 'shelf.search', 'shelf.searchClear', 'shelf.searchOnline',
     'shelf.refresh', 'shelf.batchDelete',
     'toolbar.search', 'toolbar.display', 'toolbar.displayFiltered', 'toolbar.add', 'toolbar.more',
@@ -65,8 +65,9 @@ test('i18n：专辑墙用到的键在中英两套里都有且非空', () => {
     'batchDelete.alsoAudio', 'batchDelete.alsoCover', 'batchDelete.coverShared',
     'add.title', 'add.placeholder', 'add.localHint', 'add.chooseFiles',
     'import.owned', 'import.adding', 'import.retry', 'import.sameNameHint', 'import.searchFoundOwned',
+    'import.searchScope', 'import.scopeAll', 'import.scopeAllHint', 'import.searchingOne',
     'menu.play', 'menu.openNote', 'menu.importAudio', 'menu.setCover',
-    'menu.openNetease', 'menu.openQq', 'menu.deleteAlbum',
+    'menu.openNetease', 'menu.openQq', 'menu.openKugou', 'menu.deleteAlbum',
   ];
   for (const k of keys) {
     for (const lang of ['zh', 'en']) {
@@ -1417,7 +1418,7 @@ test('README：整版中英对照 —— 中文在上、英文在下，小节标
       '## 黑胶播放器',
       '## 导入音乐',
       '### 本地音频',
-      '### 网易云音乐和 QQ 音乐',
+      '### 网易云音乐、QQ 音乐与酷狗音乐',
       '## 专辑笔记与听歌记录',
       '## 封面与专辑整理',
       '## 播放统计',
@@ -1437,7 +1438,7 @@ test('README：整版中英对照 —— 中文在上、英文在下，小节标
       '## Vinyl player',
       '## Importing music',
       '### Local audio',
-      '### NetEase Cloud Music and QQ Music',
+      '### NetEase Cloud Music, QQ Music and Kugou Music',
       '## Album notes and listening log',
       '## Covers and album organization',
       '## Playback statistics',

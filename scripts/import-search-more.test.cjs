@@ -192,6 +192,7 @@ function makeHarness(albumsOf, opts = {}) {
       },
     },
     qq: { search: async () => ({ data: { albums: [], songs: [] } }) },
+    kugou: { search: async () => ({ ok: false, albums: [], songs: [] }) },
   };
   return { app, ctx, calls };
 }

@@ -6,6 +6,7 @@ import { AlbumInfo } from './album-index';
 import { LocalSource } from './local-source';
 import { NeteaseService } from './netease';
 import { QqService } from './qq';
+import { KugouService } from './kugou';
 import { buildAlbumQueue, BuildQueueResult, ActiveSource, sourceLabel } from './queue';
 import type { VinylSettings } from '../settings';
 import { notice } from '../util';
@@ -61,6 +62,8 @@ export interface EngineDeps {
   netease: NeteaseService;
   /** QQ 音乐入口（网关单通道；取链 ladder 在网关侧） */
   qq: QqService;
+  /** 酷狗音乐入口（网关单通道；设备指纹与取链 ladder 都在网关侧） */
+  kugou: KugouService;
   settings: () => VinylSettings;
   /** 曲目成功开播钩子（播放统计用；重试路径不触发） */
   onTrackPlay?: (track: Track, albumNotePath?: string, albumTitle?: string) => void;
@@ -205,6 +208,7 @@ export class PlaybackEngine {
       local: this.deps.local,
       netease: this.deps.netease,
       qq: this.deps.qq,
+      kugou: this.deps.kugou,
       defaultSource: this.deps.settings().defaultSource,
     });
     // 期间用户又点了别的专辑（交接动效 / 播放器换碟菜单两个入口）→ 丢弃本次结果
@@ -258,6 +262,7 @@ export class PlaybackEngine {
       local: this.deps.local,
       netease: this.deps.netease,
       qq: this.deps.qq,
+      kugou: this.deps.kugou,
       defaultSource: this.deps.settings().defaultSource,
     });
     if (seq !== this.loadSeq) return res;
@@ -565,6 +570,27 @@ export class PlaybackEngine {
         if (r.level) this.levelCache.set(key, r.level);
         return r.url;
       }
+      case 'kugou': {
+        const key = trackKey(track);
+        const hit = this.urlCache.get(key);
+        if (hit) return hit;
+        // 取流要带 hash + 专辑 id + mixsongid 三件套（见 core/kugou.ts）；付费曲目的限制文案与 QQ 同义
+        const r = await this.deps.kugou.songUrl(
+          track.id,
+          this.deps.settings().quality,
+          track.albumId,
+          track.albumAudioId
+        );
+        if (!r.url) {
+          throw new Error(
+            r.restriction ||
+            (track.pay ? t('player.vipNoUrl') : t('auth.sourceUnavailable'))
+          );
+        }
+        this.urlCache.set(key, r.url);
+        if (r.level) this.levelCache.set(key, r.level);
+        return r.url;
+      }
     }
   }
 
@@ -647,7 +673,7 @@ export class PlaybackEngine {
       }
     }
     // 在线源 URL 过期/失效 → 重取一次（缓存按 trackKey 键控，跨源互不影响）
-    if (track.source === 'netease' || track.source === 'qq') {
+    if (track.source === 'netease' || track.source === 'qq' || track.source === 'kugou') {
       const key = trackKey(track);
       if (!this.urlRefetched.has(key)) {
         this.urlRefetched.add(key);

@@ -215,7 +215,7 @@ test('buildAlbumInfo：displayProps 采集非黑名单键，类型化字段保�
   assert.equal(a.displayProps.genre, 'R&B');
   assert.equal(a.displayProps.label, 'Apple Records');
   assert.equal(a.displayProps.rating, '0', 'rating: 0 应保留为有值');
-  for (const k of ['tags', 'cover', 'netease', 'neteaseId', 'qq', 'qqId', 'audio', 'audioFolder', 'source']) {
+  for (const k of ['tags', 'cover', 'netease', 'neteaseId', 'qq', 'qqId', 'kugou', 'kugouId', 'audio', 'audioFolder', 'source']) {
     assert.ok(!(k in a.displayProps), `黑名单键 ${k} 不应进 displayProps`);
   }
 });

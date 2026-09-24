@@ -1,5 +1,5 @@
 // 导入功能：
-//   A. 专辑导入：网易云 / QQ 音乐链接（或 ID）→ 元信息 → 建笔记（neteaseId / qqId）→ 代理下封面 → 打开笔记
+//   A. 专辑导入：网易云 / QQ 音乐 / 酷狗音乐链接（或 ID）→ 元信息 → 建笔记（neteaseId / qqId / kugouId）→ 代理下封面 → 打开笔记
 //   B. 本地音频导入：复制进 vault（audioFolder）/ 外链绝对路径（audio 列表）两模式，processFrontMatter 更新
 //   C. 拖到空白处：从文件新建本地专辑笔记
 import { App, TFile, normalizePath } from 'obsidian';
@@ -8,6 +8,7 @@ import {
   buildAlbumInfo,
   findAlbumNotes,
   getAlbumInfo,
+  parseKugouAlbumId,
   parseQqAlbumMid,
 } from './core/album-index';
 import { coverCandidates } from './core/cover-url';
@@ -25,15 +26,21 @@ import { t, tf } from './core/i18n';
 import type { VinylSettings } from './settings';
 import type { NeteaseService } from './core/netease';
 import type { QqService } from './core/qq';
-import type { NeteaseAlbumResponse, QqAlbumResponse } from './core/api-types';
+import type { KugouService } from './core/kugou';
+import type { KugouAlbumResponse, NeteaseAlbumResponse, QqAlbumResponse } from './core/api-types';
 
 export interface ImportContext {
   app: App;
   settings: () => VinylSettings;
+  /** 把设置落盘（搜索来源这类「记住上次选择」的界面偏好写入后调用）。
+   *  可缺省：没有宿主的场合（测试 / 精简调用方）选择只在本次会话内有效。 */
+  saveSettings?: () => void | Promise<void>;
   /** 统一网易云入口（网页会话优先，网关兜底，内部处理就绪） */
   client: NeteaseService;
   /** QQ 音乐入口（网关单通道） */
   qq: QqService;
+  /** 酷狗音乐入口（网关单通道；未登录也能取免费曲库） */
+  kugou: KugouService;
 }
 
 export interface ImportResult {
@@ -50,7 +57,8 @@ export interface ImportResult {
 
 export type AlbumRef =
   | { source: 'netease'; id: number }
-  | { source: 'qq'; mid: string };
+  | { source: 'qq'; mid: string }
+  | { source: 'kugou'; id: string };
 
 export type AlbumLink = AlbumRef;
 
@@ -67,7 +75,7 @@ function availableOnlineNoteName(
   album: string,
   artist: string,
   year: string | number | undefined,
-  source: 'netease' | 'qq'
+  source: 'netease' | 'qq' | 'kugou'
 ): string {
   const folder = ctx.settings().albumFolder;
   const base = sanitizeFileName(album);
@@ -76,7 +84,8 @@ function availableOnlineNoteName(
   if (available(base)) return base;
   const withArtist = sanitizeFileName(`${album}${artist ? ` - ${artist}` : ''}`);
   if (withArtist !== base && available(withArtist)) return withArtist;
-  const suffix = [year, source === 'qq' ? 'QQ' : 'NetEase'].filter(Boolean).join(', ');
+  const brand = source === 'qq' ? 'QQ' : source === 'kugou' ? 'Kugou' : 'NetEase';
+  const suffix = [year, brand].filter(Boolean).join(', ');
   const detailed = sanitizeFileName(`${withArtist} (${suffix})`);
   if (available(detailed)) return detailed;
   for (let n = 2; ; n++) {
@@ -92,12 +101,19 @@ export function parseNeteaseInput(input: string): number | undefined {
   return m ? Number(m[1]) : undefined;
 }
 
-/** 专辑链接/ID 识别：网易云（album?id= / 纯数字 ID）优先，其次 QQ 音乐（albumDetail/、旧版 /album/<mid>.html、纯 mid） */
+/** 专辑链接/ID 识别：网易云（album?id= / 纯数字 ID）优先，其次酷狗（kugou.com/yy/album/single/<id>.html），
+ *  最后 QQ 音乐（albumDetail/、旧版 /album/<mid>.html、纯 mid）。
+ *  酷狗必须排在 QQ 前面：酷狗网页链接里也有 "album/…" 段，而 QQ 的旧版正则会把 /album/<数字>.html 认成自己的 mid。
+ *  裸数字仍然是网易云 ID（酷狗 id 也是数字，无法从裸数字上区分 —— 请粘贴完整链接）。 */
 export function parseAlbumInput(input: string): AlbumLink | undefined {
   const s = String(input || '').trim();
   if (!s) return undefined;
   const id = parseNeteaseInput(s);
   if (id) return { source: 'netease', id };
+  if (/kugou\.com/i.test(s)) {
+    const kugouId = parseKugouAlbumId({ kugou: s });
+    if (kugouId) return { source: 'kugou', id: kugouId };
+  }
   const mid = parseQqAlbumMid({ qq: s });
   return mid ? { source: 'qq', mid } : undefined;
 }
@@ -116,9 +132,9 @@ export async function importAlbum(ctx: ImportContext, input: string): Promise<Im
 
 /** 搜索结果的直接导入入口：不拼 URL，不再猜测来源。 */
 export function importAlbumRef(ctx: ImportContext, ref: AlbumRef): Promise<ImportResult> {
-  return ref.source === 'qq'
-    ? importQqAlbum(ctx, ref.mid)
-    : importNeteaseAlbum(ctx, String(ref.id));
+  if (ref.source === 'qq') return importQqAlbum(ctx, ref.mid);
+  if (ref.source === 'kugou') return importKugouAlbum(ctx, ref.id);
+  return importNeteaseAlbum(ctx, String(ref.id));
 }
 
 // 封面：经本地网关代理下载（避开 CORS）→ covers/，返回 frontmatter 用的 wikilink 字面量。
@@ -283,6 +299,83 @@ export async function importQqAlbum(ctx: ImportContext, input: string): Promise<
       artist,
       year: year ? `, ${year}` : '',
       tracks: album.trackCount ? tf('import.qqTracks', { n: album.trackCount }) : '',
+    }),
+    file,
+  };
+}
+
+// ============ A3. 酷狗音乐专辑导入 ============
+
+/** 发行年份：酷狗的 publishtime 可能是「2020-01-01」这类日期串，也可能是秒级时间戳字符串 */
+function yearFromKugouDate(raw: unknown): string | undefined {
+  const s = String(raw ?? '').trim();
+  if (!s) return undefined;
+  const m = /^(\d{4})/.exec(s);
+  if (m) return m[1];
+  const t = Number(s);
+  if (Number.isFinite(t) && t > 0) {
+    const year = new Date(t).getFullYear();
+    return Number.isFinite(year) ? String(year) : undefined;
+  }
+  return undefined;
+}
+
+export async function importKugouAlbum(ctx: ImportContext, input: string): Promise<ImportResult> {
+  const id = parseKugouAlbumId({ kugou: String(input || '').trim() });
+  if (!id) {
+    return {
+      status: 'failed',
+      ok: false,
+      detail: t('import.badKugouId'),
+    };
+  }
+
+  // 查重先于接口请求：已有同 kugouId 的笔记 → 直接指路
+  for (const f of findAlbumNotes(ctx.app)) {
+    const info = getAlbumInfo(ctx.app, f);
+    if (info?.kugouId === id) {
+      return { status: 'existing', ok: false, detail: tf('import.duplicate', { title: info.title }), file: f };
+    }
+  }
+
+  let body: KugouAlbumResponse;
+  try {
+    body = await ctx.kugou.album(id);
+  } catch (e) {
+    return { status: 'failed', ok: false, detail: tf('import.albumFetchFailed', { msg: (e as Error).message }) };
+  }
+  const album = body?.data?.album;
+  if (!album?.name) {
+    return {
+      status: 'failed',
+      ok: false,
+      detail: tf('import.kugouNoData', { code: String(body?.code) }),
+    };
+  }
+
+  const artist = album.artist || '';
+  const year = yearFromKugouDate(album.publishDate);
+  const name = availableOnlineNoteName(ctx, album.name, artist, year, 'kugou');
+  const notePath = normalizePath(`${ctx.settings().albumFolder}/${name}.md`);
+  const coverRef = await downloadCoverToVault(ctx, album.cover, name);
+
+  await ensureFolder(ctx.app, ctx.settings().albumFolder);
+
+  const lines = ['---', 'tags: [album]', `kugouId: ${id}`];
+  if (coverRef) lines.push(`cover: ${coverRef}`);
+  if (artist) lines.push(`artist: ${yamlString(artist)}`);
+  if (year) lines.push(`year: ${Number(year)}`);
+  lines.push(`kugou: "https://www.kugou.com/yy/album/single/${id}.html"`);
+  lines.push('---', '');
+  const file = await ctx.app.vault.create(notePath, lines.join('\n'));
+  return {
+    status: 'created',
+    ok: true,
+    detail: tf('import.kugouDone', {
+      name: album.name,
+      artist,
+      year: year ? `, ${year}` : '',
+      tracks: album.songCount ? tf('import.kugouTracks', { n: album.songCount }) : '',
     }),
     file,
   };

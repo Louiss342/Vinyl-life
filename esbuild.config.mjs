@@ -28,7 +28,7 @@ const GATEWAY_BUNDLE = 'src/core/gateway-bundle.ts';
 const STYLE_BUNDLE = 'src/core/style-bundle.ts';
 
 async function build() {
-  // 1) 网关产物（内联用到的网易云子模块与 server/qq.js，可独立运行）
+  // 1) 网关产物（内联用到的网易云子模块与 server/qq.js、server/kugou.js，可独立运行）
   await esbuild.build({
     ...common,
     entryPoints: ['server/gateway.js'],
@@ -104,7 +104,10 @@ async function build() {
   // 420 → 440：工具栏交互重做（方案 2026-09-18）—— 单行工具栏 + 原位搜索 + 陈列 / 添加两个浮层 +
   // 选择模式改挂工具栏（去掉底部动作条）。导入搜索抽成 views/album-search（弹窗与添加浮层共用）、
   // 新增 views/add-panel，styles.css 多出工具栏 / 浮层样式 —— 净增约 9 KB，全是这次交互的代码。
-  const MAIN_JS_BUDGET = 440 * 1024;
+  // 440 → 460：第三路在线音源「酷狗音乐」—— 网关模块（server/kugou.js：设备指纹注册 + 扫码登录 +
+  // 匿名曲库 + 取流双链）、前端客户端与登录态、来源筛选 / 搜索来源 / 设置「源」页的第三分区，
+  // 以及对应的 i18n 文案与 is-kugou 角标样式。没有新依赖，全是这一路音源自己的代码。
+  const MAIN_JS_BUDGET = 460 * 1024;
   if (sizes['main.js'] > MAIN_JS_BUDGET) {
     throw new Error(
       `main.js 体积 ${(sizes['main.js'] / 1024).toFixed(1)} KB 超出预算 ${MAIN_JS_BUDGET / 1024} KB：` +

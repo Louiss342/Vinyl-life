@@ -19,7 +19,7 @@ export interface QrLoginDeps {
 
 // 音源登录文案配置（netease 默认值保证既有文案与测试不变）
 export interface QrProvider {
-  id: 'netease' | 'qq';
+  id: 'netease' | 'qq' | 'kugou';
   title: string;
   /** 扫码区提示（含 App 名） */
   appHint: string;
@@ -47,6 +47,15 @@ export function qqQrProvider(): QrProvider {
     title: t('login.qq.title'),
     appHint: t('login.qq.appHint'),
     tempPng: 'qr-login-tmp-qq.png',
+  };
+}
+
+export function kugouQrProvider(): QrProvider {
+  return {
+    id: 'kugou',
+    title: t('login.kugou.title'),
+    appHint: t('login.kugou.appHint'),
+    tempPng: 'qr-login-tmp-kugou.png',
   };
 }
 

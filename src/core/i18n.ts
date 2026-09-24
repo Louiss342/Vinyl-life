@@ -37,6 +37,7 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'filter.local': { zh: '本地音源', en: 'Local audio' },
   'filter.netease': { zh: '网易云', en: 'NetEase' },
   'filter.qq': { zh: 'QQ 音乐', en: 'QQ Music' },
+  'filter.kugou': { zh: '酷狗音乐', en: 'Kugou Music' },
   'filter.collect': { zh: '仅收藏（无音源）', en: 'Collection only (no source)' },
   // 分段控件里放得下的短名（完整名字仍在 aria-label 上）
   'filter.collectShort': { zh: '仅收藏', en: 'Collect' },
@@ -69,8 +70,8 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     en: 'Try this button — local and online both work :)',
   },
   'shelf.tutorial.onlineOnly': {
-    zh: '不过在线平台目前只支持网易云音乐和QQ音乐:(',
-    en: 'Online platforms currently support NetEase Cloud Music and QQ Music only :(',
+    zh: '在线平台目前支持网易云音乐、QQ音乐和酷狗音乐:)',
+    en: 'Online platforms currently support NetEase Cloud Music, QQ Music and Kugou Music :)',
   },
   'shelf.tutorial.moreSoon': {
     zh: '其他平台等待我后续的更新吧^_^',
@@ -149,8 +150,8 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   // —— 卡片 / 角标 / 菜单 ——
   'card.collect': { zh: '收藏 ·', en: 'Collect ·' },
   'card.noSource': {
-    zh: '该专辑暂无音源（本地音频、neteaseId 或 QQ 音乐），已打开笔记',
-    en: 'This album has no source (local audio, neteaseId or QQ Music) — opened the note instead',
+    zh: '该专辑暂无音源（本地音频、neteaseId、qqId 或 kugouId），已打开笔记',
+    en: 'This album has no source (local audio, neteaseId, qqId or kugouId) — opened the note instead',
   },
   'menu.play': { zh: '播放', en: 'Play' },
   'menu.openNote': { zh: '打开笔记', en: 'Open note' },
@@ -158,12 +159,14 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'menu.setCover': { zh: '设置封面…', en: 'Set cover…' },
   'menu.openNetease': { zh: '在网易云打开', en: 'Open in NetEase' },
   'menu.openQq': { zh: '在 QQ 音乐打开', en: 'Open in QQ Music' },
+  'menu.openKugou': { zh: '在酷狗音乐打开', en: 'Open in Kugou Music' },
   'menu.deleteAlbum': { zh: '删除专辑…', en: 'Delete album…' },
 
   // —— 音源显示名 / 音质档（队列行角标 · 播放器音质读数） ——
   // 三处取值都来自函数调用（track.ts / queue.ts），切语言后立即生效；别抄进模块级常量表。
   'src.netease': { zh: '网易云', en: 'NetEase' },
   'src.qq': { zh: 'QQ音乐', en: 'QQ Music' },
+  'src.kugou': { zh: '酷狗音乐', en: 'Kugou Music' },
   'src.local': { zh: '本地', en: 'Local' },
   // —— 通用（跨视图复用的小词 / 分隔符） ——
   'common.cancel': { zh: '取消', en: 'Cancel' },
@@ -209,9 +212,11 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'import.searchAction': { zh: '搜索', en: 'Search' },
   'import.searchEmpty': { zh: '请输入搜索内容', en: 'Enter something to search for' },
   'import.searching': {
-    zh: '正在同时搜索网易云音乐和 QQ 音乐…',
-    en: 'Searching NetEase and QQ Music…',
+    zh: '正在同时搜索网易云音乐、QQ 音乐和酷狗音乐…',
+    en: 'Searching NetEase, QQ Music and Kugou Music…',
   },
+  // 单源搜索（「搜索来源」选了网易云或 QQ）：不再说「同时搜索」
+  'import.searchingOne': { zh: '正在搜索{source}…', en: 'Searching {source}…' },
   'import.searchFound': { zh: '找到 {n} 张专辑', en: 'Found {n} album(s)' },
   // 已在库中的（同平台同 id）照常出现在结果里、就地标「已在收藏」：这里如实报一声有几张
   'import.searchFoundOwned': {
@@ -241,8 +246,8 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     en: 'No albums found. Try a shorter album, artist, or song name.',
   },
   'import.searchFailed': {
-    zh: '两个平台都搜索失败，请检查网络后重试。',
-    en: 'Both sources failed. Check your network and try again.',
+    zh: '所有在线平台都搜索失败，请检查网络后重试。',
+    en: 'All online sources failed. Check your network and try again.',
   },
   'import.searchPartial': {
     zh: '{sources} 暂时不可用：{reason}。已显示其他来源的结果。',
@@ -263,6 +268,14 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   },
   'import.sourceNetease': { zh: '网易云', en: 'NetEase' },
   'import.sourceQq': { zh: 'QQ 音乐', en: 'QQ Music' },
+  'import.sourceKugou': { zh: '酷狗音乐', en: 'Kugou Music' },
+  // 搜索来源（「添加」面板搜索框下的分段控件）：聚合 / 仅网易云 / 仅 QQ / 仅酷狗
+  'import.searchScope': { zh: '搜索来源', en: 'Search source' },
+  'import.scopeAll': { zh: '聚合', en: 'All' },
+  'import.scopeAllHint': {
+    zh: '聚合搜索：网易云 + QQ 音乐 + 酷狗音乐',
+    en: 'All sources: NetEase + QQ Music + Kugou Music',
+  },
   'import.trackCount': { zh: '{n} 首', en: '{n} tracks' },
   'import.matchedTrack': { zh: '匹配歌曲：{name}', en: 'Matched song: {name}' },
   'import.openExisting': { zh: '打开', en: 'Open' },
@@ -373,8 +386,8 @@ export const DICT: Record<string, { zh: string; en: string }> = {
 
   // —— 导入 / 删除：模块内文案（ImportResult.detail 等） ——
   'import.badLink': {
-    zh: '无法识别链接：请粘贴网易云专辑链接（music.163.com/#/album?id=… 或纯数字 ID）或 QQ 音乐专辑链接（y.qq.com/n/ryqq/albumDetail/…）',
-    en: 'Unrecognized link: paste a NetEase album link (music.163.com/#/album?id=… or a plain numeric ID) or a QQ Music album link (y.qq.com/n/ryqq/albumDetail/…)',
+    zh: '无法识别链接：请粘贴网易云专辑链接（music.163.com/#/album?id=… 或纯数字 ID）、QQ 音乐专辑链接（y.qq.com/n/ryqq/albumDetail/…）或酷狗专辑链接（kugou.com/yy/album/single/…）',
+    en: 'Unrecognized link: paste a NetEase album link (music.163.com/#/album?id=… or a plain numeric ID), a QQ Music album link (y.qq.com/n/ryqq/albumDetail/…) or a Kugou album link (kugou.com/yy/album/single/…)',
   },
   'import.badId': {
     zh: '无法解析专辑 ID（请粘贴专辑链接或纯数字 ID）',
@@ -406,6 +419,19 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     en: 'Imported "{name}" ({artist}{year}{tracks})',
   },
   'import.qqTracks': { zh: '，{n} 曲', en: ', {n} track(s)' },
+  'import.badKugouId': {
+    zh: '无法解析酷狗音乐专辑 ID（请粘贴专辑链接，如 https://www.kugou.com/yy/album/single/12345678.html）',
+    en: 'Could not parse the Kugou album ID (paste an album link such as https://www.kugou.com/yy/album/single/12345678.html)',
+  },
+  'import.kugouNoData': {
+    zh: '酷狗音乐专辑接口无数据（code={code}）',
+    en: 'No data from the Kugou album API (code={code})',
+  },
+  'import.kugouDone': {
+    zh: '已导入「{name}」（{artist}{year}{tracks}）',
+    en: 'Imported "{name}" ({artist}{year}{tracks})',
+  },
+  'import.kugouTracks': { zh: '，{n} 曲', en: ', {n} track(s)' },
   // 封面下载彻底失败（含备用图床）时的可见提示：专辑照常建好，只有封面要用户知道
   'import.coverFailed': {
     zh: '封面下载失败（{msg}），可在专辑卡片右键手动设置封面',
@@ -592,6 +618,13 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     en: 'Scan with mobile QQ (this is a QQ Connect QR code — the QQ Music app scanner cannot read it)',
   },
 
+  // —— 登录弹窗：音源文案（酷狗音乐） ——
+  'login.kugou.title': { zh: '酷狗音乐登录', en: 'Kugou Music sign-in' },
+  'login.kugou.appHint': {
+    zh: '请用酷狗音乐 App 扫码（未登录也能搜到并播放免费曲目，登录后解锁会员音质与付费曲目）',
+    en: 'Scan with the Kugou Music app (search and free tracks work unsigned — signing in unlocks member quality and paid tracks)',
+  },
+
   // —— 设置面板：标签页 / 通用 ——
   'settings.tab.general': { zh: '通用', en: 'General' },
   'settings.tab.stats': { zh: '统计', en: 'Statistics' },
@@ -615,6 +648,7 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'settings.sourceLocal': { zh: '仅本地', en: 'Local only' },
   'settings.sourceNetease': { zh: '仅网易云', en: 'NetEase only' },
   'settings.sourceQq': { zh: '仅 QQ 音乐', en: 'QQ Music only' },
+  'settings.sourceKugou': { zh: '仅酷狗音乐', en: 'Kugou Music only' },
   'settings.quality': { zh: '在线音源音质', en: 'Online audio quality' },
   'settings.qualityStandard': { zh: '标准', en: 'Standard' },
   'settings.qualityHigher': { zh: '较高（默认）', en: 'Higher (default)' },
@@ -665,12 +699,14 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   // —— 设置面板：源 ——
   'settings.sub.netease': { zh: '网易云', en: 'NetEase' },
   'settings.sub.qq': { zh: 'QQ 音乐', en: 'QQ Music' },
+  'settings.sub.kugou': { zh: '酷狗音乐', en: 'Kugou Music' },
   'settings.loginStatus': { zh: '登录状态', en: 'Sign-in status' },
   'settings.checkingLogin': { zh: '检测登录态…', en: 'Checking the sign-in state…' },
   'settings.checkFailed': { zh: '登录态检测失败：{msg}', en: 'Sign-in check failed: {msg}' },
   'settings.loggedIn': { zh: '已登录', en: 'Signed in' },
   'settings.statusLoggedIn': { zh: '{name}（{id}）', en: '{name} ({id})' },
   'settings.statusLoggedInQq': { zh: '{name}（QQ {id}）', en: '{name} (QQ {id})' },
+  'settings.statusLoggedInKugou': { zh: '{name}（酷狗 {id}）', en: '{name} (Kugou {id})' },
   'settings.cookieInvalid': { zh: 'Cookie 已失效，请重新登录', en: 'The cookie has expired — please sign in again' },
   'settings.notLoggedIn': { zh: '未登录', en: 'Not signed in' },
   'settings.gatewayOk': { zh: '网关正常', en: 'Gateway OK' },
@@ -755,6 +791,7 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   },
   'notice.neteaseLoggedOut': { zh: '已退出网易云登录', en: 'Signed out of NetEase' },
   'notice.qqLoggedOut': { zh: '已退出 QQ 音乐登录', en: 'Signed out of QQ Music' },
+  'notice.kugouLoggedOut': { zh: '已退出酷狗音乐登录', en: 'Signed out of Kugou Music' },
 
   // —— util：用户可见的通用提示 ——
   'util.skippedFormats': {
@@ -807,6 +844,7 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'auth.getUnikeyFailed': { zh: '获取登录 unikey 失败', en: 'Could not obtain the sign-in unikey' },
   'auth.qrGenerateFailed': { zh: '生成二维码失败', en: 'Could not generate the QR code' },
   'auth.qqQrFailed': { zh: '获取 QQ 登录二维码失败', en: 'Could not fetch the QQ sign-in QR code' },
+  'auth.kugouQrFailed': { zh: '获取酷狗登录二维码失败', en: 'Could not fetch the Kugou sign-in QR code' },
   'auth.sourceUnavailable': { zh: '音源不可用', en: 'Source unavailable' },
   'auth.coverDownloadHttp': {
     zh: '封面下载失败 HTTP {status}',
@@ -825,16 +863,16 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     en: '“{title}” failed to play (unsupported format, corrupt file, or a network problem)',
   },
   'player.vipNoUrl': {
-    zh: '会员/付费曲目，QQ 音乐未提供播放地址',
-    en: 'Member-only track — QQ Music returned no playback URL',
+    zh: '会员/付费曲目，该音源未提供播放地址',
+    en: 'Member-only track — the source returned no playback URL',
   },
   'queue.noLocalTracks': {
     zh: '专辑「{title}」没有本地音轨（audioFolder/audio 为空）',
     en: '“{title}” has no local tracks (audioFolder/audio is empty)',
   },
   'queue.notBound': {
-    zh: '专辑「{title}」既无本地音轨，也未绑定网易云 / QQ 音乐，仅作收藏展示',
-    en: '“{title}” has no local tracks and no NetEase/QQ binding — shown as a collection item only',
+    zh: '专辑「{title}」既无本地音轨，也未绑定网易云 / QQ 音乐 / 酷狗音乐，仅作收藏展示',
+    en: '“{title}” has no local tracks and no NetEase/QQ/Kugou binding — shown as a collection item only',
   },
   'queue.noNeteaseId': {
     zh: '该专辑未绑定网易云（无 neteaseId / netease 链接）',
@@ -856,11 +894,24 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     en: 'The QQ Music album API returned no tracks ({msg})',
   },
   'queue.qqFailed': { zh: '获取 QQ 音乐专辑失败：{msg}', en: 'Could not fetch the QQ Music album: {msg}' },
+  'queue.noKugouId': {
+    zh: '该专辑未绑定酷狗音乐（无 kugouId / kugou 链接）',
+    en: 'This album is not linked to Kugou Music (no kugouId / kugou URL)',
+  },
+  'queue.kugouUnavailable': { zh: '酷狗音乐源不可用', en: 'The Kugou Music source is unavailable' },
+  'queue.kugouNoTracks': {
+    zh: '酷狗音乐专辑接口无曲目（{msg}）',
+    en: 'The Kugou Music album API returned no tracks ({msg})',
+  },
+  'queue.kugouFailed': {
+    zh: '获取酷狗音乐专辑失败：{msg}',
+    en: 'Could not fetch the Kugou Music album: {msg}',
+  },
 
   // —— 网关（core/server-manager）——
   'gateway.inAppUnavailable': {
-    zh: '应用内网关在本机不可用（Electron 的 utilityProcess 通道拿不到）：在线音源（网易云 / QQ 音乐）暂不可用。请重启 Obsidian 后再试。',
-    en: 'The in-app gateway is unavailable on this machine (the Electron utilityProcess channel could not be reached): online sources (NetEase / QQ Music) are unavailable. Restart Obsidian and try again.',
+    zh: '应用内网关在本机不可用（Electron 的 utilityProcess 通道拿不到）：在线音源（网易云 / QQ 音乐 / 酷狗音乐）暂不可用。请重启 Obsidian 后再试。',
+    en: 'The in-app gateway is unavailable on this machine (the Electron utilityProcess channel could not be reached): online sources (NetEase / QQ Music / Kugou Music) are unavailable. Restart Obsidian and try again.',
   },
   'gateway.inAppStartFailed': {
     zh: '应用内网关启动失败：{msg}。请重启 Obsidian 后再试（更多线索见 gateway.log）。',
@@ -873,8 +924,8 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'gateway.notReady': { zh: '网关 15s 未就绪', en: 'The gateway did not become ready within 15s' },
   'gateway.exitCodeUnknown': { zh: '未知', en: 'unknown' },
   'gateway.tempWriteFailed': {
-    zh: '无法写入网关临时文件（{file}）：{msg}。在线音源（网易云 / QQ 音乐）不可用，本地源不受影响；请检查系统临时目录权限。',
-    en: 'Could not write the gateway temp file ({file}): {msg}. Online sources (NetEase / QQ Music) are unavailable; local audio is unaffected — check permissions on the system temp folder.',
+    zh: '无法写入网关临时文件（{file}）：{msg}。在线音源（网易云 / QQ 音乐 / 酷狗音乐）不可用，本地源不受影响；请检查系统临时目录权限。',
+    en: 'Could not write the gateway temp file ({file}): {msg}. Online sources (NetEase / QQ Music / Kugou Music) are unavailable; local audio is unaffected — check permissions on the system temp folder.',
   },
 
   // —— 卡片属性名（core/shelf-props；用户可在「卡片属性」里改写）——

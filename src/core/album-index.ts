@@ -15,7 +15,7 @@ import { buildDisplayProps } from './shelf-props';
 // 兼容既有调用点（delete.ts / local-source.ts 从本模块 import stripWikilink）：真值已移至 util.ts
 export { stripWikilink };
 
-export type AlbumSourcePref = 'auto' | 'local' | 'netease' | 'qq';
+export type AlbumSourcePref = 'auto' | 'local' | 'netease' | 'qq' | 'kugou';
 
 export interface AlbumInfo {
   file: TFile;
@@ -33,6 +33,8 @@ export interface AlbumInfo {
   neteaseId?: number;
   /** QQ 音乐专辑 mid（qqId 字段或 qq 链接正则解析） */
   qqId?: string;
+  /** 酷狗音乐专辑 id（kugouId 字段或 kugou 链接正则解析；上游 id 是数字，仍按字符串存） */
+  kugouId?: string;
   /** audioFolder 引用（wikilink / vault 路径 / 外链绝对路径） */
   audioFolderRef?: string;
   /** audio 显式列表原文 */
@@ -89,6 +91,25 @@ export function parseQqAlbumMid(fm: unknown): string | undefined {
   if (m) return m[1];
   const t = url.trim();
   return QQ_MID_RE.test(t) ? t : undefined;
+}
+
+// 酷狗专辑 id 解析：kugouId 裸 id / kugou 链接（网页版 /yy/album/single/<id>.html、/album/<id>.html）。
+// 上游 id 是纯数字（网关同样按 ^\d{1,20}$ 校验），存成字符串与 qqId 同形。
+const KUGOU_ALBUM_RE = /album\/(?:single\/)?(\d{1,20})/;
+const KUGOU_ID_RE = /^\d{1,20}$/;
+
+export function parseKugouAlbumId(fm: unknown): string | undefined {
+  const data = asFrontmatter(fm);
+  const bare = data.kugouId;
+  if (bare != null) {
+    const t = scalarText(bare).trim();
+    if (KUGOU_ID_RE.test(t)) return t;
+  }
+  const url = scalarText(data.kugou);
+  const m = url.match(KUGOU_ALBUM_RE);
+  if (m) return m[1];
+  const t = url.trim();
+  return KUGOU_ID_RE.test(t) ? t : undefined;
 }
 
 // 封面解析：wikilink → app:// 资源路径；http(s) 原样；色值原样（README 三形态）
@@ -185,7 +206,10 @@ export function buildAlbumInfo(
 ): AlbumInfo {
   const data = asFrontmatter(fm);
   const source: AlbumSourcePref =
-    data.source === 'local' || data.source === 'netease' || data.source === 'qq'
+    data.source === 'local' ||
+    data.source === 'netease' ||
+    data.source === 'qq' ||
+    data.source === 'kugou'
       ? data.source
       : 'auto';
   const coverRaw = data.cover != null ? scalarText(data.cover) : undefined;
@@ -211,6 +235,7 @@ export function buildAlbumInfo(
     cover,
     neteaseId: parseNeteaseId(fm),
     qqId: parseQqAlbumMid(fm),
+    kugouId: parseKugouAlbumId(fm),
     audioFolderRef,
     audioRefs: Array.isArray(data.audio)
       ? data.audio.map((v) => scalarText(v))
@@ -244,6 +269,7 @@ export interface AlbumSources {
   local: boolean;
   netease: boolean;
   qq: boolean;
+  kugou: boolean;
 }
 
 // 同步检测（不读取音频内容）：本地 = 引用的音频文件夹/文件实际存在且含受支持音频
@@ -260,7 +286,7 @@ export function detectAlbumSources(app: App, album: AlbumInfo): AlbumSources {
       }
     }
   }
-  return { local, netease: !!album.neteaseId, qq: !!album.qqId };
+  return { local, netease: !!album.neteaseId, qq: !!album.qqId, kugou: !!album.kugouId };
 }
 
 function folderRefHasAudio(app: App, ref: string): boolean {

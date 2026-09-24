@@ -77,9 +77,10 @@ interface ShelfEntry {
   local: boolean;
   netease: boolean;
   qq: boolean;
+  kugou: boolean;
 }
 
-type SourceFilter = 'all' | 'local' | 'netease' | 'qq' | 'collect';
+type SourceFilter = 'all' | 'local' | 'netease' | 'qq' | 'kugou' | 'collect';
 
 interface ShelfViewState {
   query: string;
@@ -93,6 +94,7 @@ const filterOptions = (): [SourceFilter, string][] => [
   ['local', t('filter.local')],
   ['netease', t('filter.netease')],
   ['qq', t('filter.qq')],
+  ['kugou', t('filter.kugou')],
   ['collect', t('filter.collect')],
 ];
 
@@ -107,6 +109,8 @@ const sourceShortLabel = (key: SourceFilter): string => {
       return t('src.netease');
     case 'qq':
       return t('src.qq');
+    case 'kugou':
+      return t('src.kugou');
     case 'collect':
       return t('filter.collectShort');
   }
@@ -351,7 +355,7 @@ export class VinylShelfView extends ItemView {
       .filter((a): a is AlbumInfo => !!a)
       .map((album) => {
         const src = detectAlbumSources(this.plugin.app, album);
-        return { album, local: src.local, netease: src.netease, qq: src.qq };
+        return { album, local: src.local, netease: src.netease, qq: src.qq, kugou: src.kugou };
       });
   }
 
@@ -957,7 +961,10 @@ export class VinylShelfView extends ItemView {
       if (this.state.sourceFilter === 'local' && !e.local) return false;
       if (this.state.sourceFilter === 'netease' && !e.netease) return false;
       if (this.state.sourceFilter === 'qq' && !e.qq) return false;
-      if (this.state.sourceFilter === 'collect' && (e.local || e.netease || e.qq)) return false;
+      if (this.state.sourceFilter === 'kugou' && !e.kugou) return false;
+      if (this.state.sourceFilter === 'collect' && (e.local || e.netease || e.qq || e.kugou)) {
+        return false;
+      }
       if (q) {
         const hay = [
           e.album.title,
@@ -1550,7 +1557,7 @@ export class VinylShelfView extends ItemView {
 
     // 只在「无任何音源」时给提示——这类卡片点击打开笔记而非播放，需要一眼可辨
     // （音源筛选在工具栏，播放时播放器丝印行也显示来源）。
-    if (!e.local && !e.netease && !e.qq) {
+    if (!e.local && !e.netease && !e.qq && !e.kugou) {
       card
         .createDiv({ cls: 'vinyl-shelf-badges' })
         .createSpan({ text: t('card.collect'), cls: 'vinyl-badge is-collect' });
@@ -1604,7 +1611,7 @@ export class VinylShelfView extends ItemView {
   // 点击 = 黑胶交接：离墙动画 → 打开播放器 → 落盘 → 播放；纯收藏态 → 打开笔记
   private async playAlbum(e: ShelfEntry) {
     const { album } = e;
-    if (!e.local && !e.netease && !e.qq) {
+    if (!e.local && !e.netease && !e.qq && !e.kugou) {
       const leaf = this.plugin.app.workspace.getLeaf(false);
       await leaf.openFile(album.file);
       notice(t('card.noSource'));
@@ -1632,7 +1639,7 @@ export class VinylShelfView extends ItemView {
     const { album } = e;
     const menu = new Menu();
     markVinylMenu(menu); // 全直角：菜单壳与悬停底一起收（见 styles.css「全直角」段）
-    if (e.local || e.netease || e.qq) {
+    if (e.local || e.netease || e.qq || e.kugou) {
       menu.addItem((it) =>
         it
           .setTitle(t('menu.play'))
@@ -1678,6 +1685,16 @@ export class VinylShelfView extends ItemView {
           .setIcon('external-link')
           .onClick(() => {
             window.open(`https://y.qq.com/n/ryqq/albumDetail/${album.qqId}`);
+          })
+      );
+    }
+    if (album.kugouId) {
+      menu.addItem((it) =>
+        it
+          .setTitle(t('menu.openKugou'))
+          .setIcon('external-link')
+          .onClick(() => {
+            window.open(`https://www.kugou.com/yy/album/single/${album.kugouId}.html`);
           })
       );
     }

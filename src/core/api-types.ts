@@ -155,6 +155,47 @@ export interface QqSearchResponse {
   };
 }
 
+// ============ 酷狗（网关 /api/kugou/* 归一化后的形态） ============
+
+export interface KugouSong {
+  /** 音频 hash（小写 32 位十六进制） */
+  id?: string;
+  hash?: string;
+  name?: string;
+  artist?: string;
+  albumName?: string;
+  albumId?: string;
+  /** mixsongid：取流必须与 hash 一起给 */
+  albumAudioId?: string;
+  duration?: number | string;
+  cover?: string;
+  pay?: number | string;
+  trial?: boolean;
+}
+
+export interface KugouAlbum {
+  id?: string;
+  name?: string;
+  artist?: string;
+  songCount?: number | string;
+  publishDate?: string;
+  cover?: string;
+}
+
+export interface KugouSearchResponse {
+  ok?: boolean;
+  albums?: KugouAlbum[];
+  songs?: KugouSong[];
+}
+
+export interface KugouAlbumResponse {
+  code?: number | string;
+  data?: {
+    album?: KugouAlbum;
+    songs?: KugouSong[];
+  };
+}
+
 export interface ApiErrorResponse {
   error?: string;
 }

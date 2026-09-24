@@ -42,7 +42,7 @@ function emptyApp() {
 
 /** 造「上游固定返回这几张」的搜索上下文。每个用例都用不同的词 ——
  *  模块级的池子按词缓存，撞词会让用例互相干扰。 */
-function searchCtx(app, albums = [], songs = [], qqAlbums = []) {
+function searchCtx(app, albums = [], songs = [], qqAlbums = [], kugouAlbums = []) {
   return {
     app,
     client: {
@@ -50,6 +50,7 @@ function searchCtx(app, albums = [], songs = [], qqAlbums = []) {
       searchSongs: async () => ({ result: { songs } }),
     },
     qq: { search: async () => ({ data: { albums: qqAlbums, songs: [] } }) },
+    kugou: { search: async () => ({ albums: kugouAlbums, songs: [] }) },
   };
 }
 
@@ -249,6 +250,7 @@ test('加载更多：把上游更深的一页并进池子重排，翻到底后�
       }),
     },
     qq: { search: async () => ({ data: { albums: [], songs: [] } }) },
+    kugou: { search: async () => ({ albums: [], songs: [] }) },
   };
 
   const first = await discovery.discoverAlbums(ctx, '雨天');
@@ -266,6 +268,178 @@ test('加载更多：把上游更深的一页并进池子重排，翻到底后�
   assert.deepEqual(offsets, [0, 30, 60], '到底之后不该再向上游要下一页');
 });
 
+// ---- 搜索来源（添加面板的「搜索来源」选择：聚合 / 仅网易云 / 仅 QQ / 仅酷狗） ----
+
+test('搜索范围：坏值回落聚合，范围映射到要打的来源', () => {
+  // Array.from：模块在 vm 里跑，直接 deepEqual 会因跨 realm 的数组原型不同而失败
+  assert.deepEqual(
+    Array.from(discovery.SEARCH_SCOPES),
+    ['all', 'netease', 'qq', 'kugou'],
+    '分段控件的档位顺序'
+  );
+  assert.equal(discovery.normalizeSearchScope('netease'), 'netease');
+  assert.equal(discovery.normalizeSearchScope('qq'), 'qq');
+  assert.equal(discovery.normalizeSearchScope('kugou'), 'kugou');
+  assert.equal(discovery.normalizeSearchScope('aggregate'), 'all', '不认识的旧值回落聚合');
+  assert.equal(discovery.normalizeSearchScope(undefined), 'all');
+  assert.deepEqual(
+    Array.from(discovery.scopeSources('all')),
+    ['netease', 'qq', 'kugou'],
+    '聚合 = 三个来源都打'
+  );
+  assert.deepEqual(Array.from(discovery.scopeSources('netease')), ['netease']);
+  assert.deepEqual(Array.from(discovery.scopeSources('qq')), ['qq']);
+  assert.deepEqual(Array.from(discovery.scopeSources('kugou')), ['kugou']);
+});
+
+// ---- 酷狗：归一化与页码翻页（上游是 mobilecdn 的两条端点） ----
+
+test('酷狗：专辑与单曲命中归一化，同专辑去重时保留专辑命中', () => {
+  const rows = discovery.normalizeKugouSearch({
+    albums: [{ id: '12345678', name: '叶惠美', artist: '周杰伦', songCount: 11, publishDate: '2003-07-31', cover: 'https://img/1.jpg' }],
+    songs: [
+      { hash: 'a'.repeat(32), name: '晴天', artist: '周杰伦', albumName: '叶惠美', albumId: '12345678' },
+      { hash: 'b'.repeat(32), name: '以父之名', artist: '周杰伦', albumName: '叶惠美', albumId: '12345678' },
+    ],
+  });
+  assert.equal(rows.length, 1, '同一张专辑只留一条');
+  const album = rows[0];
+  assert.equal(album.key, 'kugou:12345678');
+  assert.equal(album.source, 'kugou');
+  assert.equal(album.matchedBy, 'album', '专辑命中比单曲命中信息全');
+  assert.equal(album.title, '叶惠美');
+  assert.deepEqual(Array.from(album.artists), ['周杰伦'], '跨 realm 的数组要 Array.from 再比');
+  assert.equal(album.trackCount, 11);
+  assert.equal(album.releaseDate, '2003-07-31');
+});
+
+test('酷狗：没有专辑 id 的歌曲命中被丢掉（点进去也没有可播的专辑）', () => {
+  const rows = discovery.normalizeKugouSearch({
+    albums: [],
+    songs: [{ hash: 'c'.repeat(32), name: '无专辑', artist: '某某', albumName: '无专辑' }],
+  });
+  assert.equal(rows.length, 0);
+});
+
+/** 造「按来源计数」的搜索上下文：选单源时另两个来源的请求数必须停在 0 */
+function countingCtx(calls) {
+  return {
+    app: emptyApp(),
+    client: {
+      searchAlbums: async () => {
+        calls.netease++;
+        return { result: { albums: [{ id: 11, name: '网易云独占', artist: { name: '甲' }, size: 10 }] } };
+      },
+      searchSongs: async () => {
+        calls.netease++;
+        return { result: { songs: [] } };
+      },
+    },
+    qq: {
+      search: async () => {
+        calls.qq++;
+        return { data: { albums: [{ mid: 'QQONLY0001', name: 'QQ 独占', artist: '乙', trackCount: 10 }], songs: [] } };
+      },
+    },
+    kugou: {
+      search: async () => {
+        calls.kugou++;
+        return { albums: [{ id: '9001', name: '酷狗独占', artist: '丙', songCount: 10 }], songs: [] };
+      },
+    },
+  };
+}
+
+test('搜索来源：选单源就只打那一个来源的请求', async () => {
+  const calls = { netease: 0, qq: 0, kugou: 0 };
+  const onlyQq = await discovery.discoverAlbums(countingCtx(calls), '来源选择用词甲', 'qq');
+  assert.equal(calls.netease, 0, '选 QQ：网易云一个请求都不发');
+  assert.equal(calls.kugou, 0, '选 QQ：酷狗一个请求都不发');
+  assert.equal(calls.qq, 1);
+  assert.deepEqual(Array.from(onlyQq.items, (i) => i.source), ['qq']);
+
+  calls.netease = 0;
+  calls.qq = 0;
+  calls.kugou = 0;
+  const onlyNetease = await discovery.discoverAlbums(countingCtx(calls), '来源选择用词乙', 'netease');
+  assert.equal(calls.qq, 0, '选网易云：QQ 一个请求都不发');
+  assert.equal(calls.kugou, 0, '选网易云：酷狗一个请求都不发');
+  assert.equal(calls.netease, 2, '网易云仍是「专辑 + 单曲」两次请求');
+  assert.deepEqual(Array.from(onlyNetease.items, (i) => i.source), ['netease']);
+
+  calls.netease = 0;
+  calls.qq = 0;
+  calls.kugou = 0;
+  const onlyKugou = await discovery.discoverAlbums(countingCtx(calls), '来源选择用词丙', 'kugou');
+  assert.equal(calls.netease, 0, '选酷狗：网易云一个请求都不发');
+  assert.equal(calls.qq, 0, '选酷狗：QQ 一个请求都不发');
+  assert.equal(calls.kugou, 1);
+  assert.deepEqual(Array.from(onlyKugou.items, (i) => i.source), ['kugou']);
+});
+
+test('搜索来源：同一个词换范围各起各的池子，翻页与「还有更多」都跟着范围走', async () => {
+  const word = '来源隔离用词';
+  const calls = { netease: 0, qq: 0, kugou: 0 };
+
+  const neteaseOnly = await discovery.discoverAlbums(countingCtx(calls), word, 'netease');
+  assert.deepEqual(Array.from(neteaseOnly.items, (i) => i.source), ['netease'], '只有网易云的结果');
+  assert.equal(neteaseOnly.hasMore, false, '这一页不满：网易云已到底，没有更多');
+
+  // 同一个词、换个范围：必须是另一池子 —— 否则会把上一池的网易云结果端给「仅 QQ」
+  const qqOnly = await discovery.discoverAlbums(countingCtx(calls), word, 'qq');
+  assert.deepEqual(Array.from(qqOnly.items, (i) => i.source), ['qq'], '换范围不串味：聚合的池子不回流');
+  assert.equal(qqOnly.items.length, 1);
+
+  const kugouOnly = await discovery.discoverAlbums(countingCtx(calls), word, 'kugou');
+  assert.deepEqual(Array.from(kugouOnly.items, (i) => i.source), ['kugou'], '仅酷狗也不串味');
+  assert.equal(kugouOnly.items.length, 1);
+
+  const all = await discovery.discoverAlbums(countingCtx(calls), word, 'all');
+  assert.deepEqual(
+    Array.from(all.items, (i) => i.source).sort(),
+    ['kugou', 'netease', 'qq'],
+    '聚合仍是三边都有'
+  );
+  assert.equal(all.hasMore, true, 'QQ / 酷狗那侧还可能翻页：聚合的「还有更多」按各家算');
+});
+
+test('酷狗：翻页按页码换算（页大小与网关 SEARCH_PAGE 对齐），第二页要 page=2', async () => {
+  const pages = [];
+  const ctx = {
+    app: emptyApp(),
+    client: {
+      searchAlbums: async () => ({ result: { albums: [] } }),
+      searchSongs: async () => ({ result: { songs: [] } }),
+    },
+    qq: { search: async () => ({ data: { albums: [], songs: [] } }) },
+    kugou: {
+      search: async (_query, page) => {
+        pages.push(page);
+        const rows = Array.from({ length: 30 }, (_, i) => ({
+          id: String(90000 + (page - 1) * 30 + i),
+          name: `雨天 精选 ${page}-${i}`,
+          artist: '群星',
+          songCount: 5,
+        }));
+        return { albums: page > 2 ? [] : rows, songs: [] };
+      },
+    },
+  };
+  const first = await discovery.discoverAlbums(ctx, '酷狗翻页用词', 'kugou');
+  assert.deepEqual(pages, [1], '首屏是第一页');
+  assert.equal(first.items.length, 30);
+  assert.equal(first.hasMore, true);
+  const second = await discovery.loadMoreAlbums(ctx, '酷狗翻页用词', 'kugou');
+  assert.deepEqual(pages, [1, 2], '「加载更多」按页码要第二页（不是 offset）');
+  assert.equal(second.items.length, 60, '池子只长不缩');
+  const third = await discovery.loadMoreAlbums(ctx, '酷狗翻页用词', 'kugou');
+  assert.equal(third.hasMore, false, '上游这一页什么都没给 = 到底了');
+  assert.deepEqual(pages, [1, 2, 3], '要过第三页才知道到底');
+  assert.equal(third.items.length, 60, '到底以后不再改结果');
+  await discovery.loadMoreAlbums(ctx, '酷狗翻页用词', 'kugou');
+  assert.deepEqual(pages, [1, 2, 3], '到底之后不该再向上游要下一页');
+});
+
 // 下面两个用例会改动模块级的节流状态（缓存 / 冷却），必须放在文件末尾，
 // 否则同一文件里前面的用例会被「冷却中不发请求」影响。
 
@@ -280,6 +454,7 @@ test('搜索节流：同一个词第二次搜索走缓存，不再打网络', as
       searchSongs: async () => { neteaseCalls++; return { result: { songs: [] } }; },
     },
     qq: { search: async () => { qqCalls++; return { data: { albums: [], songs: [] } }; } },
+    kugou: { search: async () => ({ albums: [], songs: [] }) },
   };
   const first = await discovery.discoverAlbums(ctx, '缓存用词');
   assert.equal(first.items.length, 1);
@@ -302,6 +477,7 @@ test('搜索节流：上游 429 后该来源进入冷却，这一轮不发请求
       searchSongs: async () => { neteaseCalls++; throw new discovery.GatewayError('网易云接口限流（操作频繁），请等几秒再搜', 429); },
     },
     qq: { search: async () => ({ data: { albums: [{ mid: 'ALBUM001', name: 'QQ 专辑' }], songs: [] } }) },
+    kugou: { search: async () => ({ albums: [], songs: [] }) },
   };
   const first = await discovery.discoverAlbums(ctx, '限流用词');
   assert.equal(first.items.length, 1, '网易云挂了不影响 QQ 的结果');

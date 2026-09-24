@@ -18,6 +18,7 @@ const SECTION_ICONS: Record<string, string> = {
   'radio-tower': '⌁',
   cloud: '☁',
   'message-circle-more': '◌',
+  headphones: '♪',
   'hard-drive': '▱',
   // —— 统计页 ——
   'calendar-days': '▦',
