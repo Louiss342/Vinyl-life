@@ -22,9 +22,14 @@ export interface AlbumInfo {
   path: string;
   title: string;
   artist?: string;
+  /** 同名专辑的发行版本，例如原版、重制版、现场版。 */
+  edition?: string;
   year?: string | number;
   genre?: string;
   rating?: string | number;
+  /** frontmatter 的「仅收藏」标记（collectOnly: true）：这张是有意只收着、不需要音源与封面的
+   *  乐评式收藏。收藏健康检查据此把「无音源 / 无封面」降为提示，失效引用仍按错误列出。 */
+  collectOnly: boolean;
   /** frontmatter 原文（wikilink / URL / 色值） */
   coverRaw?: string;
   /** 解析后的可显示值 */
@@ -225,12 +230,15 @@ export function buildAlbumInfo(
     path: file.path,
     title: file.basename,
     artist: data.artist != null ? scalarText(data.artist) : undefined,
+    edition: data.edition != null ? scalarText(data.edition) : undefined,
     year: typeof data.year === 'string' || typeof data.year === 'number' ? data.year : undefined,
     genre: data.genre != null ? scalarText(data.genre) : undefined,
     rating:
       typeof data.rating === 'string' || typeof data.rating === 'number'
         ? data.rating
         : undefined,
+    // 只认真正的布尔 / 'true' 字符串：写成别的（如 false、"no"）都算没标记
+    collectOnly: data.collectOnly === true || scalarText(data.collectOnly).toLowerCase() === 'true',
     coverRaw,
     cover,
     neteaseId: parseNeteaseId(fm),

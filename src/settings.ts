@@ -8,21 +8,37 @@
 //
 // 切标签 = 清空内容区重画：不预建四份再藏起来 ——「关于」页的手绘框要按真实尺寸画，
 // 藏起来的元素量出来是 0。语言 / 取值变了走 render()：整面板重建，仍停在当前标签页。
-import { App, PluginSettingTab, Setting } from 'obsidian';
+import {
+  App,
+  ButtonComponent,
+  FuzzySuggestModal,
+  PluginSettingTab,
+  Setting,
+  TFile,
+  TextComponent,
+  normalizePath,
+} from 'obsidian';
+import { markVinylModal } from './util';
 import type VinylLifePlugin from './main';
 import { QrLoginModal, kugouQrProvider, qqQrProvider } from './views/qr-login-modal';
 import { StatsPage } from './views/stats-page';
 import { SettingsSection, settingsSection } from './views/settings-section';
 import { attachAboutInk, renderAboutPage } from './views/about-page';
 import { DiscDirection, DISC_DIRECTIONS, SpinSpeed, SPIN_SPEEDS } from './core/disc-motion';
+import {
+  ScratchSound,
+  SCRATCH_SOUNDS,
+  normalizeScratchSound,
+} from './core/scratch';
 import { TOOLBAR_POSITIONS, ToolbarPosition, normalizeToolbarPosition } from './core/appearance';
-import { notice } from './util';
+import { notice, vaultFolderIssue } from './util';
 import { Lang, LANGUAGES, t, tf } from './core/i18n';
 import { EMPTY_STATS, VinylStats } from './core/stats';
 import type { PlayMode } from './core/player-state';
 import type { SearchScope } from './core/album-discovery';
 import { DEFAULT_SHELF_PROPS } from './core/shelf-props';
 import type { LoginState } from './core/auth';
+import type { ProbeScope } from './core/library-health';
 import {
   DeckStyle,
   RecordColor,
@@ -61,7 +77,12 @@ export interface VinylSettings {
   /** 本地专辑笔记模板文件（vault 相对路径；空 = 内置模板） */
   albumNoteTemplate: string;
   coverFolder: string;
+  /** 复制进库的音频的根目录（每张专辑在下面各占一个子目录） */
   audioFolder: string;
+  /** 导出的统计笔记的落点目录 */
+  statsFolder: string;
+  /** 队列笔记的落点目录（播放器「保存队列为笔记」写到这里） */
+  queueFolder: string;
   /** 本地音频导入落库模式 */
   importMode: 'copy' | 'link';
   defaultSource: 'auto' | 'local' | 'netease' | 'qq' | 'kugou';
@@ -72,7 +93,7 @@ export interface VinylSettings {
   /** 加载队列后立即播放（交接后即“落盘即播”） */
   autoPlay: boolean;
   playerLocation: 'sidebar' | 'tab' | 'window';
-  /** 播放器面板配色（外观页）：胡桃木 / 贝壳白 / 哑光黑 */
+  /** 播放器面板配色（外观页）：胡桃木 / 雪域白 / 哑光黑 */
   playerDeck: DeckStyle;
   /** 黑胶唱片配色（外观页）：专辑墙卡片与播放器转盘同时生效 */
   recordColor: RecordColor;
@@ -82,6 +103,13 @@ export interface VinylSettings {
   discDirection: DiscDirection;
   /** 播放器转盘转速（外观页） */
   turntableSpeed: SpinSpeed;
+  /** 搓碟（外观页）：开着时鼠标按在唱片上拖动 = 手动转盘 */
+  scratchEnabled: boolean;
+  /** 搓碟音效：完整（解码整轨，正反都出声）/ 轻量（只有正向，零内存） */
+  scratchSound: ScratchSound;
+  /** 预先备好搓碟缓冲（只有完整音效用得上）：开播几秒后就把整轨抓下来解码，
+   *  第一下搓碟就是双向完整音效；关掉则等到手按上唱片才开始抓（省流量，第一下先用轻量音效） */
+  scratchPreload: boolean;
   /** 专辑墙工具栏的位置（外观页）：顶部 / 底部 × 左 / 中 / 右；默认 = 顶部居中 */
   toolbarPosition: ToolbarPosition;
   /** 专辑墙卡片显示的属性键（专辑墙工具栏「卡片属性」维护；顺序即显示顺序）。
@@ -99,14 +127,30 @@ export interface VinylSettings {
   playMode: PlayMode;
   /** 播放统计（次数/最近播放，仅存本插件 data.json，不写笔记） */
   stats: VinylStats;
+  /** 最近确认不可播的专辑音源，供收藏健康检查展示。 */
+  sourceFailures: Record<string, { message: string; at: number }>;
+  /** 健康检查的在线试播范围（记忆型：弹窗里选了就记住） */
+  probeScope: ProbeScope;
+  /** 上次在线试播的时间（健康检查显示「上次检查于何时」；没试播过为空） */
+  lastProbeAt?: number;
+  /** 每周自动备份一次（只保留最近 backupKeep 份自动备份；手动备份与裁剪归档不在此列） */
+  autoBackup: boolean;
+  /** 自动备份保留份数 */
+  backupKeep: number;
+  /** 最近一次成功备份的时间（手动 / 自动都算），历史页显示 */
+  lastBackupAt?: number;
 }
 
+// 七个目录名统一用首字母大写：Vinyl Note / Covers / Audio / Stats / Queues / Template / Backups。
+// 旧名（covers / audio / 模板 / template）由 main.ts 的 migrateFolderNames 在启动时改名（只动仍是旧默认值的项）。
 export const DEFAULT_SETTINGS: VinylSettings = {
   albumFolder: 'Vinyl Life/Vinyl Note',
   language: 'zh',
   albumNoteTemplate: '',
-  coverFolder: 'Vinyl Life/covers',
-  audioFolder: 'Vinyl Life/audio',
+  coverFolder: 'Vinyl Life/Covers',
+  audioFolder: 'Vinyl Life/Audio',
+  statsFolder: 'Vinyl Life/Stats',
+  queueFolder: 'Vinyl Life/Queues',
   importMode: 'copy',
   defaultSource: 'auto',
   searchSource: 'all',
@@ -118,6 +162,9 @@ export const DEFAULT_SETTINGS: VinylSettings = {
   shelfColumns: 'auto',
   discDirection: 'right',
   turntableSpeed: 'normal',
+  scratchEnabled: true,
+  scratchSound: 'full',
+  scratchPreload: true,
   toolbarPosition: 'top-center',
   volume: 0.8,
   queueMode: false,
@@ -125,6 +172,10 @@ export const DEFAULT_SETTINGS: VinylSettings = {
   shelfProps: [...DEFAULT_SHELF_PROPS],
   shelfPropLabels: {},
   stats: EMPTY_STATS,
+  sourceFailures: {},
+  probeScope: 'all',
+  autoBackup: true,
+  backupKeep: 3,
 };
 
 /** data.json → lastPlayback。脏数据一律丢弃（缺字段 / 类型不对 / 负数位置）；没有有效记录返回 undefined。 */
@@ -167,6 +218,30 @@ const TOOLBAR_POS_KEYS: Record<ToolbarPosition, string> = {
   'bottom-right': 'settings.toolbarBottomRight',
 };
 
+/** 挑模板文件：库内 Markdown 全列出来（模糊匹配路径），比手打一条 vault 路径靠谱 */
+class TemplateFileSuggest extends FuzzySuggestModal<TFile> {
+  constructor(
+    app: App,
+    private onPick: (file: TFile) => void
+  ) {
+    super(app);
+    markVinylModal(this);
+    this.setPlaceholder(t('settings.pickTemplate'));
+  }
+
+  getItems(): TFile[] {
+    return this.app.vault.getMarkdownFiles();
+  }
+
+  getItemText(f: TFile): string {
+    return f.path;
+  }
+
+  onChooseItem(f: TFile): void {
+    this.onPick(f);
+  }
+}
+
 const discOptions = (): [DiscDirection, string][] => [
   ['right', t('settings.discRight')],
   ['left', t('settings.discLeft')],
@@ -187,6 +262,12 @@ const RECORD_LABEL_KEYS: Record<RecordColor, string> = {
   yellow: 'settings.recordYellow',
   blue: 'settings.recordBlue',
   white: 'settings.recordWhite',
+};
+
+// 搓碟音效档的显示名（同上：键写成字面量，词典的「没有死键」自检才扫得到）
+const SCRATCH_SOUND_KEYS: Record<ScratchSound, string> = {
+  full: 'settings.scratchFull',
+  light: 'settings.scratchLight',
 };
 
 export class VinylSettingTab extends PluginSettingTab {
@@ -298,36 +379,9 @@ export class VinylSettingTab extends PluginSettingTab {
       );
     });
 
+    // 「默认音源」与「在线音源音质」已挪到「源」页：那一页收齐所有与音源有关的设置
+    // （默认与音质 / 三家平台登录 / 本地源），通用页只留与音源无关的基础偏好。
     settingsSection(el, t('settings.section.playback'), 'playback', 'audio-lines', (body) => {
-      row(body, t('settings.defaultSource'), (s) =>
-        void s.addDropdown((d) =>
-          d
-            .addOption('auto', t('settings.sourceAuto'))
-            .addOption('local', t('settings.sourceLocal'))
-            .addOption('netease', t('settings.sourceNetease'))
-            .addOption('qq', t('settings.sourceQq'))
-            .addOption('kugou', t('settings.sourceKugou'))
-            .setValue(p.settings.defaultSource)
-            .onChange(async (v) => {
-              p.settings.defaultSource = v as VinylSettings['defaultSource'];
-              await p.saveSettings();
-            })
-        )
-      );
-      row(body, t('settings.quality'), (s) =>
-        void s.addDropdown((d) =>
-          d
-            .addOption('standard', t('settings.qualityStandard'))
-            .addOption('higher', t('settings.qualityHigher'))
-            .addOption('exhigh', t('settings.qualityExhigh'))
-            .addOption('lossless', t('settings.qualityLossless'))
-            .setValue(p.settings.quality)
-            .onChange(async (v) => {
-              p.settings.quality = v as VinylSettings['quality'];
-              await p.saveSettings();
-            })
-        )
-      );
       row(body, t('settings.autoPlay'), (s) =>
         void s.addToggle((tg) =>
           tg.setValue(p.settings.autoPlay).onChange(async (v) => {
@@ -339,49 +393,99 @@ export class VinylSettingTab extends PluginSettingTab {
     });
 
     settingsSection(el, t('settings.path'), 'paths', 'folder-tree', (body) => {
-      row(body, t('settings.albumFolder'), (s) =>
-        void s.addText((txt) =>
-          txt
-            .setPlaceholder(DEFAULT_SETTINGS.albumFolder)
-            .setValue(p.settings.albumFolder)
-            .onChange(async (v) => {
-              p.settings.albumFolder = v.trim() || DEFAULT_SETTINGS.albumFolder;
-              await p.saveSettings();
-            })
-        )
-      );
-      row(body, t('settings.coverFolder'), (s) =>
-        void s.addText((txt) =>
-          txt
-            .setPlaceholder(DEFAULT_SETTINGS.coverFolder)
-            .setValue(p.settings.coverFolder)
-            .onChange(async (v) => {
-              p.settings.coverFolder = v.trim() || DEFAULT_SETTINGS.coverFolder;
-              await p.saveSettings();
-            })
-        )
-      );
+      this.pathRow(body, t('settings.albumFolder'), 'albumFolder');
+      this.pathRow(body, t('settings.coverFolder'), 'coverFolder');
+      this.pathRow(body, t('settings.audioFolder'), 'audioFolder');
+      this.pathRow(body, t('settings.statsFolder'), 'statsFolder');
+      this.pathRow(body, t('settings.queueFolder'), 'queueFolder');
     });
 
+    // 模板行：路径 + 选择文件 + 打开 / 生成。按钮文案就是状态 ——
+    // 路径上真有文件时是「打开模板」，没有时是「生成模板文件」（点了按内置模板建一份）。
+    // 这样「设置里指着一个不存在的文件、导入却静默用内置模板」这个坑一眼就能看见。
+    //
+    // 这一行刻意**不设行名**：分区标题已经写着「模板」，行名再和输入框 + 两个按钮挤在一行里，
+    // 中文没有词边界，会被压成一字一行（竖排）。输入框自己挂 aria-label，读屏仍读得出这是什么。
     settingsSection(el, t('settings.template'), 'template', 'notebook-pen', (body) => {
-      row(body, t('settings.albumTemplate'), (s) =>
+      {
+        const s = new Setting(body);
+        s.settingEl.addClass('vinyl-template-setting');
+        let input: TextComponent | null = null;
+        let openBtn: ButtonComponent | null = null;
+        const syncState = () => {
+          const cfg = String(p.settings.albumNoteTemplate || '').trim();
+          const exists =
+            !!cfg && this.app.vault.getAbstractFileByPath(normalizePath(cfg)) instanceof TFile;
+          input?.inputEl.toggleClass('vinyl-template-missing', !!cfg && !exists);
+          openBtn?.setButtonText(
+            exists ? t('settings.openTemplate') : t('settings.generateTemplate')
+          );
+        };
         void s
-          .addText((txt) =>
+          .addText((txt) => {
+            input = txt;
             txt
               .setPlaceholder(t('settings.albumTemplatePlaceholder'))
               .setValue(p.settings.albumNoteTemplate)
               .onChange(async (v) => {
                 p.settings.albumNoteTemplate = v.trim();
+                syncState(); // 同上：先反馈，再落盘
                 await p.saveSettings();
-              })
-          )
+              });
+            // 行名去掉了，读屏的名字挂到输入框自己身上（占位文案不算标签）
+            txt.inputEl.setAttribute('aria-label', t('settings.albumTemplate'));
+          })
           .addButton((b) =>
-            b.setButtonText(t('settings.generateTemplate')).onClick(async () => {
-              await p.createAlbumTemplate();
-              this.render();
+            b.setButtonText(t('settings.pickTemplate')).onClick(() => {
+              new TemplateFileSuggest(this.app, (file) => {
+                p.settings.albumNoteTemplate = file.path;
+                void p.saveSettings().then(() => {
+                  input?.setValue(file.path);
+                  syncState();
+                });
+              }).open();
             })
           )
-      );
+          .addButton((b) => {
+            openBtn = b;
+            b.onClick(async () => {
+              await p.openAlbumTemplate();
+              input?.setValue(p.settings.albumNoteTemplate);
+              syncState();
+            });
+          });
+        syncState();
+      }
+    });
+  }
+
+  /** 五类目录共用的一行：就是一个输入框。
+   *  唯一多出来的是「填了个不能用的路径」时描一圈告警色 —— 不写字、不占位，
+   *  正常用的时候这一行和别的设置行长得一模一样。 */
+  private pathRow(
+    body: HTMLElement,
+    name: string,
+    key: 'albumFolder' | 'coverFolder' | 'audioFolder' | 'statsFolder' | 'queueFolder'
+  ): void {
+    const p = this.plugin;
+    row(body, name, (s) => {
+      const syncState = (input: HTMLInputElement) => {
+        const issue = vaultFolderIssue(String(p.settings[key] || '').trim());
+        input.toggleClass('vinyl-path-invalid', !!issue);
+        input.setAttribute('aria-invalid', issue ? 'true' : 'false');
+      };
+      void s.addText((txt) => {
+        txt
+          .setPlaceholder(DEFAULT_SETTINGS[key])
+          .setValue(p.settings[key])
+          .onChange(async (v) => {
+            p.settings[key] = v.trim() || DEFAULT_SETTINGS[key];
+            syncState(txt.inputEl); // 先给反馈，再落盘
+            await p.saveSettings();
+          });
+        txt.inputEl.setAttribute('aria-label', name);
+        syncState(txt.inputEl);
+      });
     });
   }
 
@@ -477,6 +581,34 @@ export class VinylSettingTab extends PluginSettingTab {
           });
         })
       );
+      row(body, t('settings.scratch'), (s) =>
+        void s.addToggle((tg) =>
+          tg.setValue(p.settings.scratchEnabled).onChange(async (v) => {
+            p.settings.scratchEnabled = v;
+            await p.saveSettings();
+            p.refreshAppearance();
+          })
+        )
+      );
+      row(body, t('settings.scratchSound'), (s) =>
+        void s.addDropdown((d) => {
+          for (const key of SCRATCH_SOUNDS) d.addOption(key, t(SCRATCH_SOUND_KEYS[key]));
+          d.setValue(p.settings.scratchSound).onChange(async (v) => {
+            p.settings.scratchSound = normalizeScratchSound(v);
+            await p.saveSettings();
+            p.refreshAppearance();
+          });
+        })
+      );
+      row(body, t('settings.scratchPreload'), (s) =>
+        void s.addToggle((tg) =>
+          tg.setValue(p.settings.scratchPreload).onChange(async (v) => {
+            p.settings.scratchPreload = v;
+            await p.saveSettings();
+            p.refreshAppearance();
+          })
+        )
+      );
     });
   }
 
@@ -484,6 +616,40 @@ export class VinylSettingTab extends PluginSettingTab {
 
   private renderSourceTab(el: HTMLElement): void {
     const p = this.plugin;
+    // 音源页的第一张卡：默认走哪一路、在线音质要哪一档 —— 与下面的登录 / 本地源合成
+    // 「音源管理」的完整入口（以前这两行在通用页，跟播放偏好混在一起）
+    settingsSection(el, t('settings.section.sourceDefaults'), 'source-defaults', 'sliders-horizontal', (body) => {
+      row(body, t('settings.defaultSource'), (s) =>
+        void s.addDropdown((d) =>
+          d
+            .addOption('auto', t('settings.sourceAuto'))
+            .addOption('local', t('settings.sourceLocal'))
+            .addOption('netease', t('settings.sourceNetease'))
+            .addOption('qq', t('settings.sourceQq'))
+            .addOption('kugou', t('settings.sourceKugou'))
+            .setValue(p.settings.defaultSource)
+            .onChange(async (v) => {
+              p.settings.defaultSource = v as VinylSettings['defaultSource'];
+              await p.saveSettings();
+            })
+        )
+      );
+      row(body, t('settings.quality'), (s) =>
+        void s.addDropdown((d) =>
+          d
+            .addOption('standard', t('settings.qualityStandard'))
+            .addOption('higher', t('settings.qualityHigher'))
+            .addOption('exhigh', t('settings.qualityExhigh'))
+            .addOption('lossless', t('settings.qualityLossless'))
+            .setValue(p.settings.quality)
+            .onChange(async (v) => {
+              p.settings.quality = v as VinylSettings['quality'];
+              await p.saveSettings();
+            })
+        )
+      );
+    });
+
     settingsSection(el, t('settings.sub.netease'), 'netease', 'cloud', (body) => {
       this.statusRow(body, 'netease');
       row(body, t('settings.qrLogin'), (s) =>
@@ -565,18 +731,8 @@ export class VinylSettingTab extends PluginSettingTab {
       );
     });
 
+    // 音频根目录已并入「通用 → 路径」（目录类设置集中一处）；这一区只留导入方式
     settingsSection(el, t('settings.section.local'), 'local', 'hard-drive', (body) => {
-      row(body, t('settings.audioFolder'), (s) =>
-        void s.addText((txt) =>
-          txt
-            .setPlaceholder(DEFAULT_SETTINGS.audioFolder)
-            .setValue(p.settings.audioFolder)
-            .onChange(async (v) => {
-              p.settings.audioFolder = v.trim() || DEFAULT_SETTINGS.audioFolder;
-              await p.saveSettings();
-            })
-        )
-      );
       row(body, t('settings.importMode'), (s) =>
         void s.addDropdown((d) =>
           d

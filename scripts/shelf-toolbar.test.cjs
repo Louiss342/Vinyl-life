@@ -476,15 +476,21 @@ test('接线：空墙教程圈住「添加」按钮（两个导入按钮已合�
 test('接线：教程箭头自适应 —— 按钮不在框右侧时改成竖箭头（不能整条消失）', () => {
   // 老画法只在「框右侧有横向净空」时成立（图纸里按钮在右上角）；工具栏改成紧凑浮卡后按钮常落在框上方 /
   // 下方，横向净空为负会把箭头整条判掉 —— 用户反馈「指向添加按钮的箭头没了」
+  //
+  // 夹的只该是「尾」：竖箭头的尾锚在框缘，x 夹进框内 30px，才不会从框外飘出来。
+  // 尖必须跟着圈心（tip.x）才指得中 —— 早先尾和尖共用一个夹过的 arrowTipX，圈落在框的横向范围
+  // 之外时箭尖被一起夹走：实测 2487px 宽的截图里箭杆 x≈1181、圈心 x≈1276，差 95px，
+  // 且错位量随框宽变化（框宽又随窗口变），看起来就是「一改版面箭头就和圈分家」。
   assert.match(
     VIEW,
-    /const arrowTipX = Math\.round\(Math\.max\(box1Left \+ 30, Math\.min\(tip\.x, box1Right - 30\)\)\)/,
-    '箭尾 x 跟着圈心走、夹在框内 30px'
+    /const tailX = Math\.round\(Math\.max\(box1Left \+ 30, Math\.min\(tip\.x, box1Right - 30\)\)\)/,
+    '箭尾 x 夹在框内 30px（只有尾夹）'
   );
+  assert.doesNotMatch(VIEW, /arrowTipX/, '箭尖不再与箭尾共用一个夹过的值');
   assert.match(VIEW, /else if \(ringBottom < box1Top\) \{/, '圈在框上方 → 竖着往上指');
   assert.match(VIEW, /else if \(ringTop > box1Bottom\) \{/, '圈在框下方（工具栏摆底部那三档）→ 竖着往下指');
-  assert.match(VIEW, /const up = \{ x: arrowTipX \+ 2, y: ringBottom \+ 1 \};/, '往上：箭尖压在圈底（与老画法同一口径）');
-  assert.match(VIEW, /const down = \{ x: arrowTipX \+ 2, y: ringTop - 1 \};/, '往下：箭尖戳圈顶');
+  assert.match(VIEW, /const up = \{ x: tip\.x, y: ringBottom \+ 1 \};/, '往上：箭尖压在圈底，x 跟圈心');
+  assert.match(VIEW, /const down = \{ x: tip\.x, y: ringTop - 1 \};/, '往下：箭尖戳圈顶，x 跟圈心');
   assert.match(
     VIEW,
     /ringTop > box1Bottom \? ringTop - 1 : ringBottom \+ 1/,

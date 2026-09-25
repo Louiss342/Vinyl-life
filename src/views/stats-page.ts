@@ -1,7 +1,7 @@
 // 设置页的独立「统计」标签：日历热力图、当日唱片墙、最近/最多、自定义属性统计。
 // 版式跟着通用 / 外观 / 源 走：每张卡片就是一个设置分区（标题栏 + 图标徽章 + 内容区），
 // 壳由 views/settings-section 提供，这里只负责内容。
-import { Modal, TFile, setIcon } from 'obsidian';
+import { Modal, Setting, TFile, setIcon } from 'obsidian';
 import type VinylLifePlugin from '../main';
 import { findAlbumNotes, getAlbumInfo } from '../core/album-index';
 import {
@@ -14,11 +14,12 @@ import {
 } from '../core/stats';
 import { propLabel } from '../core/shelf-props';
 import { SettingsSection, settingsSection } from './settings-section';
-import { markVinylModal } from '../util';
+import { markVinylModal, notice } from '../util';
 import { t, tf } from '../core/i18n';
 
 function albumTitle(path: string, stat: AlbumPlayStat): string {
-  return stat.snapshot?.title || path.split('/').pop()?.replace(/\.md$/, '') || path;
+  const title = stat.snapshot?.title || path.split('/').pop()?.replace(/\.md$/, '') || path;
+  return stat.snapshot?.edition ? `${title} · ${stat.snapshot.edition}` : title;
 }
 
 function fmtDay(key: string): string {
@@ -68,6 +69,70 @@ class RestoreAlbumModal extends Modal {
   }
 }
 
+class RestoreDataModal extends Modal {
+  private selected: File | null = null;
+
+  constructor(private plugin: VinylLifePlugin, private onRestored: () => void) {
+    super(plugin.app);
+    markVinylModal(this);
+    this.titleEl.setText(t('backup.restore'));
+  }
+
+  onOpen(): void {
+    this.contentEl.createEl('p', { text: t('backup.restoreHint') });
+    const input = this.contentEl.createEl('input', { attr: { type: 'file', accept: '.json,application/json' } });
+    input.addEventListener('change', () => { this.selected = input.files?.[0] ?? null; });
+    const status = this.contentEl.createEl('p', { cls: 'vinyl-muted' });
+    const actions = this.contentEl.createDiv({ cls: 'modal-button-container' });
+    actions.createEl('button', { text: t('common.cancel') }).onclick = () => this.close();
+    const restore = actions.createEl('button', { text: t('backup.restore'), cls: 'mod-warning' });
+    restore.onclick = async () => {
+      if (!this.selected) { status.setText(t('backup.chooseFile')); return; }
+      restore.disabled = true;
+      try {
+        await this.plugin.restoreDataBackup(await this.selected.text());
+        this.close();
+        this.onRestored();
+      } catch (e) {
+        status.setText((e as Error).message);
+        restore.disabled = false;
+      }
+    };
+  }
+}
+
+/** 清除统计的确认：这是不可撤销的动作，「删掉什么」摆在这按下去之前。 */
+export class ClearStatsModal extends Modal {
+  constructor(
+    private plugin: VinylLifePlugin,
+    private onDone: () => void
+  ) {
+    super(plugin.app);
+    markVinylModal(this);
+    this.titleEl.setText(t('settings.clearStats'));
+  }
+
+  onOpen(): void {
+    const c = this.contentEl;
+    c.createEl('p', { text: t('data.clearScope') });
+    const actions = c.createDiv({ cls: 'modal-button-container' });
+    actions.createEl('button', { text: t('common.cancel') }).onclick = () => this.close();
+    const go = actions.createEl('button', { text: t('settings.clearStats'), cls: 'mod-warning' });
+    go.onclick = async () => {
+      go.disabled = true;
+      try {
+        await this.plugin.clearPlaybackStats();
+      } catch (e) {
+        notice(tf('stats.clearFailed', { msg: (e as Error).message }));
+        go.disabled = false;
+        return;
+      }
+      this.close();
+      this.onDone();
+    };
+  }
+}
+
 export class StatsPage {
   private selectedDay = '';
   private selectedProp = '';
@@ -97,7 +162,46 @@ export class StatsPage {
     this.renderRanking(pair, 'top');
 
     this.renderCustom(root);
-    this.renderActions(root);
+    this.renderDataManagement(root);
+  }
+
+  /** 数据管理：备份去哪、最近一次成功备份、每周自动备份与保留份数，末尾是四个动作按钮。
+   *  版式与其它卡片一致 —— 全靠「行 + 值」，不写浮着的小字说明（用户嫌乱）。
+   *  「清空删掉什么」摆在该看见的地方：按下去之前的确认弹窗里（见 ClearStatsModal）。 */
+  private renderDataManagement(parent: HTMLElement): void {
+    const p = this.plugin;
+    const body = this.card(parent, t('data.title'), 'stats-data', 'database').body;
+    // 只读状态行：名称在左、值在右（与设置页的登录状态行同一套做法）
+    const valueRow = (name: string, value: string) => {
+      const row = new Setting(body).setName(name);
+      row.settingEl.addClass('vinyl-data-row');
+      row.controlEl.createDiv({ cls: 'vinyl-data-value', text: value });
+    };
+    valueRow(t('data.backupPlace'), p.backupFolderPath() + '/');
+    valueRow(
+      t('data.lastBackup'),
+      p.settings.lastBackupAt
+        ? new Date(p.settings.lastBackupAt).toLocaleString()
+        : t('data.neverBackedUp')
+    );
+    new Setting(body)
+      .setName(t('data.autoBackup'))
+      .addToggle((tg) =>
+        tg.setValue(p.settings.autoBackup).onChange(async (v) => {
+          p.settings.autoBackup = v;
+          await p.saveSettings();
+        })
+      );
+    new Setting(body)
+      .setName(t('data.keepCount'))
+      .addDropdown((d) => {
+        for (const n of [1, 3, 5, 10]) d.addOption(String(n), tf('data.keepN', { n }));
+        d.setValue(String(p.settings.backupKeep)).onChange(async (v) => {
+          p.settings.backupKeep = Number(v) || 3;
+          await p.saveSettings();
+        });
+      });
+    this.renderActions(body);
   }
 
   /** 累计播放：手写体一行（Drawing 2026-09-17 16.15.55）——
@@ -311,8 +415,11 @@ export class StatsPage {
   }
 
   private renderActions(parent: HTMLElement): void {
-    const footer = parent.createDiv({ cls: 'vinyl-settings-section is-stats-actions' });
-    const actions = footer.createDiv({ cls: 'vinyl-stats-actions' });
+    // 按钮就落在「数据管理」卡片里（不再单独一张卡）：上面那几行说明是它们的上下文
+    const actions = parent.createDiv({ cls: 'vinyl-stats-actions' });
+    // 这一排按钮的约定：**结果一律走 Notice，绝不写回按钮文案**。
+    // 按钮里塞路径 / 长文案会把这行挤爆 —— 一行 flex、卡片又 overflow: hidden，
+    // 长起来的那颗会把右边的按钮推出可视区，连点都点不到（曾经的备份按钮就是这样）。
     const exportBtn = actions.createEl('button', { cls: 'mod-cta' });
     setIcon(exportBtn.createSpan(), 'file-down');
     exportBtn.createSpan({ text: t('stats.exportNote') });
@@ -321,17 +428,38 @@ export class StatsPage {
       try {
         const file = await this.plugin.exportPlaybackStats();
         await this.plugin.app.workspace.getLeaf(false).openFile(file);
+      } catch (e) {
+        notice(tf('stats.exportFailed', { msg: (e as Error).message }));
       } finally {
         exportBtn.disabled = false;
       }
     };
+    const backupBtn = actions.createEl('button');
+    setIcon(backupBtn.createSpan(), 'archive');
+    backupBtn.createSpan({ text: t('backup.create') });
+    backupBtn.onclick = async () => {
+      backupBtn.disabled = true;
+      try {
+        const file = await this.plugin.exportDataBackup();
+        notice(tf('backup.created', { path: file.path }));
+      } catch (e) {
+        notice(tf('backup.failed', { msg: (e as Error).message }));
+      } finally {
+        backupBtn.disabled = false;
+      }
+    };
+    const restoreBtn = actions.createEl('button');
+    setIcon(restoreBtn.createSpan(), 'archive-restore');
+    restoreBtn.createSpan({ text: t('backup.restore') });
+    restoreBtn.onclick = () => new RestoreDataModal(this.plugin, () => this.rerender()).open();
     const clearBtn = actions.createEl('button', { cls: 'mod-warning' });
     setIcon(clearBtn.createSpan(), 'trash-2');
     clearBtn.createSpan({ text: t('settings.clearStats') });
-    clearBtn.onclick = async () => {
-      await this.plugin.clearPlaybackStats();
-      this.selectedDay = '';
-      this.rerender();
-    };
+    // 不可撤销的动作先确认：删掉什么写在弹窗里（页面上的小字说明已经撤掉）
+    clearBtn.onclick = () =>
+      new ClearStatsModal(this.plugin, () => {
+        this.selectedDay = '';
+        this.rerender();
+      }).open();
   }
 }

@@ -18,6 +18,7 @@ import {
   CachedMetadata,
 } from 'obsidian';
 import type VinylLifePlugin from '../main';
+import { AlbumEditionModal } from './album-edition-modal';
 import type { PlayerSnapshot } from '../core/player-state';
 import {
   AlbumInfo,
@@ -86,6 +87,25 @@ interface ShelfViewState {
   query: string;
   sort: ShelfSort;
   sourceFilter: SourceFilter;
+}
+
+/** 每行卡片数（设置 → 外观 → 专辑墙）→ 网格轨道模板。
+ *
+ *  固定列数不能写成 repeat(N, minmax(0, 1fr))：窗格窄到装不下时轨道会被压成 0 宽，
+ *  封面整块消失（实测 200px 窗格里四列 = 0px 轨道，卡片只剩内边距那一条）。
+ *  改成 auto-fill + 轨道下限「每张至少 --vinyl-shelf-card-floor」：
+ *  窗格够宽时正好 N 列（与固定列数完全一致：948px 窗格里两种写法都是 4 列、封面 130px），
+ *  窄了按装得下的张数逐级让位，宽回来自己还原 —— 与工具栏「窗格窄了先省计数」同一套让位规则。
+ *  calc 里的列间距与下限来自 styles.css 的 --vinyl-shelf-col-gap / --vinyl-shelf-card-floor：
+ *  几何常量归样式表，这里只拼结构，两边不会各自漂。 */
+export function shelfColumnsTemplate(cols: number | 'auto' | null | undefined): string {
+  if (cols === 'auto' || !cols) return 'repeat(auto-fill, minmax(min(230px, 100%), 1fr))';
+  const n = Math.max(1, Math.round(cols));
+  if (n === 1) return 'minmax(0, 1fr)'; // 单列没有列间距可算，直接铺满
+  return (
+    'repeat(auto-fill, minmax(max(var(--vinyl-shelf-card-floor, 90px), ' +
+    `calc((100% - var(--vinyl-shelf-col-gap, 42px) * ${n - 1}) / ${n})), 1fr))`
+  );
 }
 
 // 用函数而不是常量：语言在设置里切换后，菜单标题要跟着变（常量在模块加载时就定型了）
@@ -407,12 +427,9 @@ export class VinylShelfView extends ItemView {
     // 工具栏位置（设置 → 外观）：六个类只换 align-self / order / top / bottom，不动结构
     const pos = normalizeToolbarPosition(this.plugin.settings.toolbarPosition);
     for (const v of TOOLBAR_POSITIONS) c.toggleClass(toolbarPositionClass(v), v === pos);
-    const cols = this.plugin.settings.shelfColumns;
     c.style.setProperty(
       '--vinyl-shelf-columns',
-      cols === 'auto' || !cols
-        ? 'repeat(auto-fill, minmax(230px, 1fr))'
-        : `repeat(${cols}, minmax(0, 1fr))`
+      shelfColumnsTemplate(this.plugin.settings.shelfColumns)
     );
   }
 
@@ -889,8 +906,12 @@ export class VinylShelfView extends ItemView {
     inkAdd(rc.ellipse(cx, cy, rx * 2, ry * 2, { ...roughDashed(TUT.seed.ring, 2), curveFitting: 1 }));
 
     // 箭头（图纸：roughness 2；杆是过三点的曲线，头是两笔实线）。三种走法共用同一对种子，
-    // 换布局时手绘抖动一致；竖箭头的尾锚在框的上 / 下缘（x 跟着圈心走，但夹在框内 30px）。
-    const arrowTipX = Math.round(Math.max(box1Left + 30, Math.min(tip.x, box1Right - 30)));
+    // 换布局时手绘抖动一致。
+    // 夹的只该是「尾」：竖箭头的尾锚在框的上 / 下缘，x 夹在框内 30px，才是从框缘长出来的。
+    // 尖必须跟着圈心走 —— 圈落在框的横向范围之外时（工具栏靠右、或缩放后两者错开），
+    // 尖要跟着夹进框里就会指空：实测 2487px 宽的截图里箭杆落在 x≈1181、圈心在 x≈1276，差 95px，
+    // 而且框宽随窗口变、错位量跟着变，看起来就是「一改版面箭头就和圈分家」。
+    const tailX = Math.round(Math.max(box1Left + 30, Math.min(tip.x, box1Right - 30)));
     let arrow: { tail: { x: number; y: number }; bend: { x: number; y: number }; tip: { x: number; y: number } } | null = null;
     if (!tight) {
       const tail = { x: box1Right + TUT.tailPad, y: box1Mid };
@@ -905,15 +926,16 @@ export class VinylShelfView extends ItemView {
         tip: classicTip,
       };
     } else if (ringBottom < box1Top) {
-      // 工具栏在顶部那一排：框在下面，箭头从框顶竖着往上指
-      const tail = { x: arrowTipX, y: box1Top - TUT.tailPad };
-      const up = { x: arrowTipX + 2, y: ringBottom + 1 };
-      arrow = { tail, bend: { x: tail.x + 6, y: (tail.y + up.y) / 2 }, tip: up };
+      // 工具栏在顶部那一排：框在下面，箭头从框顶往上戳进圈底。
+      // 尾贴框、尖跟圈；两者横向错开多少，就由折点那一段斜线吃掉（不错开时折点落在尾尖连线上，仍是一条直线）。
+      const tail = { x: tailX, y: box1Top - TUT.tailPad };
+      const up = { x: tip.x, y: ringBottom + 1 };
+      arrow = { tail, bend: { x: (tail.x + up.x) / 2, y: (tail.y + up.y) / 2 }, tip: up };
     } else if (ringTop > box1Bottom) {
-      // 工具栏摆到了底部：圈在框的下方，箭头从框底往下指
-      const tail = { x: arrowTipX, y: box1Bottom + TUT.tailPad };
-      const down = { x: arrowTipX + 2, y: ringTop - 1 };
-      arrow = { tail, bend: { x: tail.x + 6, y: (tail.y + down.y) / 2 }, tip: down };
+      // 工具栏摆到了底部：圈在框的下方，箭头从框底往下戳进圈顶
+      const tail = { x: tailX, y: box1Bottom + TUT.tailPad };
+      const down = { x: tip.x, y: ringTop - 1 };
+      arrow = { tail, bend: { x: (tail.x + down.x) / 2, y: (tail.y + down.y) / 2 }, tip: down };
     }
     if (arrow) {
       inkAdd(
@@ -1262,6 +1284,9 @@ export class VinylShelfView extends ItemView {
         .setIcon('refresh-cw')
         .onClick(() => this.render()) // 保留搜索 / 筛选 / 陈列状态（state 不动，只是重扫库）
     );
+    menu.addItem((it) =>
+      it.setTitle(t('health.title')).setIcon('heart-pulse').onClick(() => this.plugin.openLibraryHealth())
+    );
     menu.showAtMouseEvent(ev);
   }
 
@@ -1537,7 +1562,7 @@ export class VinylShelfView extends ItemView {
 
     // 标题与属性行都套 .vinyl-marquee：放不下时悬停横向滚动（量距离在 onMarqueeOver，滚动是纯 CSS）
     const title = card.createDiv({ cls: 'vinyl-shelf-card-title vinyl-marquee' });
-    title.createSpan({ text: album.title, cls: 'vinyl-marquee-text' });
+    title.createSpan({ text: album.edition ? `${album.title} · ${album.edition}` : album.title, cls: 'vinyl-marquee-text' });
     // 属性行：顺序取自设置数组（不遍历 displayProps 键序——整数样键名会被 Object.keys 提前）。
     // 不显示属性名（表头），整行只有值；值太长由 CSS 截断，悬停滚动看全，
     // 鼠标停住时 title 给出「属性名：值」——不然「1997」这种裸值分不清是什么属性。
@@ -1662,12 +1687,18 @@ export class VinylShelfView extends ItemView {
         .setIcon('upload')
         .onClick(() => this.plugin.openLocalImport(album))
     );
+    if ([e.local, e.netease, e.qq, e.kugou].filter(Boolean).length > 1) {
+      menu.addItem((it) => it.setTitle(t('health.switch')).setIcon('repeat-2')
+        .onClick(() => this.plugin.openSourceSwitch(album.path)));
+    }
     menu.addItem((it) =>
       it
         .setTitle(t('menu.setCover'))
         .setIcon('image')
         .onClick(() => new SetCoverModal(this.plugin.app, this.plugin, album).open())
     );
+    menu.addItem((it) => it.setTitle(t('edition.set')).setIcon('tag')
+      .onClick(() => new AlbumEditionModal(this.plugin.app, album, () => this.render()).open()));
     if (album.neteaseId) {
       menu.addItem((it) =>
         it

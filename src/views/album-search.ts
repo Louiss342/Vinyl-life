@@ -19,6 +19,7 @@ import {
   normalizeSearchScope,
 } from '../core/album-discovery';
 import { t, tf } from '../core/i18n';
+import { LinkSourceModal } from './link-source-modal';
 
 /** 首屏画多少条 / 每次「显示更多」多画多少条。
  *  本地展开不花网络，所以先白嫖池子：等池子真的见底了，才轮到向上游要下一页。 */
@@ -267,6 +268,14 @@ export class AlbumSearchPane {
         cls: isImported ? '' : 'mod-cta',
       });
       button.addEventListener('click', () => void this.importCandidate(candidate, button, rowStatus));
+      if (!isImported) {
+        const link = side.createEl('button', { text: t('link.action') });
+        link.addEventListener('click', () => new LinkSourceModal(this.ctx.app, candidate, (file) => {
+          this.importedPaths.set(candidate.key, file.path);
+          this.host.onImported?.(file);
+          this.renderList();
+        }).open());
+      }
     }
   }
 

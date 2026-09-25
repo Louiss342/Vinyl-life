@@ -24,21 +24,40 @@ const source = esbuild.buildSync({
 }).outputFiles[0].text;
 
 // —— 极简 CSS 块与变量提取 ——
-function cssBlock(css, selector) {
-  const re = new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{');
-  const m = re.exec(css);
-  if (!m) return null;
-  let i = m.index + m[0].length;
-  let depth = 1;
-  let out = '';
-  while (i < css.length && depth > 0) {
-    const ch = css[i];
-    if (ch === '{') depth++;
-    else if (ch === '}') depth--;
-    if (depth > 0) out += ch;
-    i++;
+/** 命中处是否在顶层：@container / @media 里还有同名规则（窄窗格让位那几条），
+ *  朴素地取「第一个同名块」会静默比到嵌套的那一份。计数时跳过注释块，
+ *  免得注释里出现的花括号把深度算歪。 */
+function atTopLevel(css, index) {
+  let depth = 0;
+  for (let i = 0; i < index; i++) {
+    if (css.startsWith('/*', i)) {
+      i = css.indexOf('*/', i + 2) + 1;
+      continue;
+    }
+    if (css[i] === '{') depth++;
+    else if (css[i] === '}') depth--;
   }
-  return out;
+  return depth === 0;
+}
+
+function cssBlock(css, selector) {
+  const re = new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{', 'g');
+  let m;
+  while ((m = re.exec(css))) {
+    if (!atTopLevel(css, m.index)) continue;
+    let i = m.index + m[0].length;
+    let depth = 1;
+    let out = '';
+    while (i < css.length && depth > 0) {
+      const ch = css[i];
+      if (ch === '{') depth++;
+      else if (ch === '}') depth--;
+      if (depth > 0) out += ch;
+      i++;
+    }
+    return out;
+  }
+  return null;
 }
 
 function cssVar(css, block, name) {
@@ -197,7 +216,10 @@ test('接线：applyAppearance 写方向类 + 列数变量 + 唱片配色类 + �
     'is-record-yellow',
     'is-toolbar-bottom-right',
   ]);
-  assert.equal(el.props.get('--vinyl-shelf-columns'), 'repeat(auto-fill, minmax(230px, 1fr))');
+  assert.equal(
+    el.props.get('--vinyl-shelf-columns'),
+    'repeat(auto-fill, minmax(min(230px, 100%), 1fr))'
+  );
 
   plugin.settings.discDirection = 'up';
   plugin.settings.shelfColumns = 5;
@@ -208,7 +230,7 @@ test('接线：applyAppearance 写方向类 + 列数变量 + 唱片配色类 + �
     ['is-disc-up', 'is-record-yellow', 'is-toolbar-top-left'],
     '换方向 / 换位置都应撤掉旧类'
   );
-  assert.equal(el.props.get('--vinyl-shelf-columns'), 'repeat(5, minmax(0, 1fr))');
+  assert.equal(el.props.get('--vinyl-shelf-columns'), mod.shelfColumnsTemplate(5));
 
   plugin.settings.discDirection = undefined; // 脏数据 → 回落到右向
   plugin.settings.recordColor = 'blue';
@@ -219,6 +241,36 @@ test('接线：applyAppearance 写方向类 + 列数变量 + 唱片配色类 + �
     ['is-disc-right', 'is-record-blue', 'is-toolbar-top-center'],
     '唱片配色即时切换；工具栏位置脏值回落默认'
   );
+});
+
+// 窄窗格：固定列数不能写成 repeat(N, minmax(0, 1fr)) —— 实测 200px 窗格里四列 =
+// 4 条 0px 轨道，封面整块消失（用户报的「窗口很小的时候专辑墙上的内容会消失不见」）。
+// 改成 auto-fill + 卡片下限：宽窗格与固定列数完全等价，窄了按装得下的张数让位。
+test('窄窗格：固定列数按卡片下限逐级让位，不做 0 宽轨道', () => {
+  const mod = makeStub();
+  const auto = mod.shelfColumnsTemplate('auto');
+  assert.match(auto, /min\(230px, 100%\)/, '自动档：轨道下限不超出窗格（窄窗格不横向溢出）');
+  assert.doesNotMatch(auto, /minmax\(230px, 1fr\)/, '自动档不能写死 230px（窄窗格里会溢出）');
+
+  for (const n of [2, 3, 5, 7]) {
+    const tpl = mod.shelfColumnsTemplate(n);
+    assert.doesNotMatch(tpl, /minmax\(0, 1fr\)/, `${n} 列不能用 0 下限：窄窗格里轨道会塌成 0`);
+    assert.match(
+      tpl,
+      /^repeat\(auto-fill, minmax\(max\(var\(--vinyl-shelf-card-floor/,
+      `${n} 列：轨道下限走样式表常量`
+    );
+    assert.ok(tpl.includes(`* ${n - 1}) / ${n})`), `${n} 列：按设置值算每张的宽度份额`);
+  }
+  assert.equal(mod.shelfColumnsTemplate(1), 'minmax(0, 1fr)', '单列没有列间距可算，直接铺满');
+  assert.equal(mod.shelfColumnsTemplate(undefined), auto, '脏数据回落自动档');
+  assert.equal(mod.shelfColumnsTemplate(0), auto, '0 / 空值回落自动档');
+
+  // 常量归属：下限与列间距写在 styles.css，网格 gap 读同一个变量 —— calc 不会与真实间距漂开
+  const grid = cssBlock(CSS, '.vinyl-shelf-grid');
+  assert.match(grid, /--vinyl-shelf-col-gap:\s*42px/, '列间距常量在样式表里');
+  assert.match(grid, /--vinyl-shelf-card-floor:\s*\d+px/, '卡片下限宽在样式表里');
+  assert.match(grid, /gap:\s*28px var\(--vinyl-shelf-col-gap\)/, 'gap 与 calc 同源');
 });
 
 test('接线：播放器 applyAppearance 写转速变量', () => {

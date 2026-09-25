@@ -22,8 +22,16 @@ export function discTransform(el: HTMLElement, phase: DiscPhase): string {
 // 转盘转速（播放器，一圈耗时）：fallback 1.8s 与 styles.css 的 --vinyl-spin-duration 默认值一致
 export type SpinSpeed = 'slow' | 'normal' | 'fast';
 
+/** 转速的数值真值（秒/圈）：normal = 1.8s 正是 33⅓ RPM —— 搓碟的换算基准
+ *  （唱片转一圈 = 音频前进这么多秒；见 core/scratch）。CSS 的 --vinyl-spin-duration 取字符串那份。 */
+export const SPIN_SECONDS: Record<SpinSpeed, number> = {
+  slow: 2.6,
+  normal: 1.8,
+  fast: 1.2,
+};
+
 export const SPIN_SPEEDS: Record<SpinSpeed, string> = {
-  slow: '2.6s',
-  normal: '1.8s',
-  fast: '1.2s',
+  slow: `${SPIN_SECONDS.slow}s`,
+  normal: `${SPIN_SECONDS.normal}s`,
+  fast: `${SPIN_SECONDS.fast}s`,
 };

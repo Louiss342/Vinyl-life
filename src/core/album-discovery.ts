@@ -1,5 +1,5 @@
 import { App } from 'obsidian';
-import { findAlbumNotes, getAlbumInfo } from './album-index';
+import { AlbumInfo, findAlbumNotes, getAlbumInfo } from './album-index';
 import { isRateLimited } from './request-error';
 import { tf } from './i18n';
 import type { NeteaseService } from './netease';
@@ -322,6 +322,62 @@ function scoreCandidate(item: AlbumSearchCandidate, query: string): number {
   if (bestArtist > 0) return Math.round(24 + bestArtist * 20);
   // ④ 本地看不出关联，只剩上游的排序信息
   return 12;
+}
+
+// ============ 关联已有：拿搜索结果去库里找最像的那几张 ============
+
+/** 把库里的专辑按「与这张搜索结果有多像」排序（关联弹窗用）。
+ *  标题是主信号 —— 同名版本（原版 / 重制版 / 现场版）必须排在一起，这正是容易选错的地方；
+ *  歌手与年份各给一档加分（同名不同歌手、差了十年的不该混进第一梯队）。
+ *  只用于排序，界面不展示分数。 */
+export function rankLibraryMatches(
+  candidate: Pick<AlbumSearchCandidate, 'title' | 'artists' | 'releaseDate'>,
+  albums: AlbumInfo[]
+): AlbumInfo[] {
+  const q = fold(candidate.title);
+  const artists = candidate.artists.map((a) => fold(a)).filter(Boolean);
+  const year = (candidate.releaseDate || '').slice(0, 4);
+  return albums
+    .map((album) => {
+      const title = fold(album.title);
+      let score = 0;
+      if (title && q) {
+        if (title === q) score = 100;
+        else if (title.startsWith(q) || q.startsWith(title)) score = 82;
+        else if (title.includes(q) || q.includes(title)) score = 70;
+        else {
+          const sim = similarity(q, title);
+          score = sim > 0 ? Math.round(40 + sim * 30) : 0;
+        }
+      }
+      const artist = fold(album.artist || '');
+      if (artist && artists.some((a) => a === artist || artist.includes(a) || a.includes(artist))) {
+        score += 12;
+      } else if (artist && artists.some((a) => similarity(a, artist) > 0)) {
+        score += 6;
+      }
+      const albumYear = String(album.year ?? '').slice(0, 4);
+      if (year && albumYear === year) score += 8;
+      else if (year && /^\d{4}$/.test(albumYear) && Math.abs(Number(albumYear) - Number(year)) === 1) {
+        score += 3;
+      }
+      return { album, score };
+    })
+    .sort((a, b) => b.score - a.score || a.album.title.localeCompare(b.album.title, 'zh-CN'))
+    .map((entry) => entry.album);
+}
+
+/** 模糊筛选（关联弹窗的搜索框）：与在线搜索同一套容错 —— 错字、词序颠倒、只记得半截都能命中。
+ *  查询为空 = 全通过（列表按相关度排好即可）。 */
+export function fuzzyMatches(query: string, ...fields: Array<string | undefined>): boolean {
+  const q = fold(query);
+  if (!q) return true;
+  const pool = fields.map((field) => fold(field || '')).filter(Boolean);
+  if (!pool.length) return false;
+  if (pool.some((field) => field.includes(q))) return true;
+  const parts = tokenize(query);
+  if (parts.length > 1) return parts.every((part) => pool.some((field) => fuzzyHit(part, field)));
+  return pool.some((field) => fuzzyHit(q, field));
 }
 
 /** 剪尾：池子里只要有一条名副其实的命中（≥60），就把「看不出关联」的（<30）整段去掉。

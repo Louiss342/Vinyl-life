@@ -36,6 +36,8 @@ export const SHELF_PROP_BLACKLIST: readonly string[] = Object.freeze([
   'audio',
   'audioFolder',
   'source',
+  // 健康检查的「仅收藏」标记：是给扫描看的状态位，不是给卡片看的资料
+  'collectOnly',
 ]);
 
 /** 预设别名与值前缀；用户自定义别名（settings.shelfPropLabels）优先。

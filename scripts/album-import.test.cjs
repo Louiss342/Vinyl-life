@@ -467,7 +467,9 @@ test('导入专辑：两个图床都失败 → 专辑照建、不留 cover 字�
   assert.equal(res.ok, true, '封面失败不影响专辑建好：' + res.detail);
   const note = h.files.get('Vinyl Life/Vinyl Note/未完成.md');
   assert.ok(note, '应建立专辑笔记');
-  assert.doesNotMatch(note._content, /^cover:/m, '拿不到图就不写 cover 字段');
+  // 1.3.0 起笔记走模板：内置模板里有一个空的 cover 字段（属性面板点进去就能填），
+  // 所以这里锁的是「不写封面**引用**」—— 空字段可以留，坏值 / 半截值不能留
+  assert.doesNotMatch(note._content, /^cover:\s*[^\s"']/m, '拿不到图就不写封面引用');
   assert.equal(h.calls.covers.length, 2, '两个候选都试过才放弃');
   assert.equal(h.calls.notices.length, 1, '失败必须可见（一条 Notice）');
   assert.match(h.calls.notices[0], /封面下载失败/);

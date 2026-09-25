@@ -140,7 +140,11 @@ function srcTsFiles(dir = path.join(__dirname, '../src'), out = []) {
 // 背景：功能删了、文案还留在词典里（旧版「粘贴链接」流程、重复的 noteExists 等就是这么攒下来的）。
 // 扫描范围含 scripts/ 自身：只在测试里按名字引用的键也算「有引用」，不会被误报。
 // 例外只有动态拼接的键族：modeLabelKey 用 `player.mode${name}${scope}` 现拼，源码里没有整串字面量。
-const DYNAMIC_KEY_PATTERNS = [/^player\.mode(Once|Loop|Shuffle)(Album|List)$/];
+const DYNAMIC_KEY_PATTERNS = [
+  /^player\.mode(Once|Loop|Shuffle)(Album|List)$/,
+  /^health\.(external|cover|source|playback)$/, // library-health.ts 的问题类型动态查词典
+  /^health\.scope\.(all|current|failing)$/, // 健康检查试播范围（PROBE_SCOPES 逐个查词典）
+];
 test('i18n：词典里没有无人引用的死键（动态拼接的键族除外）', () => {
   const scriptsDir = __dirname;
   const files = srcTsFiles().concat(
@@ -412,8 +416,10 @@ function stringLiterals(src) {
 //   src/core/about.ts     —— 作者手记（原文常量，刻意不翻译；README 也逐字校验它）
 //   `[vinyl] …`           —— 控制台日志：给开发者看的，不进界面（约定带这个前缀）
 //   `…/专辑笔记模板.md`    —— 模板文件的**路径**，不是文案：固定路径才不会让老用户的模板失联
+//                          （1.3.0 把目录从 模板/ 改成 template/、再改成 Template/，文件名仍是这个中文名）
+//   `…/模板`              —— 1.3.0 之前那个默认模板**目录名**：只在迁移里用来认出旧目录并改名
 const CJK_ALLOWED_FILES = ['src/core/i18n.ts', 'src/core/about.ts'];
-const CJK_ALLOWED_LITERALS = [/^\[vinyl\]/, /模板\/专辑笔记模板\.md$/];
+const CJK_ALLOWED_LITERALS = [/^\[vinyl\]/, /专辑笔记模板\.md$/, /\/模板$/];
 
 test('i18n：除例外清单外，源码里的字符串字面量不得含中文（用户可见文案必须走 t()/tf()）', () => {
   const root = path.join(__dirname, '..');
@@ -810,31 +816,36 @@ function makePlugin({ view = null, data = {}, snapshot = null } = {}) {
   plugin.addRibbonIcon = () => {};
   plugin.addSettingTab = () => {};
   plugin.register = () => {};
+  // 协议处理器（笔记里的位置跳回音乐）与定时器（每周自动备份的每小时检查）
+  plugin.registerObsidianProtocolHandler = () => {};
+  plugin.registerInterval = () => {};
   plugin.loadData = async () => data;
   plugin.saveData = async () => {};
   if (snapshot) plugin.engine = { snapshot };
   return plugin;
 }
 
-// 日常常驻的 8 条（id 不能改：改了已绑定的快捷键就失效）
+// 日常常驻命令（id 不能改：改了已绑定的快捷键就失效）
 const KEPT_COMMANDS = [
   'open-shelf',
   'open-player',
   'import-netease',
   'import-local',
   'insert-now-playing',
+  'save-queue-note',
+  'load-queue-note',
   // 播放控制（1.0.6 起常驻）：给快捷键与系统媒体键之外的手动操作用
   'player-toggle',
   'player-next',
   'player-prev',
 ];
-test('main：命令面板 — 默认恰好注册那 8 条日常命令（一条不多一条不少）', async () => {
+test('main：命令面板 — 注册日常命令与队列保存/载入', async () => {
   const plugin = makePlugin();
   await plugin.onload();
   assert.deepEqual(
     plugin.commands.map((c) => c.id),
     KEPT_COMMANDS,
-    '非 debug 时命令列表应当恰好是这 8 条（多一条都算没裁干净）'
+    '命令列表应与当前产品入口一致'
   );
 });
 
@@ -1123,7 +1134,8 @@ test('设置面板：标签条五个按钮，点一下就换内容、高亮跟�
   // 控件本身（下拉 / 开关的真实现）不需要 —— 这里验的是标签条与「点一下就换内容」。
   const mod = settingsModule();
   const tab = new mod.VinylSettingTab(
-    {},
+    // 目录行会问库要「这个目录在不在」，假 app 至少得有一个 vault
+    { vault: { getAbstractFileByPath: () => null } },
     {
       manifest: { version: '9.9.9' },
       settings: mod.DEFAULT_SETTINGS,
@@ -1140,8 +1152,8 @@ test('设置面板：标签条五个按钮，点一下就换内容、高亮跟�
   assert.equal(buttons().length, 5, '五个标签');
   assert.deepEqual(
     [...buttons().map((b) => b.textContent)],
-    ['通用', '统计', '外观', '源', '关于'],
-    '标签文案走词典（默认中文）'
+    ['通用', '历史', '外观', '源', '关于'],
+    '标签文案走词典（默认中文）；统计页已改名为「历史」'
   );
   assert.equal(buttons()[0].getAttribute('aria-current'), 'true', '当前标签要报给读屏软件');
   assert.equal(buttons()[1].getAttribute('aria-current'), 'false', '其余标签不是当前页');
@@ -1168,7 +1180,7 @@ test('设置面板：分区图标优先走宿主 Lucide，宿主没有该图标�
   const render = (extra) => {
     const mod = settingsModule(extra);
     const tab = new mod.VinylSettingTab(
-      {},
+      { vault: { getAbstractFileByPath: () => null } },
       {
         manifest: { version: '9.9.9' },
         settings: mod.DEFAULT_SETTINGS,
@@ -1343,7 +1355,10 @@ test('「关于」页：中文正文在上、英译在下（渲染顺序 + 两�
   assert.equal(link.getAttribute('href'), about.REPO_URL, '链接指向仓库地址常量');
 });
 
-test('README：开头的中文手记下方跟着同一份英译（不加标题）', () => {
+test('README：手记逐字收在各自语言区的开头（不加标题、只隔一个空行）', () => {
+  // 版式沿革：原先是中英并排在最上面（中文三段 + 紧跟着的英译三段）；后来改成各归各栏 ——
+  // 语言切换入口提到最前面，中文手记紧跟「## 中文」，英译紧跟「## English」。
+  // 这里守的是新的不变量：手记是各栏的开场白，逐字照录，中间不许插小标题。
   // 归一化 CRLF：仓库开着 autocrlf，README 检出后带 \r，下面按行比的断言会误红
   const readme = fs
     .readFileSync(path.join(__dirname, '../README.md'), 'utf8')
@@ -1356,23 +1371,26 @@ test('README：开头的中文手记下方跟着同一份英译（不加标题�
   for (const p of zhParas) assert.ok(readme.includes(p), `README 缺中文手记段落：${p.slice(0, 12)}…`);
   for (const p of enParas) assert.ok(readme.includes(p), `README 缺英译手记段落：${p.slice(0, 12)}…`);
 
-  // 版式：中文三段在前，英文三段在后（README 里没有中文原文首行行尾那个空格，故按段落比）
-  const zhLast = readme.indexOf(zhParas[zhParas.length - 1]);
-  const enFirst = readme.indexOf(enParas[0]);
-  assert.ok(enFirst > zhLast, '英译要排在中文手记下方');
-  assert.ok(
-    readme.indexOf(enParas[2]) > readme.indexOf(enParas[0]),
-    '英文三段保持原顺序（不是倒着抄）'
-  );
-
-  // 英文块上方：只隔一个空行、不加标题（版式要求）
-  const between = readme.slice(zhLast, enFirst);
-  assert.equal(between.includes('#'), false, '英文块上方不加标题');
-  assert.deepEqual(
-    between.split('\n').filter((l) => l.trim()),
-    [zhParas[zhParas.length - 1]],
-    '中文手记与英译之间只隔一个空行'
-  );
+  for (const [marker, paras] of [
+    ['## 中文', zhParas],
+    ['## English', enParas],
+  ]) {
+    const head = `\n${marker}\n`;
+    const at = readme.indexOf(head);
+    assert.ok(at >= 0, `README 缺「${marker}」标记（手记要收在它下面）`);
+    const afterMarker = at + head.length;
+    const first = readme.indexOf(paras[0], afterMarker);
+    assert.ok(first > afterMarker, `${marker} 下面找不到第一段手记`);
+    // 标记与第一段之间：只隔一个空行（这段是「不加标题」的等价断言 —— 多一顶小标题就多一行）
+    assert.equal(readme.slice(afterMarker, first), '\n', `${marker} 与手记之间只隔一个空行`);
+    // 三段保持原顺序（不是倒着抄）
+    for (let i = 1; i < paras.length; i++) {
+      assert.ok(
+        readme.indexOf(paras[i], afterMarker) > readme.indexOf(paras[i - 1], afterMarker),
+        `手记第 ${i + 1} 段顺序不对`
+      );
+    }
+  }
 });
 
 // ============ README：中文整版在上、英文整版在下，两份小节一一对应 ============
@@ -1380,6 +1398,7 @@ test('README：开头的中文手记下方跟着同一份英译（不加标题�
 //   标题对等 != 内容逐段对等 —— 标题都在，只能说明没有整节漏掉；
 //   长度下限也只挡得住「只翻了几行」，挡不住把长段落写成一句摘要、跳过表格某一行、
 //   或者把代码块注释漏掉。真要判断有没有缩水，仍得中英两栏人工对着读一遍。
+//   标题层级一直管到 #####：使用手册那几节是 #### / #####，不一起管就会留下整节漏译的空档。
 test('README：整版中英对照 —— 中文在上、英文在下，小节标题一一对应', () => {
   // 归一化 CRLF：仓库开着 autocrlf，换台机器检出后 README 可能带 \r，\n 硬匹配会误红
   const readme = fs.readFileSync(path.join(__dirname, '../README.md'), 'utf8').replace(/\r\n/g, '\n');
@@ -1394,60 +1413,177 @@ test('README：整版中英对照 —— 中文在上、英文在下，小节标
   const zhBody = readme.slice(zhMark, enMark);
   const enBody = readme.slice(enMark);
 
-  // 2) 切出各区里的 ## / ### 标题（语言标记自己不算小节）
+  // 2) 切出各区里的 ## / ### / #### / ##### 标题（语言标记自己不算小节）
   const headingsOf = (text) =>
     text
       .split('\n')
-      .filter((line) => /^#{2,3} \S/.test(line))
+      .filter((line) => /^#{2,5} \S/.test(line))
       .map((line) => line.trim());
   const zhHeads = headingsOf(zhBody).filter((h) => h !== '## 中文');
   const enHeads = headingsOf(enBody).filter((h) => h !== '## English');
 
-  assert.ok(zhHeads.length >= 12, `探针：中文区只切出 ${zhHeads.length} 个标题，切分逻辑可能已失效`);
+  assert.ok(zhHeads.length >= 69, `探针：中文区只切出 ${zhHeads.length} 个标题，切分逻辑可能已失效`);
   assert.equal(enHeads.length, zhHeads.length, '英文区小节数量必须与中文区相等（不许整节漏译）');
-  // 层级也要对得上：## 与 ### 各自数量相等（英文区不该整体降一级或多一级）
-  const isSub = (h) => h.startsWith('### ');
-  assert.equal(enHeads.filter(isSub).length, zhHeads.filter(isSub).length, '### 子节数量相等');
-  assert.equal(enHeads.filter((h) => !isSub(h)).length, zhHeads.filter((h) => !isSub(h)).length, '## 节数量相等');
+  // 层级也要对得上：## / ### / #### / ##### 各自数量相等（英文区不该整体降一级或多一级）
+  const levelOf = (h) => h.match(/^#+/)[0].length;
+  for (const level of [2, 3, 4, 5]) {
+    assert.equal(
+      enHeads.filter((h) => levelOf(h) === level).length,
+      zhHeads.filter((h) => levelOf(h) === level).length,
+      `${'#'.repeat(level)} 标题数量相等`
+    );
+  }
 
   // 3) 顺序一一对应：两份标题按顺序抄死，插节 / 挪节 / 改标题都会红
   assert.deepEqual(
     zhHeads,
     [
-      '## 专辑墙',
-      '## 黑胶播放器',
-      '## 导入音乐',
-      '### 本地音频',
-      '### 网易云音乐、QQ 音乐与酷狗音乐',
-      '## 专辑笔记与听歌记录',
-      '## 封面与专辑整理',
-      '## 播放统计',
-      '## 设置',
-      '## 安装与开始使用',
-      '## 在线音源与数据',
-      '## 权限说明',
-      '## 开发与构建',
-      '## 许可与致谢',
+      "### 目录",
+      "### 1、项目简介",
+      "#### 1.1 项目初衷",
+      "#### 1.2 设计原则",
+      "#### 1.3 项目基础",
+      "### 2、核心概念",
+      "#### 2.1 术语",
+      "#### 2.2 音源与选源",
+      "### 3、功能与流程",
+      "#### 3.1 功能板块",
+      "#### 3.2 使用流程",
+      "### 4、产品界面框架",
+      "#### 4.1 界面总览",
+      "#### 4.2 专辑墙",
+      "#### 4.3 黑胶播放器",
+      "#### 4.4 设置面板",
+      "### 5、技术与数据框架",
+      "#### 5.1 代码分层",
+      "#### 5.2 运行时清单",
+      "#### 5.3 数据归属",
+      "#### 5.4 默认目录",
+      "### 6、使用手册",
+      "#### 6.1 专辑墙",
+      "##### 6.1.1 工具栏",
+      "##### 6.1.2 搜索",
+      "##### 6.1.3 陈列",
+      "##### 6.1.4 添加",
+      "##### 6.1.5 更多",
+      "##### 6.1.6 收藏健康检查",
+      "##### 6.1.7 卡片右键与换碟",
+      "#### 6.2 黑胶播放器",
+      "##### 6.2.1 页面结构",
+      "##### 6.2.2 唱机与唱臂",
+      "##### 6.2.3 搓碟",
+      "##### 6.2.4 唱片面",
+      "##### 6.2.5 曲目队列",
+      "##### 6.2.6 队列笔记",
+      "#### 6.3 导入音乐",
+      "##### 6.3.1 本地音频",
+      "##### 6.3.2 在线搜索与链接导入",
+      "##### 6.3.3 关联已有",
+      "##### 6.3.4 登录与播放权限",
+      "#### 6.4 专辑笔记与听歌记录",
+      "##### 6.4.1 笔记结构",
+      "##### 6.4.2 两种听歌记录",
+      "##### 6.4.3 专辑笔记模板",
+      "#### 6.5 封面与专辑整理",
+      "##### 6.5.1 设置封面",
+      "##### 6.5.2 自动识别封面",
+      "##### 6.5.3 删除专辑",
+      "#### 6.6 播放统计",
+      "##### 6.6.1 数据管理",
+      "##### 6.6.2 历史页",
+      "##### 6.6.3 导出统计笔记",
+      "#### 6.7 设置",
+      "##### 6.7.1 五个标签页",
+      "##### 6.7.2 外观",
+      "##### 6.7.3 默认目录",
+      "### 7、安装与开始使用",
+      "### 8、在线音源与数据",
+      "#### 8.1 接入方式与边界",
+      "#### 8.2 网络与代理",
+      "#### 8.3 登录凭据",
+      "### 9、权限说明",
+      "### 10、开发与构建",
+      "#### 10.1 环境与命令",
+      "#### 10.2 体积预算",
+      "#### 10.3 源码目录",
+      "#### 10.4 本地调试与发布",
+      "### 11、许可与致谢",
     ],
     '中文区小节清单（中文标题若有改动，这份期望值要同步）'
   );
   assert.deepEqual(
     enHeads,
     [
-      '## Album shelf',
-      '## Vinyl player',
-      '## Importing music',
-      '### Local audio',
-      '### NetEase Cloud Music, QQ Music and Kugou Music',
-      '## Album notes and listening log',
-      '## Covers and album organization',
-      '## Playback statistics',
-      '## Settings',
-      '## Installation and getting started',
-      '## Online sources and data',
-      '## Permissions',
-      '## Development',
-      '## License and acknowledgements',
+      "### Contents",
+      "### 1. Introduction",
+      "#### 1.1 Why it exists",
+      "#### 1.2 Design principles",
+      "#### 1.3 Project basics",
+      "### 2. Core concepts",
+      "#### 2.1 Terms",
+      "#### 2.2 Sources and source selection",
+      "### 3. Features and flow",
+      "#### 3.1 Feature areas",
+      "#### 3.2 The flow",
+      "### 4. Interface framework",
+      "#### 4.1 Overview",
+      "#### 4.2 Album shelf",
+      "#### 4.3 Vinyl player",
+      "#### 4.4 Settings panel",
+      "### 5. Technical and data framework",
+      "#### 5.1 Code layers",
+      "#### 5.2 At runtime",
+      "#### 5.3 Where data lives",
+      "#### 5.4 Default folders",
+      "### 6. User guide",
+      "#### 6.1 Album shelf",
+      "##### 6.1.1 Toolbar",
+      "##### 6.1.2 Search",
+      "##### 6.1.3 Layout",
+      "##### 6.1.4 Add",
+      "##### 6.1.5 More",
+      "##### 6.1.6 Library health",
+      "##### 6.1.7 Card menu and switching records",
+      "#### 6.2 Vinyl player",
+      "##### 6.2.1 Page structure",
+      "##### 6.2.2 Turntable and tonearm",
+      "##### 6.2.3 Scratch",
+      "##### 6.2.4 The record crate",
+      "##### 6.2.5 Track queue",
+      "##### 6.2.6 Queue notes",
+      "#### 6.3 Importing music",
+      "##### 6.3.1 Local audio",
+      "##### 6.3.2 Online search and link import",
+      "##### 6.3.3 Link existing",
+      "##### 6.3.4 Sign-in and playback permissions",
+      "#### 6.4 Album notes and listening log",
+      "##### 6.4.1 Note structure",
+      "##### 6.4.2 Two ways to log a listen",
+      "##### 6.4.3 Album note template",
+      "#### 6.5 Covers and album organization",
+      "##### 6.5.1 Setting a cover",
+      "##### 6.5.2 Automatic covers",
+      "##### 6.5.3 Deleting an album",
+      "#### 6.6 Playback statistics",
+      "##### 6.6.1 Data management",
+      "##### 6.6.2 History",
+      "##### 6.6.3 Exporting a statistics note",
+      "#### 6.7 Settings",
+      "##### 6.7.1 The five tabs",
+      "##### 6.7.2 Appearance",
+      "##### 6.7.3 Default folders",
+      "### 7. Installation and getting started",
+      "### 8. Online sources and data",
+      "#### 8.1 Access and limits",
+      "#### 8.2 Network and proxy",
+      "#### 8.3 Login credentials",
+      "### 9. Permissions",
+      "### 10. Development",
+      "#### 10.1 Setup and commands",
+      "#### 10.2 Size budget",
+      "#### 10.3 Source layout",
+      "#### 10.4 Local debugging and releases",
+      "### 11. License and acknowledgements",
     ],
     '英文区小节清单（顺序与中文区一一对应）'
   );

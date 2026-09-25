@@ -21,8 +21,65 @@ const {
   playsByDay,
   recentAlbums,
   recordTrackPlay,
+  retainPlayEvents,
+  TRIM_TARGET_EVENTS,
+  needsRetention,
+  trimPlayEvents,
+  normalizePlayEvents,
+  MAX_PLAY_EVENTS,
+  PLAY_EVENT_RETENTION_MS,
   startOfLocalDay,
 } = mod.exports;
+
+test('裁剪把「留哪些 / 丢哪些」都交出来（裁剪前归档靠它）', () => {
+  const now = Date.now();
+  const old = { at: now - PLAY_EVENT_RETENTION_MS - 1, trackKey: 'old' };
+  const older = { at: now - PLAY_EVENT_RETENTION_MS - 5000, trackKey: 'older' };
+  const fresh = { at: now - 1000, trackKey: 'fresh' };
+  const { kept, dropped } = trimPlayEvents([older, old, fresh], now);
+  assert.deepEqual(kept.map((e) => e.trackKey), ['fresh']);
+  assert.deepEqual(dropped.map((e) => e.trackKey), ['older', 'old'], '丢掉的是过期的那批，顺序不变');
+  assert.deepEqual(trimPlayEvents([fresh], now).dropped, [], '没有要丢的就给空数组');
+});
+
+test('明细归一：脏数据一律丢弃（加载与归档共用同一份口径）', () => {
+  const now = Date.now();
+  const events = normalizePlayEvents([
+    { at: now, trackKey: 'ok' },
+    { at: now, trackKey: 'with album', albumPath: 'A.md' },
+    null,
+    'nonsense',
+    { at: 0, trackKey: 'zero' },
+    { at: NaN, trackKey: 'nan' },
+    { at: now },
+    { trackKey: 'no-at' },
+  ]);
+  // 跨 vm 边界的对象原型不同，先摊平成普通对象再比（同文件里 plain 的用法）
+  assert.deepEqual(plain(events), [
+    { at: now, trackKey: 'ok' },
+    { at: now, trackKey: 'with album', albumPath: 'A.md' },
+  ]);
+  assert.equal(normalizePlayEvents(undefined).length, 0, '没有明细表就当空（原型跨 vm，只比长度）');
+});
+
+test('播放明细按时间与数量保留，累计次数不受裁剪影响', () => {
+  const now = Date.now();
+  const old = { at: now - PLAY_EVENT_RETENTION_MS - 1, trackKey: 'old' };
+  const recent = Array.from({ length: MAX_PLAY_EVENTS + 2 }, (_, i) => ({ at: now - 1000 + i, trackKey: String(i) }));
+  const kept = retainPlayEvents([old, ...recent], now);
+  // 超上限时按**低水位**裁一批（裁到 45,000 而不是刚好 50,000）：不然连续播放时每条播放
+  // 都会重新越界一次，等于每条播放都要归档 + 裁剪一次
+  assert.equal(kept.length, TRIM_TARGET_EVENTS);
+  assert.equal(kept[0].trackKey, String(MAX_PLAY_EVENTS + 2 - TRIM_TARGET_EVENTS));
+  assert.equal(
+    retainPlayEvents(recent.slice(0, MAX_PLAY_EVENTS), now).length,
+    MAX_PLAY_EVENTS,
+    '刚好到上限不裁'
+  );
+  const stats = ensureStats({ totalPlays: 123, events: [old] });
+  assert.equal(stats.totalPlays, 123);
+  assert.equal(stats.events.length, 0);
+});
 
 const plain = (value) => JSON.parse(JSON.stringify(value));
 

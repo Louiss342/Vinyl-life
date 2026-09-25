@@ -2,6 +2,7 @@
 export interface AlbumStatSnapshot {
   title: string;
   artist?: string;
+  edition?: string;
   year?: string | number;
   genre?: string;
   rating?: string | number;
@@ -45,6 +46,53 @@ export interface VinylStats {
 
 export const EMPTY_STATS: VinylStats = { totalPlays: 0, albums: {}, tracks: {}, events: [] };
 
+// 日历只展示近一年；保留两年明细供导出和回顾，聚合计数仍是全量历史。
+export const MAX_PLAY_EVENTS = 50_000;
+/** 超上限时裁到的水位：**一批一批地裁**（低水位），而不是每超一条就裁一次 ——
+ *  不然连续播放时每条播放都会触发一次「归档 + 裁剪」。 */
+export const TRIM_TARGET_EVENTS = 45_000;
+export const PLAY_EVENT_RETENTION_MS = 2 * 366 * 24 * 60 * 60 * 1000;
+
+/** 该不该裁（便宜的前置判断：播放路径每次都要问一遍） */
+export function needsRetention(events: PlayEvent[], now = Date.now()): boolean {
+  if (events.length > MAX_PLAY_EVENTS) return true;
+  const oldest = events[0]?.at;
+  return typeof oldest === 'number' && oldest < now - PLAY_EVENT_RETENTION_MS;
+}
+
+/** 裁掉哪些、留下哪些：两边都给出来 —— 调用方要在丢数据之前先把丢掉的那批归档
+ *  （见 main.ts 的 archivePrunedEvents 与 DATA_MIGRATION）。events 需已归一。 */
+export function trimPlayEvents(
+  events: PlayEvent[],
+  now = Date.now()
+): { kept: PlayEvent[]; dropped: PlayEvent[] } {
+  const cutoff = now - PLAY_EVENT_RETENTION_MS;
+  const inWindow = events.filter((event) => event.at >= cutoff);
+  const kept = inWindow.length > MAX_PLAY_EVENTS ? inWindow.slice(-TRIM_TARGET_EVENTS) : inWindow;
+  const keptSet = new Set(kept);
+  return { kept, dropped: events.filter((event) => !keptSet.has(event)) };
+}
+
+export function retainPlayEvents(events: PlayEvent[], now = Date.now()): PlayEvent[] {
+  return trimPlayEvents(events, now).kept;
+}
+
+/** 逐次播放明细归一（ensureStats 与「裁剪前归档」共用一份口径：脏数据、缺字段一律丢弃） */
+export function normalizePlayEvents(raw: unknown): PlayEvent[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter(
+      (e): e is PlayEvent =>
+        !!e &&
+        typeof e === 'object' &&
+        typeof e.at === 'number' &&
+        isFinite(e.at) &&
+        e.at > 0 &&
+        typeof e.trackKey === 'string'
+    )
+    .map((e) => ({ at: e.at, trackKey: e.trackKey, albumPath: e.albumPath }));
+}
+
 function finiteNonNegative(value: unknown): number {
   return typeof value === 'number' && isFinite(value) && value >= 0 ? value : 0;
 }
@@ -75,20 +123,8 @@ export function ensureStats(s?: Partial<VinylStats> | null): VinylStats {
       lastPlayedAt: finiteNonNegative(raw.lastPlayedAt),
     };
   }
-  const events = Array.isArray(s?.events)
-    ? s.events
-        .filter(
-          (e): e is PlayEvent =>
-            !!e &&
-            typeof e === 'object' &&
-            typeof e.at === 'number' &&
-            isFinite(e.at) &&
-            e.at > 0 &&
-            typeof e.trackKey === 'string'
-        )
-        .map((e) => ({ at: e.at, trackKey: e.trackKey, albumPath: e.albumPath }))
-    : [];
-  return { totalPlays: finiteNonNegative(s?.totalPlays), albums, tracks, events };
+  const events = normalizePlayEvents(s?.events);
+  return { totalPlays: finiteNonNegative(s?.totalPlays), albums, tracks, events: retainPlayEvents(events) };
 }
 
 export function recordTrackPlay(
@@ -106,6 +142,8 @@ export function recordTrackPlay(
   t.lastPlayedAt = now;
   stats.tracks[key] = t;
   stats.events.push({ at: now, albumPath, trackKey: key });
+  // 这里**刻意不裁剪**：裁剪要先归档（见 main.ts 的 retainEventsOrKeepAll），
+  // 而归档是异步的、要碰文件系统 —— 核心保持纯函数，由调用方在记录之后统一处理。
   if (albumPath) {
     const a = stats.albums[albumPath] ?? { plays: 0, lastPlayedAt: 0 };
     a.plays++;

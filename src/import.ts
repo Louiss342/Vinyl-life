@@ -220,13 +220,16 @@ export async function importNeteaseAlbum(
 
   await ensureFolder(ctx.app, ctx.settings().albumFolder);
 
-  const lines = ['---', 'tags: [album]', `neteaseId: ${id}`];
-  if (coverRef) lines.push(`cover: ${coverRef}`);
-  if (artist) lines.push(`artist: ${yamlString(artist)}`);
-  if (year) lines.push(`year: ${year}`);
-  lines.push(`netease: "https://music.163.com/#/album?id=${id}"`);
-  lines.push('---', '');
-  const file = await ctx.app.vault.create(notePath, lines.join('\n'));
+  // 笔记走与本地导入同一条模板路（在线资料填进占位符；模板没写到的功能键由它补齐）
+  const content = await buildAlbumNote(ctx, {
+    title: album.name,
+    artist,
+    year,
+    cover: coverRef || undefined,
+    neteaseId: id,
+    netease: `https://music.163.com/#/album?id=${id}`,
+  });
+  const file = await ctx.app.vault.create(notePath, content);
   return {
     status: 'created',
     ok: true,
@@ -284,13 +287,15 @@ export async function importQqAlbum(ctx: ImportContext, input: string): Promise<
 
   await ensureFolder(ctx.app, ctx.settings().albumFolder);
 
-  const lines = ['---', 'tags: [album]', `qqId: ${mid}`];
-  if (coverRef) lines.push(`cover: ${coverRef}`);
-  if (artist) lines.push(`artist: ${yamlString(artist)}`);
-  if (year) lines.push(`year: ${Number(year)}`);
-  lines.push(`qq: "https://y.qq.com/n/ryqq/albumDetail/${mid}"`);
-  lines.push('---', '');
-  const file = await ctx.app.vault.create(notePath, lines.join('\n'));
+  const content = await buildAlbumNote(ctx, {
+    title: album.name,
+    artist,
+    year,
+    cover: coverRef || undefined,
+    qqId: mid,
+    qq: `https://y.qq.com/n/ryqq/albumDetail/${mid}`,
+  });
+  const file = await ctx.app.vault.create(notePath, content);
   return {
     status: 'created',
     ok: true,
@@ -361,13 +366,15 @@ export async function importKugouAlbum(ctx: ImportContext, input: string): Promi
 
   await ensureFolder(ctx.app, ctx.settings().albumFolder);
 
-  const lines = ['---', 'tags: [album]', `kugouId: ${id}`];
-  if (coverRef) lines.push(`cover: ${coverRef}`);
-  if (artist) lines.push(`artist: ${yamlString(artist)}`);
-  if (year) lines.push(`year: ${Number(year)}`);
-  lines.push(`kugou: "https://www.kugou.com/yy/album/single/${id}.html"`);
-  lines.push('---', '');
-  const file = await ctx.app.vault.create(notePath, lines.join('\n'));
+  const content = await buildAlbumNote(ctx, {
+    title: album.name,
+    artist,
+    year,
+    cover: coverRef || undefined,
+    kugouId: id,
+    kugou: `https://www.kugou.com/yy/album/single/${id}.html`,
+  });
+  const file = await ctx.app.vault.create(notePath, content);
   return {
     status: 'created',
     ok: true,
@@ -503,50 +510,174 @@ export const DEFAULT_ALBUM_TEMPLATE = [
   '',
 ].join('\n');
 
-/** 占位符替换：{{title}} / {{audioFolder}} / {{date}} / {{time}}；未识别的原样保留 */
-export function renderAlbumTemplate(
-  tpl: string,
-  vars: { title: string; audioFolder?: string; now?: Date }
-): string {
+/** 一篇专辑笔记能用到的全部资料：模板占位符与 frontmatter 补全共用这一份。
+ *  在线导入能填满，本地导入只有标题 / 音频目录 / 时间（本地不读 ID3，见 README）。 */
+export interface AlbumNoteFields {
+  title: string;
+  artist?: string;
+  year?: string | number;
+  genre?: string;
+  rating?: string | number;
+  /** 已落库的封面引用，带引号的 wikilink（downloadCoverToVault 的返回值） */
+  cover?: string;
+  /** 音频目录的 vault 路径（本地导入才有） */
+  audioFolder?: string;
+  neteaseId?: string | number;
+  qqId?: string;
+  kugouId?: string;
+  /** 平台链接（frontmatter 的 netease / qq / kugou 三个键） */
+  netease?: string;
+  qq?: string;
+  kugou?: string;
+  now?: Date;
+}
+
+/** 值型占位符：拿不到值替换成空串（拼错的仍然原样保留，好让用户在笔记里看见自己写错了）。 */
+function valuePlaceholders(vars: AlbumNoteFields): Record<string, string> {
   const d = vars.now || new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
-  const map: Record<string, string> = {
+  const text = (v: string | number | undefined) => (v == null ? '' : String(v));
+  return {
     title: vars.title,
-    audioFolder: vars.audioFolder ? `audioFolder: "[[${vars.audioFolder}]]"` : '',
+    artist: text(vars.artist),
+    year: text(vars.year),
+    genre: text(vars.genre),
+    rating: text(vars.rating),
+    neteaseId: text(vars.neteaseId),
+    qqId: text(vars.qqId),
+    kugouId: text(vars.kugouId),
     date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
     time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
   };
-  const out = String(tpl).replace(
-    /\{\{\s*(\w+)\s*\}\}/g,
-    (_m, k: string) => map[k] ?? _m
+}
+
+/**
+ * 占位符替换。两类：
+ *   - **值型**（`{{title}}` `{{artist}}` `{{year}}` `{{genre}}` `{{rating}}` `{{date}}` `{{time}}` 与三个平台 id）：
+ *     替换成值本身，放正文、放引号里都行；
+ *   - **行型**（`{{audioFolder}}` `{{cover}}`）：替换成整整一行 frontmatter，拿不到值的整行消失
+ *     （空行留着会在属性面板里多出一个空字段）。
+ * 未识别的占位符原样保留。frontmatter 里剩下的空行也一并清掉。
+ */
+export function renderAlbumTemplate(tpl: string, vars: AlbumNoteFields): string {
+  const map = valuePlaceholders(vars);
+  const lines = { audioFolder: vars.audioFolder ? `audioFolder: "[[${vars.audioFolder}]]"` : '', cover: vars.cover ? `cover: ${vars.cover}` : '' };
+  const out = String(tpl).replace(/\{\{\s*(\w+)\s*\}\}/g, (m, k: string) =>
+    k in map ? map[k] : k in lines ? lines[k as keyof typeof lines] : m
   );
-  // frontmatter 里因占位符落空而多出的空行清掉（YAML 里空行无害，但没必要留着）
   return out.replace(/^---\r?\n([\s\S]*?)\r?\n---/, (_m, body: string) => {
     const kept = body.split(/\r?\n/).filter((l) => l.trim() !== '');
     return `---\n${kept.join('\n')}\n---`;
   });
 }
 
-/** 生成本地专辑笔记正文：优先用设置里指定的模板文件，读不到则回落内置模板 */
+/** 空值判断：`key:`、`key: ""`、`key: ''` 都算没填 */
+function isEmptyYamlValue(raw: string): boolean {
+  const v = raw.trim();
+  return v === '' || v === '""' || v === "''";
+}
+
+/** tags 行合并出 album：`[music]` → `[music, album]`；块状列表则由调用方补一行；已是则原样 */
+function mergeAlbumTag(raw: string): string | null {
+  const value = raw.trim();
+  if (!value) return null; // 块状列表：调用方紧跟一行 `- album`
+  const list = value.replace(/^\[|\]$/g, '').split(',').map((s) => s.trim().replace(/^["']|["']$/g, ''));
+  if (list.some((s) => s === 'album')) return raw;
+  return `[${[...list.filter(Boolean), 'album'].join(', ')}]`;
+}
+
+/**
+ * 模板决定笔记长什么样，插件保证**功能键不丢**：缺的补上、空着的填上。
+ * 具体：tags 里一定有 album；已知的平台 id / 链接 / 封面 / 音频目录 / 艺人 / 年份等
+ * 只在「键缺失或值为空」时写入 —— 模板里写死的非空值一律尊重（用户改过就不覆盖）。
+ * 纯文本操作，不重新序列化 YAML：用户模板里的注释、引号风格、字段顺序都留着。
+ */
+export function fillAlbumFrontmatter(note: string, vars: AlbumNoteFields): string {
+  const known: Array<[string, string]> = [];
+  const push = (k: string, v: string | number | undefined, wrap = false) => {
+    if (v === undefined || v === '') return;
+    known.push([k, wrap ? yamlString(String(v)) : String(v)]);
+  };
+  push('cover', vars.cover);
+  push('artist', vars.artist, true);
+  push('year', vars.year);
+  push('genre', vars.genre, true);
+  push('rating', vars.rating);
+  push('audioFolder', vars.audioFolder ? `"[[${vars.audioFolder}]]"` : '');
+  push('neteaseId', vars.neteaseId);
+  push('qqId', vars.qqId);
+  push('kugouId', vars.kugouId);
+  push('netease', vars.netease, true);
+  push('qq', vars.qq, true);
+  push('kugou', vars.kugou, true);
+
+  const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(note);
+  if (!m) {
+    // 模板没写 frontmatter：补一块（tags 与 id 是插件认出这张专辑的依据）
+    const block = ['---', 'tags: [album]', ...known.map(([k, v]) => `${k}: ${v}`), '---'].join('\n');
+    return `${block}\n${note.replace(/^\r?\n/, '')}`;
+  }
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const line of m[1].split(/\r?\n/)) {
+    const kv = /^([A-Za-z_][\w-]*):[ \t]*(.*)$/.exec(line);
+    if (!kv) { out.push(line); continue; }
+    const key = kv[1];
+    if (key === 'tags') {
+      seen.add('tags');
+      const merged = mergeAlbumTag(kv[2]);
+      out.push(merged == null ? line : `tags: ${merged}`);
+      if (merged == null) out.push('  - album');
+      continue;
+    }
+    const entry = known.find(([k]) => k === key);
+    if (!entry) { out.push(line); continue; }
+    seen.add(key);
+    // 值为空的键用已知资料填上；非空的尊重模板
+    out.push(isEmptyYamlValue(kv[2]) ? `${key}: ${entry[1]}` : line);
+  }
+  for (const [k, v] of known) if (!seen.has(k)) out.push(`${k}: ${v}`);
+  if (!seen.has('tags')) out.push('tags: [album]');
+  return note.slice(0, m.index) + `---\n${out.join('\n')}\n---` + note.slice(m.index + m[0].length);
+}
+
+/** 读设置里指定的模板文件；没配 / 读不到就用内置模板。
+ *  配了路径却找不到文件是最常见的坑（删过、改过名），这里不再只是 console.warn：
+ *  整个会话提一次，用户才知道自己导入出来的为什么是「默认样子」。 */
+let warnedMissingTemplate = false;
+async function readAlbumTemplate(ctx: ImportContext, onMissing: (path: string) => void): Promise<string> {
+  const cfg = String(ctx.settings().albumNoteTemplate || '').trim();
+  if (!cfg) return DEFAULT_ALBUM_TEMPLATE;
+  const f = ctx.app.vault.getAbstractFileByPath(normalizePath(cfg));
+  if (f instanceof TFile) {
+    try {
+      return await ctx.app.vault.read(f);
+    } catch (e) {
+      console.warn('[vinyl] 读取专辑模板失败，改用内置模板', e);
+      return DEFAULT_ALBUM_TEMPLATE;
+    }
+  }
+  console.warn('[vinyl] 专辑模板文件不存在：' + cfg);
+  if (!warnedMissingTemplate) {
+    warnedMissingTemplate = true;
+    onMissing(cfg);
+  }
+  return DEFAULT_ALBUM_TEMPLATE;
+}
+
+/** 按模板生成一篇专辑笔记：渲染占位符 + 补齐功能键（本地与在线导入共用这一条路） */
+export async function buildAlbumNote(ctx: ImportContext, vars: AlbumNoteFields): Promise<string> {
+  const tpl = await readAlbumTemplate(ctx, (path) => notice(tf('notice.templateMissing', { path })));
+  return fillAlbumFrontmatter(renderAlbumTemplate(tpl, vars), vars);
+}
+
+/** 本地导入的专辑笔记（保留旧入口名：调用方只关心「给我一篇笔记」） */
 export async function buildLocalAlbumNote(
   ctx: ImportContext,
   title: string,
   audioFolderRef?: string
 ): Promise<string> {
-  const cfg = String(ctx.settings().albumNoteTemplate || '').trim();
-  if (cfg) {
-    const f = ctx.app.vault.getAbstractFileByPath(normalizePath(cfg));
-    if (f instanceof TFile) {
-      try {
-        return renderAlbumTemplate(await ctx.app.vault.read(f), { title, audioFolder: audioFolderRef });
-      } catch (e) {
-        console.warn('[vinyl] 读取专辑模板失败，改用内置模板', e);
-      }
-    } else {
-      console.warn('[vinyl] 专辑模板文件不存在：' + cfg);
-    }
-  }
-  return renderAlbumTemplate(DEFAULT_ALBUM_TEMPLATE, { title, audioFolder: audioFolderRef });
+  return buildAlbumNote(ctx, { title, audioFolder: audioFolderRef });
 }
 
 export async function createAlbumFromFiles(

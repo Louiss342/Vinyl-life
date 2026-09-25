@@ -215,15 +215,17 @@ test('音量表：至少 20 格，格高变化不超过 9px，配色随面板材
   assert.doesNotMatch(view, /vinyl-vol-icon|setIcon\([^\n]*'volume-2'/);
   assert.match(css, /--vinyl-meter-min-height:\s*\d+px/);
   assert.match(css, /--vinyl-meter-height-range:\s*[0-9]px/);
-  // 电平表就在唱放卡的面板上：亮格 / 暗格 / 发光随面板材质走 —— 深色面板奶白墨、贝壳白深灰墨
-  assert.match(css, /\.vinyl-amp\s*\{[^}]*--vinyl-meter-on:\s*rgba\(245,\s*239,\s*227/, '深色面板：奶白亮格');
-  assert.match(css, /\.vinyl-amp\s*\{[^}]*--vinyl-meter-off:/, '深色面板：暗格跟着给');
+  // 电平表就在唱放卡的面板上：亮格 / 暗格 / 发光随面板材质走 —— 深色面板奶白墨、雪域白深灰墨。
+  // 配色挂在翻转面（材质那一层）而不是唱放卡上：唱片边缘的搓碟就绪圈在转盘卡里，也要读同一组色 ——
+  // 两个消费者分居两张卡，共同祖先就是翻转面（曾经挂在 .vinyl-amp，搓碟圈够不着）。
+  assert.match(css, /\.vinyl-flip-face\s*\{[^}]*--vinyl-meter-on:\s*rgba\(245,\s*239,\s*227/, '深色面板：奶白亮格');
+  assert.match(css, /\.vinyl-flip-face\s*\{[^}]*--vinyl-meter-off:/, '深色面板：暗格跟着给');
   assert.match(
     css,
-    /\.vinyl-player\.is-deck-shell \.vinyl-amp\s*\{[^}]*--vinyl-meter-on:/,
-    '贝壳白面板：亮格翻成深灰墨'
+    /\.vinyl-player\.is-deck-shell \.vinyl-flip-face\s*\{[^}]*--vinyl-meter-on:/,
+    '雪域白面板：亮格翻成深灰墨'
   );
-  // 反向断言：表自己不定义配色（自己定会盖掉材质给的继承值），只留闪色
+  // 反向断言：表自己不定义配色（自己定会盖掉材质给的继承值）
   const rowBlock = css.match(/\.vinyl-vol-row \{[^}]*\}/);
   assert.ok(rowBlock, '电平表样式块还在');
   assert.doesNotMatch(rowBlock[0], /--vinyl-meter-(on|off|edge|glow):/, '配色归面板材质，不在表自己身上');
@@ -354,5 +356,7 @@ test('音量表：亮格的颜色变化有交互动画，拖动时摘掉延迟�
   );
   assert.match(view, /setVolumeSegments\(volSegments, r\)/, '拖动时本地立刻重画格子，不等引擎回声');
   // 减少动效：装饰性的推移与点火直接跳到终态
-  assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]{0,900}\.vinyl-volume-segment\.is-active\s*\{[^}]*animation: none/);
+  // 选择器列在减少动效块里可能还跟着搓碟就绪圈的格子（同一套「不过渡」），故按「.is-active 之后
+  // 到 { 之间」判定，而不是要求它正好以 { 结尾
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]{0,900}\.vinyl-volume-segment\.is-active[\s,][^}]*animation: none/);
 });

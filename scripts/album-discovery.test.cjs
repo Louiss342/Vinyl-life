@@ -492,3 +492,49 @@ test('搜索节流：上游 429 后该来源进入冷却，这一轮不发请求
   assert.ok(cooling, '冷却中的来源要给出解释，否则会被当成「没有结果」');
   assert.match(cooling.message, /限流/);
 });
+
+// ============ 关联已有：库内候选的排序与筛选（评审意见第 3 条）============
+// 大库里靠一个下拉框翻候选，既难找也容易选错发行版：标题相同的版本必须排在一起，
+// 歌手与年份各给一档把同名不同人的专辑压下去，另给一个认错别字的搜索框。
+
+const libAlbum = (title, extra = {}) => ({
+  path: `${title}.md`,
+  title,
+  audioRefs: [],
+  sourcePref: 'auto',
+  collectOnly: false,
+  ...extra,
+});
+
+test('关联候选排序：同名版本排在一起，歌手 / 年份把同名不同人的压下去', () => {
+  const candidate = { title: '叶惠美', artists: ['周杰伦'], releaseDate: '2003-07-31' };
+  const ranked = discovery.rankLibraryMatches(candidate, [
+    libAlbum('叶惠美', { edition: '2019 重制版', artist: '周杰伦', year: 2019 }),
+    libAlbum('叶惠美', { artist: '周杰伦', year: 2003 }),
+    libAlbum('叶惠美', { artist: '别人', year: 2003 }),
+    libAlbum('范特西', { artist: '周杰伦', year: 2001 }),
+    libAlbum('完全不相干'),
+  ]);
+  const titles = Array.from(ranked, (album) => album.title + (album.edition ? `(${album.edition})` : ''));
+  assert.equal(titles[0], '叶惠美', '同名同人同年：排最前');
+  assert.equal(titles[1], '叶惠美(2019 重制版)', '另一版同名（歌手也对）紧随其后');
+  assert.equal(titles[2], '叶惠美', '同名但歌手不对：让到后面');
+  assert.deepEqual(titles.slice(3), ['范特西', '完全不相干'], '其余按相似度递减');
+});
+
+test('关联候选排序：错别字也算命中（「叶慧美」找得到《叶惠美》）', () => {
+  const ranked = discovery.rankLibraryMatches(
+    { title: '叶慧美', artists: ['周杰伦'], releaseDate: '2003' },
+    [libAlbum('叶惠美', { artist: '周杰伦', year: 2003 }), libAlbum('范特西')]
+  );
+  assert.equal(ranked[0].title, '叶惠美');
+});
+
+test('关联搜索框：模糊命中（错字 / 词序 / 半截），空查询全通过', () => {
+  assert.equal(discovery.fuzzyMatches('', '叶惠美'), true, '没输字就不筛');
+  assert.equal(discovery.fuzzyMatches('叶慧美', '叶惠美'), true, '错别字');
+  assert.equal(discovery.fuzzyMatches('jay chou', '周杰伦 Jay Chou'), true, '词序不分先后');
+  assert.equal(discovery.fuzzyMatches('惠美', '叶惠美'), true, '只记得后半截');
+  assert.equal(discovery.fuzzyMatches('周杰伦', '叶惠美', '周杰伦'), true, '歌手字段也算');
+  assert.equal(discovery.fuzzyMatches('完全不相干', '叶惠美', '周杰伦'), false);
+});

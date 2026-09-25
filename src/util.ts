@@ -343,7 +343,7 @@ export function notice(msg: string, ms?: number) {
 }
 
 // 目录不存在则创建（vault.create / createBinary 不会自动建父目录）：
-// 新装用户首次运行时用来搭出 Vinyl Life/{audio, covers, Vinyl Note}
+// 新装用户首次运行时用来搭出 Vinyl Life/{Vinyl Note, covers, audio, Stats}
 export async function ensureFolder(app: App, folderPath: string): Promise<void> {
   const p = normalizePath(String(folderPath || ''));
   if (!p) return;
@@ -375,6 +375,33 @@ export function markVinylModal(modal: Modal): void {
  *  菜单根元素；取不到就跳过 —— 只是菜单那圈圆角收不掉，不影响任何功能。 */
 export function markVinylMenu(menu: Menu): void {
   (menu as Menu & { dom?: HTMLElement }).dom?.addClass('vinyl-menu');
+}
+
+/** 文件夹选择器选中的那个文件夹的**绝对路径**：`webkitRelativePath` 的第一段就是它，
+ *  从 `file.path`（Electron 给的真实路径）里把那一段连同文件本身切掉。
+ *  用于「重新定位音频」：用户重新挑一次文件夹，插件据此改写笔记里的库外路径。 */
+export function pickedFolderPath(file: File): string {
+  const abs = String((file as File & { path?: string }).path || '');
+  if (!abs) return '';
+  const below = relPathOf(file).split('/').filter(Boolean).length - 1; // 选中文件夹以下的层数
+  const parts = abs.split(/[\\/]/);
+  const keep = Math.max(1, parts.length - (Math.max(0, below) + 1));
+  return parts.slice(0, keep).join(abs.includes('\\') ? '\\' : '/');
+}
+
+/** vault 内目录路径的可用性检查。**返回原因码**（'' = 合法）—— 文案由设置页查词典，
+ *  这里不碰 i18n，好在纯 Node 测试里直接跑。规则来自 Obsidian 与 Windows 的双重要求： */
+export type VaultFolderIssue = '' | 'empty' | 'absolute' | 'parent' | 'chars';
+
+export function vaultFolderIssue(value: string): VaultFolderIssue {
+  const v = String(value || '').trim();
+  if (!v) return 'empty';
+  // 库内路径一律相对：盘符（C:\）或开头的斜杠都不行
+  if (/^[a-zA-Z]:/.test(v) || v.startsWith('/') || v.startsWith('\\')) return 'absolute';
+  if (v.split(/[\\/]/).includes('..')) return 'parent';
+  // Windows 保留字符 + Obsidian 自己会截断的 # ^ [ ]（与 sanitizeFileName 同一套口径）
+  if (/[\\:*?"<>|#^[\]]/.test(v)) return 'chars';
+  return '';
 }
 
 /** 系统「减少动态效果」是否开启（前庭敏感的用户靠它关掉转盘与交接动画）。

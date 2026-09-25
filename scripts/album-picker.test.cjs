@@ -24,7 +24,10 @@ function fakeEl(tag = 'div', parent = null) {
     listeners: {},
     dataset: {},
     textContent: '',
-    style: { setProperty: (k, v) => vars.set(k, v) },
+    style: {
+      setProperty: (k, v) => vars.set(k, v),
+      removeProperty: (k) => vars.delete(k),
+    },
     vars,
     setCssProps(props) {
       for (const [k, v] of Object.entries(props)) vars.set(k, v);
@@ -392,7 +395,7 @@ test('样式：恢复原来的窄侧脊 → 悬停展开封面，保留纵向视
   assert.match(
     css,
     /\.vinyl-player\.is-deck-shell \.vinyl-flip-face\.is-crate\s*\{[^}]*--vinyl-crate-muted/,
-    '贝壳白面板翻深灰墨'
+    '雪域白面板翻深灰墨'
   );
   assert.match(css, /\.vinyl-picker-row\s*\{[^}]*var\(--vinyl-crate-line/, '行分隔线跟面板走');
   assert.match(css, /\.vinyl-picker-actions\s*\{[^}]*var\(--vinyl-crate-bar-bg/, '动作条底色跟面板走');

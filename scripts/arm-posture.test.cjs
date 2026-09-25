@@ -213,7 +213,15 @@ function fakeEl(tag = 'div') {
     classes: new Set(),
     dataset: {},
     textContent: '',
-    style: { setProperty: (k, v) => vars.set(k, v) },
+    // removeProperty 也要：视图交还旋转时会清掉内联 animation-delay（搓碟）
+    // Obsidian 的 setCssProps：把对象里的自定义属性一次写进内联样式（就绪圈用它写进度）
+    setCssProps(props) {
+      for (const [k, v] of Object.entries(props)) vars.set(k, String(v));
+    },
+    style: {
+      setProperty: (k, v) => vars.set(k, v),
+      removeProperty: (k) => vars.delete(k),
+    },
     vars,
     empty() {
       el.children = [];

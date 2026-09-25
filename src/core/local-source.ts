@@ -152,6 +152,24 @@ export class LocalSource {
     return url;
   }
 
+  /** 读取音轨的完整字节（搓碟台解码整轨用）：vault 走 readBinary、外链走 fs，其余来源返回 null。
+   *  外链要拷成独立 ArrayBuffer —— Node 的 Buffer 来自共享内存池，直接交出去会把池里
+   *  别人的字节一起带上（byteOffset 那一段才是本文件的）。 */
+  async readTrackBytes(track: Track): Promise<ArrayBuffer | null> {
+    try {
+      if (track.source === 'local-vault') {
+        return await this.app.vault.readBinary(track.file);
+      }
+      if (track.source === 'local-external') {
+        const buf = fs.readFileSync(track.path);
+        return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
+      }
+    } catch (e) {
+      console.warn('[vinyl] 读取音轨字节失败（这首曲子只走轻量音效）', e);
+    }
+    return null;
+  }
+
   // 外链：fs → Blob URL（按文件缓存）
   resolveExternalUrl(absPath: string): string {
     const hit = this.blobUrls.get(absPath);

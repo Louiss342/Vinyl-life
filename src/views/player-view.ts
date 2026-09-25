@@ -4,7 +4,7 @@
 //   翻转区 ②+③ .vinyl-flip：唱机卡 + 唱放条合并为「一张卡」（用户要求），整张左转 90°，
 //     背面是唱片区（三行唱片架，见 album-picker）。
 //     只有这一区翻面——按键卡、Vinyl order、队列都留在板上不动（用户要求「其他不要变」）。
-//     唱机卡 .vinyl-deck（四套配色：胡桃木 / 贝壳白 / 哑光黑 / 珊瑚红）：横向 1.3 : 1 转盘，唱片偏左、
+//     唱机卡 .vinyl-deck（四套配色：胡桃木 / 雪域白 / 哑光黑 / 珊瑚红）：横向 1.3 : 1 转盘，唱片偏左、
 //     唱针在右上（几何真值见 core/arm-geometry，单位 = 转盘高）；姿态 1 = 未播放/暂停归位支架，
 //     姿态 2 = 播放中落针，唱针到圆心的「距离」表示专辑进度；左下角长方形播放 / 暂停键（键面 = 手写体字标）；
 //     唱放条 .vinyl-amp：两行控制条（版式照设计不动）—— 上单曲进度轨（点即定位、拖动跟手，
@@ -15,14 +15,24 @@
 //   翻转区的两个面都必须保持 overflow: visible —— 可滚动 + 3D 变换会让 Blink 的命中测试整面失效
 //   （「返回键点不到」就是这么来的），滚动因此交给各自的滚动层（队列挂板、唱片区自己带箱子）。
 // 增量渲染：壳只建一次，状态更新只改目标节点——旋转动画不被打断。
-import { ItemView, WorkspaceLeaf, setIcon } from 'obsidian';
+import { ItemView, WorkspaceLeaf, requestUrl, setIcon } from 'obsidian';
 import type VinylLifePlugin from '../main';
 import type { PlayerSnapshot } from '../core/player-state';
 import type { Track } from '../core/track';
 import type { PlayMode } from '../core/player-state';
-import { trackSourceLabel, trackSourceClass } from '../core/track';
+import { trackSourceLabel, trackSourceClass, trackKey, isLocalTrack } from '../core/track';
 import { fmtTime, notice, prefersReducedMotion } from '../util';
-import { SPIN_SPEEDS } from '../core/disc-motion';
+import { SPIN_SECONDS, SPIN_SPEEDS } from '../core/disc-motion';
+import {
+  bindScratchGesture,
+  approachRate,
+  ScratchTracker,
+  SCRATCH_PRELOAD_DELAY_MS,
+  SCRATCH_SETTLE_EPS,
+} from '../core/scratch';
+import type { ScratchHit } from '../core/scratch';
+import { ScratchDeck, probeMediaDuration } from '../core/scratch-deck';
+import type { ScratchSource } from '../core/scratch-deck';
 import { DECK_STYLES, RECORD_COLORS, deckClass, recordClass } from '../core/appearance';
 import { coverChain } from '../core/cover-url';
 import { resolveAlbumCover, findAlbumNotes, getAlbumInfo, detectAlbumSources } from '../core/album-index';
@@ -36,6 +46,8 @@ import type { PickerEntry } from './album-picker';
 export const PLAYER_VIEW_TYPE = 'vinyl-player';
 
 interface PlayerEls {
+  /** 转盘盒（搓碟手势的宿主：唱臂裁剪层盖在盘面上，绑容器 + 几何判更稳） */
+  turntable: HTMLElement;
   /** 翻转区（②+③）：正面 = 唱机卡 + 唱放卡，背面 = 唱片区，共用这一个 3D 容器 */
   flip: HTMLElement;
   flipInner: HTMLElement;
@@ -85,6 +97,29 @@ const VOLUME_SEGMENT_HEIGHT_RANGE = 5;
 const SEEK_HOLD_MS = 900;
 /** 保持期的「引擎已到位」容差（占全长比例）：够了就把轨道交还给引擎 */
 const SEEK_HOLD_TOLERANCE = 0.01;
+/** 一次搓碟手势的进行态（抬手回正结束后置空） */
+interface ScratchState {
+  /** drag = 手指还按着；settle = 松手后的马达回正 */
+  phase: 'drag' | 'settle';
+  /** 起手前是否在播（抬手回到它；暂停起手的不回正） */
+  playing: boolean;
+  /** 起手时的曲目下标（抬手压回声用） */
+  index: number;
+  /** 起手时的曲目键：快照换了曲目就作废这次手势（别把位置写到新曲子上） */
+  key: string;
+  /** 声音是否由搓碟台出（false = 轻量音效：元素自己按倍速出声） */
+  deck: boolean;
+  /** 当前播放位置（秒）：完整音效以搓碟台的积分为准，轻量路由本视图积分 */
+  pos: number;
+  /** 唱片累计转角（deg，可正可负） */
+  angle: number;
+  /** 平滑后的倍速（松手回正从它出发） */
+  rate: number;
+  /** 上一帧时间（performance.now） */
+  at: number;
+  /** rAF 句柄 */
+  raf: number;
+}
 
 function clampRatio(ratio: number): number {
   return Math.min(1, Math.max(0, ratio));
@@ -329,6 +364,19 @@ export class VinylPlayerView extends ItemView {
   private renderedSegmentCount = 0;
   private dragFrom = -1;
   private clickBlockUntil = 0;
+  /** 搓碟台（完整音效）：第一次真的要准备缓冲时才建（省一个 AudioContext / 一份解码内存） */
+  private scratchDeck: ScratchDeck | null = null;
+  /** 想为哪一首备好搓碟缓冲（见 maybePrepareScratch / armScratchPreload） */
+  private scratchWant: { key: string; track: Track } | null = null;
+  /** 预载的挂表（见 armScratchPreload） */
+  private scratchPreloadTimer: number | null = null;
+  /** 上一次挂表时的曲目键与播放状态：只有它们变了才重挂 —— 每条快照都重挂的话，等待时间永远走不完 */
+  private preloadKey = '';
+  private preloadPlaying = false;
+  /** 搓碟手势的进行态（null = 没在搓） */
+  private scratch: ScratchState | null = null;
+  /** 指针转角的累计器：事件写入、rAF 帧消费（两者的节奏不同，见 core/scratch） */
+  private scratchTracker = new ScratchTracker();
 
   constructor(leaf: WorkspaceLeaf, plugin: VinylLifePlugin) {
     super(leaf);
@@ -355,6 +403,18 @@ export class VinylPlayerView extends ItemView {
     // 两套配色都是纯类切换（互斥 toggle，避免脏值残留）
     for (const v of DECK_STYLES) c.toggleClass(deckClass(v), v === this.plugin.settings.playerDeck);
     for (const v of RECORD_COLORS) c.toggleClass(recordClass(v), v === this.plugin.settings.recordColor);
+    // 搓碟音效切到轻量 / 关掉搓碟：把解码缓冲与声卡上下文还回去（几十 MB 不该攥着）；
+    // 再切回完整时由下一次快照重新挂预取（scratchWant 清空即触发重算）
+    if (!this.plugin.settings.scratchEnabled || this.plugin.settings.scratchSound !== 'full') {
+      this.disposeScratchDeck();
+      this.scratchWant = null;
+      this.disarmScratchPreload();
+    } else if (this.els) {
+      // 转速变了会重建旋转动画：清掉上次交还时留下的负延迟（否则相位会跳一下）
+      this.els.vinyl.style.removeProperty('animation-delay');
+      // 从轻量切回完整 / 打开预载开关：按当前状态重新挂表（update 那边不会替我挂，键与状态都没变）
+      if (this.lastSnapshot) this.armScratchPreload(this.lastSnapshot);
+    }
   }
 
   async onOpen() {
@@ -378,6 +438,9 @@ export class VinylPlayerView extends ItemView {
       this.unsub();
       this.unsub = null;
     }
+    this.scratchAbort();
+    this.disarmScratchPreload();
+    this.disposeScratchDeck();
     this.flipRO?.disconnect();
     this.flipRO = null;
     document.removeEventListener('visibilitychange', this.onVisibility);
@@ -650,6 +713,10 @@ export class VinylPlayerView extends ItemView {
     // 清空队列 / 恢复发行顺序两个按键及其功能已按设计稿删除；「写点什么吧」移到每个专辑名行里（见 renderQueue）。
     const orderRow = board.createDiv({ cls: 'vinyl-order-row' });
     const queueTitle = orderRow.createDiv({ cls: 'vinyl-queue-title' });
+    const saveQueue = orderRow.createEl('button', { cls: 'clickable-icon vinyl-queue-save' });
+    setIcon(saveQueue, 'save');
+    this.bindLabel(() => saveQueue.setAttribute('aria-label', t('queueNote.save')));
+    saveQueue.addEventListener('click', () => void this.plugin.saveQueueNote());
     const orderAlbum = orderRow.createDiv({ cls: 'vinyl-order-album vinyl-marquee' });
     const orderAlbumText = orderAlbum.createSpan({ cls: 'vinyl-marquee-text' });
     this.orderAlbumText = orderAlbumText;
@@ -693,7 +760,18 @@ export class VinylPlayerView extends ItemView {
       }
     });
 
+    // 搓碟：在转盘上按下并拖动 = 手搓唱片。挂在容器上按几何判（唱臂裁剪层 inset:0 盖着盘面，
+    // 直接绑盘面层会被它挡住），按下点落在唱片圆外或左下播放键上都不接手。
+    bindScratchGesture(turntable, {
+      geometry: () => this.scratchGeometry(),
+      accept: (ev) => this.canScratch() && !this.isDeckButton(ev),
+      onEngage: () => this.scratchEngage(),
+      onTurn: (turn) => this.scratchTracker.add(turn),
+      onEnd: () => this.scratchRelease(),
+    });
+
     this.els = {
+      turntable,
       flip,
       flipInner,
       pickBtn,
@@ -744,6 +822,11 @@ export class VinylPlayerView extends ItemView {
     els.flip.toggleClass('is-crate', face === 'picker');
     els.flip.toggleClass('is-reduced', prefersReducedMotion());
     els.pickBtn.toggleClass('is-active', face === 'picker');
+    // 预载只服务唱机面：翻走了就撤表（翻回来重挂，等待时间从这一刻算起）
+    if (face === 'player' && this.lastSnapshot) this.armScratchPreload(this.lastSnapshot);
+    else this.disarmScratchPreload();
+    // 盘面转到背面去了：抓取光标跟着收掉（唱片区没有唱片可搓）
+    els.turntable.toggleClass('is-scratchable', this.canScratch());
   }
 
   /** 键盘：在唱片区按 Esc 回播放器（焦点不在唱片箱里时也管用 —— 箱内由唱片区自己处理并阻止冒泡）。 */
@@ -818,6 +901,29 @@ export class VinylPlayerView extends ItemView {
     const els = this.ensureShell();
     this.lastSnapshot = s;
 
+    // 手势期间的意外换曲（媒体键 / 清空队列 / 移除整段）：这次手势作废，
+    // 别把位置写到新曲目上（引擎那边已经自行收掉了搓碟会话）。
+    // 判据是曲目键而不是下标：拖动重排只换位置不换曲子，那种情况不该把手里这张碟打断。
+    if (this.scratch && (!s.current || trackKey(s.current) !== this.scratch.key)) this.scratchAbort();
+
+    // 搓碟缓冲的挂点：曲目变了就换一份惦记（真正取字节的时机见 maybePrepareScratch / armScratchPreload）
+    const scratchKey = s.current ? trackKey(s.current) : '';
+    if (scratchKey !== (this.scratchWant?.key ?? '')) {
+      // 旧的惦记直接换掉：在途的准备不用打断 —— 搓碟台按曲目键缓存，回来的那份照样有用
+      // （下一首提前备的那份尤其如此：切歌之后它往往正是要放的那首）
+      this.scratchWant = s.current ? { key: scratchKey, track: s.current } : null;
+    }
+    // 预载的表：曲目变了 / 播放状态翻了才重挂（其余快照不动它 —— 见 preloadKey）
+    const playing = s.status === 'playing';
+    if (scratchKey !== this.preloadKey || playing !== this.preloadPlaying) {
+      this.preloadKey = scratchKey;
+      this.preloadPlaying = playing;
+      this.armScratchPreload(s);
+    }
+    this.maybePrepareScratch(s);
+    // 盘面可搓时才给抓取光标（唱臂裁剪层已让开指针事件，见 styles.css）
+    els.turntable.toggleClass('is-scratchable', this.canScratch());
+
     // 专辑切换 → 落盘入场（C 阶段）/ 清空回位
     const albumPath = s.albumNotePath || null;
     if (albumPath && albumPath !== this.lastAlbumPath) {
@@ -843,8 +949,12 @@ export class VinylPlayerView extends ItemView {
     // 转盘状态（旋转动画只切 class，不重建节点）
     const spinning = s.status === 'playing';
     els.vinyl.classList.toggle('is-spinning', spinning);
-    // 刚转入播放：重算一次可见性，清掉可能残留的 is-hidden（否则动画停在 paused，转不动）
-    if (spinning && !this.lastSpinning) this.syncVisibility();
+    // 刚转入播放：重算一次可见性，清掉可能残留的 is-hidden（否则动画停在 paused，转不动）；
+    // 旋转动画此刻会重建，顺手清掉上次搓碟交还时留下的负延迟（相位对不上了）
+    if (spinning && !this.lastSpinning) {
+      this.syncVisibility();
+      els.vinyl.style.removeProperty('animation-delay');
+    }
     this.lastSpinning = spinning;
     els.vinyl.classList.toggle('is-paused', s.status === 'paused');
     els.vinyl.classList.toggle('is-empty', !s.queue.length);
@@ -871,7 +981,8 @@ export class VinylPlayerView extends ItemView {
       const switched = s.index !== this.seekHold.index;
       if (arrived || switched || Date.now() > this.seekHold.until) this.seekHold = null;
     }
-    const seekOwned = this.seeking || this.seekHold !== null;
+    // 手搓期间位置归手势：快照（400ms 一条、且比手指慢一截）不许回写轨道与读数
+    const seekOwned = this.seeking || this.seekHold !== null || this.scratch !== null;
     if (!seekOwned && ratio !== this.lastRatio) {
       this.lastRatio = ratio;
       els.progressSlider.value = String(ratio);
@@ -886,28 +997,14 @@ export class VinylPlayerView extends ItemView {
     // 唱臂姿态（设计稿）：未播放专辑 / 暂停 = 姿态 1（归位支架）；
     // 播放专辑 = 姿态 2（落针），且唱针到唱片圆心的「距离」= 专辑进度（换算见 core/arm-geometry）。
     // loading（换曲取址的间隙）保持落针，避免唱臂在换曲时来回摆。
-    const posture = armPosture(s.status, s.queue.length);
-    if (posture !== this.lastPosture) {
-      this.lastPosture = posture;
-      els.arm.toggleClass('is-parked', posture === 'park');
-    }
-    const armAngle =
-      posture === 'park'
-        ? ARM_PARK_ANGLE
-        : armAngleForProgress(
-            albumProgress({
-              queue: s.queue,
-              index: s.index,
-              albumNotePath: s.albumNotePath,
-              currentTime: s.currentTime,
-              duration: dur,
-            })
-          );
-    // 判据写成「不小于等于」而不是「大于」：首帧 lastArmAngle 是 NaN，用 > 比较永远为假，
-    // 打开视图时正在播放的话唱臂会停在 CSS 默认角上（要等 400ms 后的下一次快照才动）。
-    if (!(Math.abs(armAngle - this.lastArmAngle) <= 0.05)) {
-      this.lastArmAngle = armAngle;
-      els.arm.style.setProperty('--vinyl-arm-angle', `${armAngle.toFixed(2)}deg`);
+    // 搓碟期间整块让给手势：手在盘上时唱针就还在槽里（起手即落针，角度由 scratchPreview 逐帧写）
+    if (this.scratch === null) {
+      const posture = armPosture(s.status, s.queue.length);
+      if (posture !== this.lastPosture) {
+        this.lastPosture = posture;
+        els.arm.toggleClass('is-parked', posture === 'park');
+      }
+      this.writeArm(posture === 'park' ? ARM_PARK_ANGLE : this.armAngleFor(s, s.currentTime));
     }
 
     // Vinyl order 行末尾的当前专辑名（设计稿：「专辑名」在那一栏最后；空队列不占位）
@@ -1229,6 +1326,331 @@ export class VinylPlayerView extends ItemView {
     this.endSegmentDrag();
   }
 
+  // ============ 搓碟（手指在唱片上划 = 手动转盘）============
+  // 分工：手势、视觉与位置换算都在这几段里；声音分两条路 —— 搓碟台（完整音效，正反都出声）
+  // 与引擎的 scratchRate（轻量音效，只有正向出声）。搓碟期间位置由这里说了算：
+  // 快照不回写轨道 / 读数 / 唱臂（update 的 seekOwned），抬手再一次性交还给引擎。
+
+  /** 命中几何：唱片本体的圆。取内层唱片的盒子 —— 它是正圆、绕心自转，旋转不改 bounding box；
+   *  外层 .vinyl-turntable-disc 上还挂着入场位移，飞行途中别拿它当圆心。 */
+  private scratchGeometry(): ScratchHit | null {
+    const els = this.els;
+    if (!els) return null;
+    const r = els.vinyl.getBoundingClientRect();
+    if (!(r.width > 0)) return null;
+    return { cx: r.left + r.width / 2, cy: r.top + r.height / 2, radius: r.width / 2 };
+  }
+
+  /** 按在左下角的播放键上不算搓碟（那枚键有自己的事要做） */
+  private isDeckButton(ev: PointerEvent): boolean {
+    const node = ev.targetNode;
+    return !!node && node.instanceOf(HTMLElement) && !!node.closest('.vinyl-deck-play');
+  }
+
+  /** 能不能搓：唱机面 + 开关开着 + 有当前曲目 + 不在换曲取址的间隙里 */
+  private canScratch(): boolean {
+    if (this.face !== 'player') return false;
+    if (!this.plugin.settings.scratchEnabled) return false;
+    const s = this.lastSnapshot;
+    if (!s?.current) return false;
+    return s.status === 'playing' || s.status === 'paused';
+  }
+
+  /** 转盘一圈的秒数（换算基准 = 设置里的转速档；默认 1.8s 正是 33⅓ RPM） */
+  private spinSeconds(): number {
+    return SPIN_SECONDS[this.plugin.settings.turntableSpeed] || SPIN_SECONDS.normal;
+  }
+
+  /** 当前旋转动画到了哪个角度：接手时对齐用（不然盘面会跳一下）。
+   *  从 CSSAnimation 的 currentTime 反推 —— 比解析 computed transform 的矩阵稳。 */
+  private currentSpinAngle(): number {
+    const el = this.els?.vinyl;
+    if (!el || typeof el.getAnimations !== 'function') return 0;
+    for (const a of el.getAnimations()) {
+      const timing = a.effect?.getComputedTiming?.();
+      const duration = typeof timing?.duration === 'number' ? timing.duration : 0;
+      const t = a.currentTime;
+      if (duration > 0 && typeof t === 'number') return ((t % duration) / duration) * 360;
+    }
+    return 0;
+  }
+
+  /** 专辑进度 → 唱臂角（进度按「当前曲目在本专辑里的位置」算，见 core/arm-geometry） */
+  private armAngleFor(s: PlayerSnapshot, currentTime: number): number {
+    return armAngleForProgress(
+      albumProgress({
+        queue: s.queue,
+        index: s.index,
+        albumNotePath: s.albumNotePath,
+        currentTime,
+        duration: Math.max(s.duration, currentTime),
+      })
+    );
+  }
+
+  /** 写唱臂角。判据写成「不小于等于」而不是「大于」：首帧 lastArmAngle 是 NaN，
+   *  用 > 比较永远为假，打开视图时正在播放的话唱臂会停在 CSS 默认角上（要等下一次快照才动）。 */
+  private writeArm(angle: number) {
+    const els = this.els;
+    if (!els) return;
+    if (!(Math.abs(angle - this.lastArmAngle) <= 0.05)) {
+      this.lastArmAngle = angle;
+      els.arm.style.setProperty('--vinyl-arm-angle', `${angle.toFixed(2)}deg`);
+    }
+  }
+
+  /** 起手（转过 3° 才走到这里）：接管盘面与声音。轻量 / 完整两条路由搓碟台的就绪状态决定。 */
+  private scratchEngage() {
+    const els = this.els;
+    const s = this.lastSnapshot;
+    if (!els || this.scratch || !s?.current || s.index < 0) return;
+    // 手已经按在唱片上了：这一首的缓冲现在就去抓（预载没赶上时的兜底 —— 见 maybePrepareScratch）
+    this.maybePrepareScratch(s, true);
+    const key = trackKey(s.current);
+    const deckReady =
+      !!this.scratchDeck && this.plugin.settings.scratchSound === 'full' && this.scratchDeck.prepared(key);
+    const info = this.plugin.engine.beginScratch({ live: !deckReady });
+    if (!info) return;
+    // 搓碟台接不下（声卡上下文就是建不出来这类）：如实退回轻量路 —— 引擎那边的会话也要跟着换，
+    // 否则元素不出声、搓碟台也没声，手在盘上划半天是哑的
+    const useDeck = deckReady && !!this.scratchDeck?.begin(key, info.time, this.scratchTracker.rate);
+    if (!useDeck) this.plugin.engine.setScratchLive(true);
+    this.scratchTracker.reset();
+    this.scratch = {
+      phase: 'drag',
+      playing: info.playing,
+      index: s.index,
+      key,
+      deck: useDeck,
+      pos: info.time,
+      angle: this.currentSpinAngle(),
+      rate: 0,
+      at: performance.now(),
+      raf: 0,
+    };
+    els.vinyl.addClass('is-scratching');
+    els.turntable.addClass('is-scratching');
+    // 手一按下去唱针就落在盘上（暂停起手也一样 —— 搓碟期间唱针在槽里）
+    els.arm.removeClass('is-parked');
+    this.lastPosture = 'record';
+    this.scratch.raf = window.requestAnimationFrame(this.scratchLoop);
+  }
+
+  /** 每帧一步：drag 里把指针转角变成角度与倍速，settle 里让马达把转盘拉回正常转速 */
+  private scratchLoop = (now: number) => {
+    const st = this.scratch;
+    if (!st) return;
+    const dt = Math.min(100, Math.max(0, now - st.at)); // 窗口切回来别让一帧吃掉几秒
+    st.at = now;
+    const spin = this.spinSeconds();
+    const target = st.playing ? 1 : 0;
+    if (st.phase === 'drag') {
+      const { turn, rate } = this.scratchTracker.frame(dt, spin);
+      st.angle += turn; // 视觉用原始转角：直接跟手，不过平滑
+      st.rate = rate;
+    } else {
+      st.rate = approachRate(st.rate, target, dt);
+      st.angle += (st.rate * 360 * dt) / (spin * 1000);
+      if (Math.abs(st.rate - target) < SCRATCH_SETTLE_EPS) {
+        this.scratchFinish();
+        return;
+      }
+    }
+    this.scratchApply(st, dt);
+    st.raf = window.requestAnimationFrame(this.scratchLoop);
+  };
+
+  /** 把这一帧的角度与位置写给盘面 / 声音 / 进度 / 唱臂 */
+  private scratchApply(st: ScratchState, dt: number) {
+    const els = this.els;
+    if (!els) return;
+    els.vinyl.style.setProperty('--vinyl-scratch-angle', `${st.angle.toFixed(2)}deg`);
+    // 轻量路搓到一半、缓冲备好了：这一程余下的交给搓碟台（正反都出声那套）。
+    // 起点接着走（当前位置直接交给它），元素让位 —— 第一下搓碟不必等完整的几秒下载。
+    if (!st.deck && this.canUpgrade(st) && this.scratchDeck?.begin(st.key, st.pos, st.rate)) {
+      st.deck = true;
+      this.plugin.engine.setScratchLive(false);
+    }
+    if (st.deck) {
+      // 完整音效：声音与位置都由搓碟台自己积分（倍速平滑后的积分就是它听到的位置）
+      this.scratchDeck?.frame(dt, st.rate);
+      st.pos = this.scratchDeck?.position() ?? st.pos;
+    } else {
+      // 轻量音效：位置由这里积分；元素只负责「正向按倍速出声、其余停声」
+      const dur = this.lastSnapshot?.duration || 0;
+      const step = (st.rate * dt) / 1000;
+      st.pos = dur > 0 ? Math.min(dur, Math.max(0, st.pos + step)) : Math.max(0, st.pos + step);
+    }
+    // 位置先喂给引擎（读数 / 媒体面板 / 唱臂），再让轻量路按倍速起停 —— 顺序不能反：
+    // 轻量路出声前要拿最新针位把元素对齐（见 player-state 的 scratchRate）
+    this.plugin.engine.updateScratch(st.pos);
+    if (!st.deck) this.plugin.engine.scratchRate(st.rate);
+    this.scratchPreview(st.pos);
+  }
+
+  /** 这一程能不能改走搓碟台：完整音效 + 这一首的缓冲刚备好（每帧问一次，就一个 Map 查询） */
+  private canUpgrade(st: ScratchState): boolean {
+    return (
+      this.plugin.settings.scratchSound === 'full' && !!this.scratchDeck && this.scratchDeck.has(st.key)
+    );
+  }
+
+  /** 搓碟期间的界面跟手：进度轨 / 读数 / 唱臂（与拖动进度条同一套本地预览的写法） */
+  private scratchPreview(pos: number) {
+    const els = this.els;
+    const s = this.lastSnapshot;
+    if (!els || !s) return;
+    const dur = s.duration || 0;
+    if (!(dur > 0)) return;
+    const ratio = clampRatio(pos / dur);
+    els.progressSlider.value = String(Math.round(ratio * 1000));
+    setSeekPosition(els.progressRail, ratio);
+    const text = `${fmtTime(pos)} / ${fmtTime(dur)}`;
+    if (text !== this.lastTimeText) {
+      this.lastTimeText = text;
+      els.timeEl.textContent = text;
+    }
+    this.writeArm(this.armAngleFor(s, pos)); // 唱针还在槽里：进到哪，臂就移到哪
+  }
+
+  /** 松手：播放中 → 马达回正（转盘自己转回正常转速，声音跟着收）；暂停起手 → 就地收尾 */
+  private scratchRelease() {
+    const st = this.scratch;
+    if (!st || st.phase === 'settle') return;
+    if (!st.playing) {
+      this.scratchFinish(); // 盘本来就是停的：不回转，位置留在松手处（＝手动定位）
+      return;
+    }
+    st.phase = 'settle';
+  }
+
+  /** 收尾：位置交回引擎，盘面交回 CSS 动画 */
+  private scratchFinish() {
+    const st = this.scratch;
+    if (!st) return;
+    this.scratch = null;
+    window.cancelAnimationFrame(st.raf);
+    // 先压住回声（引擎那边一写回就会 emit）：抬手后不许把轨道拽回旧位置
+    const dur = this.lastSnapshot?.duration || 0;
+    this.seekHold = {
+      ratio: dur > 0 ? clampRatio(st.pos / dur) : 0,
+      index: this.lastSnapshot?.index ?? st.index,
+      until: Date.now() + SEEK_HOLD_MS,
+    };
+    const els = this.els;
+    if (els) {
+      // 交还旋转：把当前角度写进负 animation-delay，再摘掉接管类 —— 转盘从原角度接着转，不跳。
+      // 下一次「从暂停转回播放」时动画会重建，那时延迟已无意义（update 里清掉）。
+      const spinMs = this.spinSeconds() * 1000;
+      const frac = (((st.angle % 360) + 360) % 360) / 360;
+      els.vinyl.style.setProperty('animation-delay', `-${Math.round(frac * spinMs)}ms`);
+      els.vinyl.removeClass('is-scratching');
+      els.turntable.removeClass('is-scratching');
+    }
+    // 顺序有意为之：先把元素接回去（seek + play 都要几十毫秒才出声），再让搓碟台按它的收尾包络
+    // 淡出 —— 两个声音叠一点点，比中间空一拍好。反过来写就是一个听得见的窟窿。
+    this.plugin.engine.endScratch(st.pos, st.playing);
+    this.scratchDeck?.end();
+    this.scratchTracker.reset();
+  }
+
+  /** 手势作废（换曲 / 关视图）：不写位置 —— 引擎那边的会话已经收掉了，这里只把声音与盘面收干净 */
+  private scratchAbort() {
+    const st = this.scratch;
+    if (!st) return;
+    this.scratch = null;
+    window.cancelAnimationFrame(st.raf);
+    this.els?.vinyl.removeClass('is-scratching');
+    this.els?.turntable.removeClass('is-scratching');
+    this.scratchDeck?.end();
+    this.scratchTracker.reset();
+  }
+
+  // —— 搓碟缓冲（完整音效的准备；轻量档从不走到这里）——
+
+  /** 挂表：开播一会儿之后去抓整轨。见 SCRATCH_PRELOAD_DELAY_MS 与 maybePrepareScratch 的说明。
+   *  到点时会再核一遍曲目 / 播放状态 / 当前面 —— 这几秒里用户可能已经翻到唱片区或者按了暂停。 */
+  private armScratchPreload(s: PlayerSnapshot) {
+    this.disarmScratchPreload();
+    if (!this.plugin.settings.scratchEnabled) return;
+    if (this.plugin.settings.scratchSound !== 'full') return;
+    if (!this.plugin.settings.scratchPreload) return;
+    if (!s.current || s.status !== 'playing' || this.face !== 'player') return;
+    const key = trackKey(s.current);
+    this.scratchPreloadTimer = window.setTimeout(() => {
+      this.scratchPreloadTimer = null;
+      const cur = this.lastSnapshot;
+      if (!cur?.current || trackKey(cur.current) !== key) return;
+      if (cur.status !== 'playing' || this.face !== 'player') return;
+      // 排不下（在途满了，见 ScratchDeck.prepare）就再挂一次 —— 连着切歌时后一首不该永远排不上队
+      if (!this.maybePrepareScratch(cur, true)) this.armScratchPreload(cur);
+    }, SCRATCH_PRELOAD_DELAY_MS);
+  }
+
+  private disarmScratchPreload() {
+    if (this.scratchPreloadTimer !== null) window.clearTimeout(this.scratchPreloadTimer);
+    this.scratchPreloadTimer = null;
+  }
+
+  /** 备搓碟缓冲。两个触发点：
+   *    ① 预载（force，开播满 SCRATCH_PRELOAD_DELAY_MS 后，见 armScratchPreload）—— 常态；
+   *    ② 手按上来的那一刻 —— 预载没赶上（刚切歌 / 关着预载）时的兜底。
+   *  两个代价都是真的，权衡下来这么切：
+   *    立刻抓 = 跟开播抢带宽、还多解析一次播放地址，切歌会变得不跟手（用户实测）；
+   *    只在手按上来才抓 = 每张唱片的第一下搓碟只有轻量音效：倒着拖没声、位置也对不上，
+   *    听感是「声音跟歌没关系」（也是用户实测）。开播几秒再抓，两头都躲开。 */
+  private maybePrepareScratch(s: PlayerSnapshot, force = false): boolean {
+    const want = this.scratchWant;
+    if (!want || !s.current || trackKey(s.current) !== want.key) return true;
+    if (!this.plugin.settings.scratchEnabled || this.plugin.settings.scratchSound !== 'full') return true;
+    const deck = this.ensureScratchDeck();
+    if (deck.prepared(want.key)) return true; // 已经备好（缓存命中）：什么都不用做
+    if (!force) return true; // 没动手就不下载
+    const track = want.track;
+    const dur = s.duration || track.duration || 0;
+    // 时长已知时先在下载前筛一遍（装不下的曲子不必白下一整轨）
+    if (!deck.canPrepare(dur)) return true;
+    return deck.prepare(want.key, dur, () => this.loadScratchSource(track, dur));
+  }
+
+  private ensureScratchDeck(): ScratchDeck {
+    if (!this.scratchDeck) {
+      this.scratchDeck = new ScratchDeck({
+        volume: () => this.lastSnapshot?.volume ?? this.plugin.settings.volume,
+      });
+    }
+    return this.scratchDeck;
+  }
+
+  private disposeScratchDeck() {
+    this.scratchDeck?.dispose();
+    this.scratchDeck = null;
+  }
+
+  /** 搓碟缓冲的取料：整轨字节 + 时长（时长用来挑解码采样率）。
+   *  字节：本地走 LocalSource（vault / fs）、在线走 requestUrl（主进程发起、不受 CORS 限制 ——
+   *  CDN 不给跨源头，渲染进程 fetch 会直接失败）。
+   *  时长：优先用已知值（元素元数据 / 队列元数据）；本地没播过的曲子没有时长元数据，
+   *  用一次元数据探测补上 —— 探测与取字节并行跑，不额外等。 */
+  private async loadScratchSource(track: Track, knownSec: number): Promise<ScratchSource> {
+    try {
+      let url = '';
+      if (track.source === 'local-vault') url = this.plugin.local.resolveVaultUrl(track.file);
+      else if (track.source === 'local-external') url = this.plugin.local.resolveExternalUrl(track.path);
+      else url = await this.plugin.engine.resolveUrl(track);
+      if (!url) return { bytes: null, durationSec: 0 };
+      const bytes = isLocalTrack(track)
+        ? this.plugin.local.readTrackBytes(track)
+        : requestUrl({ url }).then((r) => r.arrayBuffer);
+      const duration = knownSec > 0 ? Promise.resolve(knownSec) : probeMediaDuration(url);
+      const [buf, dur] = await Promise.all([bytes, duration]);
+      return { bytes: buf, durationSec: dur };
+    } catch (e) {
+      console.warn('[vinyl] 搓碟缓冲取料失败（这首曲子只走轻量音效）', e);
+      return { bytes: null, durationSec: 0 };
+    }
+  }
+
   // 落盘入场（交接 C 阶段）：唱片从左侧飞入转盘（用户要求）。
   // 三条硬约束：
   //   ① 动画只碰 transform —— 唱片的居中在 CSS 里用的是独立的 translate 属性（见 styles.css 的
@@ -1261,8 +1683,11 @@ export class VinylPlayerView extends ItemView {
   }
 
   private resetTurntable(els: PlayerEls) {
+    this.scratchAbort(); // 清空队列 / 换碟：手还按在盘上的话，这次手势到此为止
     els.vinyl.classList.remove('is-spinning', 'is-paused');
     els.vinyl.classList.add('is-empty');
+    els.vinyl.style.removeProperty('animation-delay');
+    els.vinyl.style.removeProperty('--vinyl-scratch-angle');
     // 唱臂归位到支架（显式写死：CSS 变量可能停在播放中的角度上）
     els.arm.style.setProperty('--vinyl-arm-angle', `${ARM_PARK_ANGLE.toFixed(2)}deg`);
     this.lastArmAngle = ARM_PARK_ANGLE;

@@ -109,7 +109,10 @@ test('接线：弹窗挂 vinyl-modal、菜单挂 vinyl-menu（只影响插件自
     ['src/views/qr-login-modal.ts', 1],
     ['src/views/delete-album-modal.ts', 1],
     ['src/views/delete-batch-modal.ts', 1],
-    ['src/views/stats-page.ts', 1],
+    ['src/views/stats-page.ts', 3], // 恢复备份 / 清除统计确认（+页面自绘的壳）
+    ['src/views/library-health.ts', 3], // 健康检查 / 换源 / 重新定位音频
+    ['src/views/link-source-modal.ts', 1],
+    ['src/views/album-edition-modal.ts', 1],
   ];
   for (const [file, n] of modals) {
     const src = read(file);

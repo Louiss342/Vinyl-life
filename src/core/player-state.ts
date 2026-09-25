@@ -7,7 +7,13 @@ import { LocalSource } from './local-source';
 import { NeteaseService } from './netease';
 import { QqService } from './qq';
 import { KugouService } from './kugou';
-import { buildAlbumQueue, BuildQueueResult, ActiveSource, sourceLabel } from './queue';
+import { buildAlbumQueue, BuildQueueResult, ActiveSource, SourcePolicy, sourceLabel } from './queue';
+import {
+  SCRATCH_LIVE_ALIGN_TOL,
+  SCRATCH_LIVE_PAUSE_RATE,
+  SCRATCH_LIVE_RESUME_RATE,
+  SCRATCH_MAX_RATE,
+} from './scratch';
 import type { VinylSettings } from '../settings';
 import { notice } from '../util';
 import { t, tf } from './i18n';
@@ -67,6 +73,7 @@ export interface EngineDeps {
   settings: () => VinylSettings;
   /** 曲目成功开播钩子（播放统计用；重试路径不触发） */
   onTrackPlay?: (track: Track, albumNotePath?: string, albumTitle?: string) => void;
+  onAlbumLoadFailed?: (album: AlbumInfo, policy: SourcePolicy, reason: string) => void;
 }
 
 export class PlaybackEngine {
@@ -94,6 +101,15 @@ export class PlaybackEngine {
   private lastTimeEmit = 0;
   // 加载代次：快速连点两张专辑时，先发起的在线队列构建可能后返回，须丢弃以免覆盖新选择
   private loadSeq = 0;
+  /** 搓碟会话（null = 没在搓）：搓碟期间元素暂停、位置由视图逐帧喂进来（见 beginScratch）。
+   *  状态字段在搓碟期间不跟着元素的 play / pause 事件抖（见构造函数里的两个监听）。
+   *  pitchFollow = 本会话把元素的「保音高」关掉了（松手要还回去，见 setPitchFollow）。 */
+  private scratch: {
+    live: boolean;
+    resumePlaying: boolean;
+    time: number;
+    pitchFollow: boolean;
+  } | null = null;
 
   constructor(private deps: EngineDeps) {
     this.playMode = deps.playMode?.() || 'once';
@@ -102,13 +118,17 @@ export class PlaybackEngine {
     this.audio.addEventListener('loadedmetadata', () => this.emit());
     this.audio.addEventListener('timeupdate', () => this.emitThrottled());
     this.audio.addEventListener('ended', () => this.onEnded());
+    // 搓碟期间元素的 play / pause 是「手在盘上」的中间态（轻量音效会随倍速反复起停），
+    // 一律不写状态：对外报的是起手前的姿态（见 snapshot）。
     this.audio.addEventListener('play', () => {
+      if (this.scratch) return;
       if (this.status !== 'playing') {
         this.status = 'playing';
         this.emit();
       }
     });
     this.audio.addEventListener('pause', () => {
+      if (this.scratch) return;
       if (this.status === 'playing') {
         this.status = 'paused';
         this.emit();
@@ -130,14 +150,13 @@ export class PlaybackEngine {
 
   snapshot(): PlayerSnapshot {
     return {
-      status: this.status,
+      // 搓碟期间对外报「起手前的姿态」：手在盘上不该让播放键熄灭、系统面板翻成暂停
+      status: this.scratch ? (this.scratch.resumePlaying ? 'playing' : 'paused') : this.status,
       queue: this.queue,
       index: this.index,
       current: this.index >= 0 ? this.queue[this.index] : undefined,
-      currentTime: this.audio.currentTime || 0,
-      duration: isFinite(this.audio.duration)
-        ? this.audio.duration
-        : this.queue[this.index]?.duration || 0,
+      currentTime: this.scratch ? this.scratch.time : this.audio.currentTime || 0,
+      duration: this.audioDuration(),
       volume: this.audio.volume,
       // 专辑信息按「当前曲目」推：多专辑队列里播放会跨段，用最后一次 loadAlbum 的那张会串
       albumNotePath: this.albumOfCurrent().path,
@@ -202,9 +221,9 @@ export class PlaybackEngine {
   // —— 队列 ——
   /** opts.autoplay 缺省时看设置（「加载队列后立即播放」）；恢复上次会话传 false
    *  —— 重启 Obsidian 时突然出声是惊吓，不是功能。 */
-  async loadAlbum(album: AlbumInfo, opts?: { autoplay?: boolean }): Promise<BuildQueueResult> {
+  async loadAlbum(album: AlbumInfo, opts?: { autoplay?: boolean; source?: SourcePolicy }): Promise<BuildQueueResult> {
     const seq = ++this.loadSeq;
-    const res = await buildAlbumQueue(album, {
+    const res = await buildAlbumQueue(opts?.source ? { ...album, sourcePref: opts.source } : album, {
       local: this.deps.local,
       netease: this.deps.netease,
       qq: this.deps.qq,
@@ -217,6 +236,7 @@ export class PlaybackEngine {
       this.errorMsg = res.reason || '';
       this.status = 'idle';
       this.emit();
+      this.deps.onAlbumLoadFailed?.(album, res.policy, res.reason || t('player.noPlayableTrack'));
       notice(res.reason || t('player.noPlayableTrack'));
       return res;
     }
@@ -244,6 +264,9 @@ export class PlaybackEngine {
     this.index = -1;
     this.albumNotePath = albumNotePath;
     this.albumTitle = albumTitle;
+    for (const track of tracks) {
+      if (track.albumNotePath && track.album) this.albumTitles.set(track.albumNotePath, track.album);
+    }
     if (albumNotePath) this.albumTitles.set(albumNotePath, albumTitle);
     this.sourceKind = source;
     this.quality = '';
@@ -386,6 +409,7 @@ export class PlaybackEngine {
 
   // 卸载当前音源（换专辑 / 复位共用；removeAttribute + load 是 Chromium 释放媒体的标准姿势）
   private unloadAudio() {
+    this.abortScratch(); // 换碟 / 移除整段时手还按在盘上的话：这次搓碟作废（视图下次快照会收尾）
     this.audio.pause();
     this.audio.removeAttribute('src');
     try {
@@ -419,6 +443,7 @@ export class PlaybackEngine {
   async playIndex(i: number, opts?: { retry?: boolean }) {
     if (i < 0 || i >= this.queue.length) return;
     if (this.index === i && this.status === 'playing') return;
+    this.abortScratch(); // 点队列切歌 / 媒体键下一首：手里的那张碟换掉了
     this.index = i;
     this.status = 'loading';
     this.errorMsg = '';
@@ -526,11 +551,153 @@ export class PlaybackEngine {
     }
   }
 
+  /** 当前曲目的可用时长（秒）：元素报的优先（元数据到位后最准），退回队列里的元数据 */
+  private audioDuration(): number {
+    return isFinite(this.audio.duration) ? this.audio.duration : this.queue[this.index]?.duration || 0;
+  }
+
   seek(ratio: number) {
-    const d = isFinite(this.audio.duration)
-      ? this.audio.duration
-      : this.queue[this.index]?.duration || 0;
+    if (this.scratch) return; // 搓碟期间位置归手势，别让别处的 seek 把盘面拽走
+    const d = this.audioDuration();
     if (d > 0) this.audio.currentTime = ratio * d;
+  }
+
+  // —— 搓碟（视图的手势通道）——
+  // 分工：视图负责手势、视觉与（完整音效的）解码搓碟台；引擎只负责元素的起停与状态口径。
+  // 位置的主人始终是视图 —— 快照里的 currentTime 在搓碟期间读的就是视图喂进来的值。
+
+  /** 起手：暂停元素并交出位置。返回 null = 这次不接（没曲目 / 还没就绪 / 已经在搓）。
+   *  live = 声音由轻量路出（元素自己按倍速）—— 视图的搓碟台没就绪时走这条。 */
+  beginScratch(opts: { live: boolean }): { time: number; playing: boolean } | null {
+    if (this.scratch) return null;
+    if (this.index < 0 || !this.queue[this.index]) return null;
+    // loading / error / idle 不接（换曲取址的间隙里盘上放的是上一首的声音）
+    if (this.status !== 'playing' && this.status !== 'paused') return null;
+    const time = this.audio.currentTime || 0;
+    const playing = this.status === 'playing';
+    // 先立会话再暂停：pause 事件（异步）回来时看到 scratch 已经存在，就不会把状态写成暂停
+    this.scratch = { live: opts.live, resumePlaying: playing, time, pitchFollow: false };
+    if (playing) this.audio.pause();
+    if (opts.live) this.applyPitchFollow(true); // 声音要走元素：音高跟着转速（见 setPitchFollow）
+    return { time, playing };
+  }
+
+  /** 换出声路线：视图的搓碟台中途备好了 → 声音交给它（元素让位，别两边一起响）。
+   *  反向不需要（搓碟台出不了声才退回元素，那种情形不会中途发生）。 */
+  setScratchLive(live: boolean) {
+    const s = this.scratch;
+    if (!s || s.live === live) return;
+    s.live = live;
+    if (live) {
+      this.applyPitchFollow(true);
+      return;
+    }
+    if (!this.audio.paused) this.audio.pause();
+    try {
+      this.audio.playbackRate = 1;
+    } catch {
+      /* 元素对倍速挑剔：忽略 */
+    }
+    this.applyPitchFollow(false);
+  }
+
+  /** 元素的「保音高」开关：preservesPitch 默认是 true —— 那是给变速不变调用途的时间拉伸，
+   *  0.5 倍速听上去是「慢放」而不是黑胶。搓碟要的是唱片那一套：转速变多少、音高就变多少
+   *  （搓碟的灵魂之一正是这个「跟着手变调」）。只在轻量路（元素真的出声）用得上，
+   *  松手 / 换路 / 收会话都要还回去 —— 正常播放不受影响。 */
+  private applyPitchFollow(on: boolean) {
+    const s = this.scratch;
+    if (!s || s.pitchFollow === on) return;
+    s.pitchFollow = on;
+    const a = this.audio as HTMLAudioElement & { webkitPreservesPitch?: boolean };
+    try {
+      a.preservesPitch = !on;
+      if ('webkitPreservesPitch' in a) a.webkitPreservesPitch = !on; // 老内核的别名，顺手写上
+    } catch {
+      /* 元素不支持 / 替身对象：倍速照旧，只是音高不变 */
+    }
+  }
+
+  /** 搓碟期间的位置（秒）：视图逐帧喂进来；快照 / 系统媒体面板 / 上次播放位置都跟着走 */
+  updateScratch(time: number) {
+    const s = this.scratch;
+    if (!s) return;
+    const d = this.audioDuration();
+    s.time = Math.max(0, d > 0 ? Math.min(time, d) : time);
+    this.emitThrottled(); // 与 timeupdate 同一条节流：别让 60fps 的位置刷新把界面拖垮
+  }
+
+  /** 轻量音效：元素按倍速出声 —— 只有正向（元素没有反向，倒着拖是它出不了声的那一半，
+   *  不是坏掉；要正反都出声得走视图的搓碟台）。
+   *  两件必须做的事：
+   *    ① 出声前把元素对到针位上：停声期间元素原地不动，而针位一直在跟着手走 ——
+   *       不对齐就出声的话，听到的是手指早就划过的那一段（「声音跟歌没关系」正是这么来的）；
+   *    ② 出声 / 停声之间留迟滞（停声线与出声线两档）：每次切换都是真的 play() / pause()，
+   *       在阈值上抖一下就是一片碎音。 */
+  scratchRate(rate: number) {
+    const s = this.scratch;
+    if (!s || !s.live) return;
+    const a = this.audio;
+    if (rate >= SCRATCH_LIVE_RESUME_RATE) {
+      try {
+        a.playbackRate = Math.min(SCRATCH_MAX_RATE, rate);
+      } catch {
+        /* 元素对倍速挑剔：忽略，位置与视觉照常 */
+      }
+      if (a.paused) this.startLive(s.time);
+      return;
+    }
+    if (rate < SCRATCH_LIVE_PAUSE_RATE && !a.paused) a.pause();
+  }
+
+  /** 轻量音效从停声转出声：先对针位、再让音高跟着转速、最后 play（出声失败不打断搓碟） */
+  private startLive(time: number) {
+    const a = this.audio;
+    // 对齐要断一下声音，差一点点不值得断；差得多就必须对（见 scratchRate ①）
+    if (Math.abs((a.currentTime || 0) - time) > SCRATCH_LIVE_ALIGN_TOL) {
+      try {
+        a.currentTime = time;
+      } catch {
+        /* 没有 src / 实现挑剔：位置保持原样，至少倍速是对的 */
+      }
+    }
+    this.applyPitchFollow(true);
+    void a.play().catch(() => undefined);
+  }
+
+  /** 抬手：把最终位置写回元素，并按起手前的姿态回到播放 / 暂停 */
+  endScratch(time: number, resume: boolean) {
+    if (!this.scratch) return;
+    this.applyPitchFollow(false); // 交还元素：保音高还回去（要在清掉会话之前）
+    this.scratch = null;
+    const d = this.audioDuration();
+    // 别顶到末尾（顶上去会直接触发 ended 切歌）
+    const t = Math.max(0, d > 0 ? Math.min(time, Math.max(0, d - 0.05)) : time);
+    // 轻量路抬手时元素本来就在放、位置一路对着针位（见 scratchRate ①）：这点零头不值得
+    // 用一次 seek（那是几十毫秒的断音）去纠。元素停着就得写 —— 完整音效的指针位置全靠这一下。
+    const drift = Math.abs((this.audio.currentTime || 0) - t);
+    if (this.audio.paused || drift > SCRATCH_LIVE_ALIGN_TOL) {
+      try {
+        this.audio.currentTime = t;
+      } catch {
+        /* 没有 src / 实现挑剔：位置保持原样 */
+      }
+    }
+    this.audio.playbackRate = 1;
+    if (resume) {
+      if (this.audio.paused) void this.audio.play().catch(() => void this.onAudioError());
+    } else if (!this.audio.paused) {
+      this.audio.pause();
+    }
+    this.emit();
+  }
+
+  /** 收掉搓碟会话（换曲 / 清队列 / 卸载音源 / 关插件）：不写位置、不碰元素 —— 调用方自己收尾 */
+  private abortScratch() {
+    if (!this.scratch) return;
+    this.applyPitchFollow(false);
+    this.scratch = null;
+    this.audio.playbackRate = 1;
   }
 
   setVolume(v: number) {
@@ -696,6 +863,7 @@ export class PlaybackEngine {
 
   dispose() {
     this.listeners.clear();
+    this.abortScratch();
     this.audio.pause();
     this.audio.removeAttribute('src');
     try {

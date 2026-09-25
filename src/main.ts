@@ -1,6 +1,6 @@
 // Vinyl Life —— 主入口：注册视图 / 命令 / 设置面板，装配服务层与播放引擎。
 // 本地源（零后端）+ 在线源（应用内网关）统一为 Track 队列。
-import { Editor, Plugin, TFile, MarkdownView, WorkspaceLeaf, normalizePath } from 'obsidian';
+import { Editor, Plugin, TFile, TFolder, MarkdownView, WorkspaceLeaf, normalizePath, Notice } from 'obsidian';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
@@ -36,6 +36,7 @@ import {
   findAlbumNotes,
   setAlbumTemplatePath,
   stripWikilink,
+  detectAlbumSources,
 } from './core/album-index';
 import { normalizeShelfProps, normalizeShelfPropLabels, propLabel } from './core/shelf-props';
 import { DISC_DIRECTIONS, SPIN_SPEEDS } from './core/disc-motion';
@@ -44,6 +45,7 @@ import {
   normalizeRecordColor,
   normalizeToolbarPosition,
 } from './core/appearance';
+import { normalizeScratchSound } from './core/scratch';
 import { normalizeSearchScope } from './core/album-discovery';
 import {
   notice,
@@ -54,6 +56,7 @@ import {
   analyzeFolder,
   relPathOf,
   libraryRootHint,
+  fmtTime,
 } from './util';
 import {
   ImportContext,
@@ -66,8 +69,24 @@ import { DeleteAlbumModal } from './views/delete-album-modal';
 import { DeleteBatchModal } from './views/delete-batch-modal';
 import { collectAlbumBatchDeleteTargets, deleteAlbumBatchAssets } from './delete';
 import { setLanguage, t, tf } from './core/i18n';
-import { AlbumPlayStat, AlbumStatSnapshot, VinylStats, ensureStats, localDayKey, recordTrackPlay } from './core/stats';
+import {
+  AlbumPlayStat,
+  AlbumStatSnapshot,
+  PlayEvent,
+  VinylStats,
+  ensureStats,
+  localDayKey,
+  needsRetention,
+  normalizePlayEvents,
+  recordTrackPlay,
+  trimPlayEvents,
+} from './core/stats';
+import { normalizeProbeScope } from './core/library-health';
 import { Track, trackKey } from './core/track';
+import { buildAlbumQueue } from './core/queue';
+import { parseQueueEntries, pickTrackByTitle, queueNoteLines } from './core/queue-note';
+import type { ActiveSource } from './core/queue';
+import { LibraryHealthModal, SourceSwitchModal } from './views/library-health';
 
 // wikilink 里不能安全出现的字符：|（别名分隔）与 [ ]（链接定界）、换行。
 // 专辑名理论上可能含「]]」，路径也可能被手改成怪样子 —— 这类值一律不硬塞进链接。
@@ -88,8 +107,18 @@ function albumWikiLink(path: string | undefined, title: string): string {
   return name;
 }
 
-/** 导出笔记的落点目录名：和 audio / covers / Vinyl Note 一样用英文，不随界面语言变 */
-const STATS_EXPORT_FOLDER = 'Stats';
+/** 自动备份：文件名前缀（清理旧份数时只认这个前缀，手动备份 / 裁剪归档不碰）与间隔（一周） */
+const AUTO_BACKUP_PREFIX = 'Vinyl Life auto backup';
+const AUTO_BACKUP_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** 解码失败就原样返回：链接可能是用户手打的，半个 % 会让 decodeURIComponent 抛异常 */
+function safeDecode(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
 
 /** Markdown 表格单元格：管道会截断列、换行会断行 —— wikilink 的别名分隔符靠这一步进表格 */
 function tableCell(text: string): string {
@@ -115,6 +144,13 @@ export default class VinylLifePlugin extends Plugin {
   local!: LocalSource;
   engine!: PlaybackEngine;
   handoff!: HandoffController;
+  private lastReportedSourceFailure = '';
+  private pendingSourceSwitch: { path: string; source: ActiveSource } | null = null;
+  private awaitingRestartAfterRestore = false;
+  /** 本轮会话里播放明细归档失败过（播放中反复触发时只提示一次） */
+  private archiveFailedThisSession = false;
+  /** 本轮会话里自动备份失败过（同上：每小时检查一次，失败别反复弹） */
+  private autoBackupFailedThisSession = false;
 
   async onload() {
     // 样式兜底：styles.css 缺失、或与插件版本不一致（只覆盖了 main.js / 同步到一半）时，
@@ -128,7 +164,7 @@ export default class VinylLifePlugin extends Plugin {
 
     await this.loadSettings();
 
-    // 首次运行自动搭好目录结构（默认 Vinyl Life/{audio, covers, Vinyl Note}）：
+    // 首次运行自动搭好目录结构（默认 Vinyl Life/{Vinyl Note, covers, audio, Stats}）：
     // 新装用户装完即用；已有目录不动，失败不阻塞加载（导入流程里还会再兜一次）
     await this.ensureDataFolders();
 
@@ -167,8 +203,22 @@ export default class VinylLifePlugin extends Plugin {
       qq: this.qq,
       kugou: this.kugou,
       settings: () => this.settings,
-      onTrackPlay: (track, albumPath, albumTitle) =>
-        this.recordPlay(track, albumPath, albumTitle),
+      onTrackPlay: (track, albumPath, albumTitle) => {
+        this.recordPlay(track, albumPath, albumTitle);
+        const pending = this.pendingSourceSwitch;
+        if (pending?.path === albumPath) {
+          const active = track.source === 'local-vault' || track.source === 'local-external'
+            ? 'local' : track.source;
+          if (active === pending.source) {
+            this.pendingSourceSwitch = null;
+            const file = this.app.vault.getAbstractFileByPath(pending.path);
+            if (file instanceof TFile) {
+              void this.app.fileManager.processFrontMatter(file, (fm) => { fm.source = pending.source; });
+            }
+          }
+        }
+      },
+      onAlbumLoadFailed: (album, policy, reason) => this.reportAlbumSourceFailure(album, policy, reason),
       // 播放模式是持久设置：引擎启动时读一次，之后由引擎自己维护
       playMode: () => this.settings.playMode,
     });
@@ -185,6 +235,7 @@ export default class VinylLifePlugin extends Plugin {
         seek: (ratio) => this.engine.seek(ratio),
       });
       this.rememberPlayback(s);
+      this.trackSourceHealth(s);
     });
     this.handoff = new HandoffController(this);
 
@@ -193,7 +244,7 @@ export default class VinylLifePlugin extends Plugin {
     this.registerView(SHELF_VIEW_TYPE, (leaf) => new VinylShelfView(leaf, this));
     // 图标与播放器视图一致（disc-3），方便一眼认出是 Vinyl Life
     this.addRibbonIcon('disc-3', t('cmd.ribbonShelf'), () => this.openShelf());
-    // 命令面板：视图、导入、插入正在播放与三条播放控制，共 8 条常驻命令。
+    // 命令面板：视图、导入、笔记、队列与三条播放控制，共 10 条常驻命令。
     // 登录 / 退出统一从「设置 → 源」操作，不再额外占用命令面板。
     // 命令 id 不得改动（改了会让已绑定的快捷键失效）
     this.addCommand({
@@ -221,6 +272,16 @@ export default class VinylLifePlugin extends Plugin {
       name: t('cmd.insertNowPlaying'),
       callback: () => this.insertNowPlaying(),
     });
+    this.addCommand({
+      id: 'save-queue-note',
+      name: t('queueNote.save'),
+      callback: () => void this.saveQueueNote(),
+    });
+    this.addCommand({
+      id: 'load-queue-note',
+      name: t('queueNote.load'),
+      callback: () => void this.loadQueueFromActiveNote(),
+    });
     // 播放控制：给快捷键与命令面板用（媒体键另走 MediaSession，见引擎订阅）
     this.addCommand({
       id: 'player-toggle',
@@ -237,10 +298,20 @@ export default class VinylLifePlugin extends Plugin {
       name: t('player.prev'),
       callback: () => void this.engine.prev(),
     });
+    // 笔记里的播放位置 → 跳回音乐（写感想时把位置写成 obsidian:// 链接，见 appendListeningNote）。
+    // 这是「听到这里 → 记下 → 日后重听」闭环里最后那一跳。
+    this.registerObsidianProtocolHandler('vinyl-life', (params) => void this.resumeFromNote(params));
+
     this.addSettingTab(new VinylSettingTab(this.app, this));
 
     // 恢复上次的队列位置（不自动播放）：放在最后，失败也不影响插件可用
     void this.restoreLastPlayback();
+
+    // 每周自动备份：启动时查一次，之后每小时查一次（长期开着 Obsidian 也会到点就备）
+    void this.maybeAutoBackup();
+    this.registerInterval(
+      window.setInterval(() => void this.maybeAutoBackup(), 60 * 60 * 1000)
+    );
 
   }
 
@@ -258,7 +329,22 @@ export default class VinylLifePlugin extends Plugin {
     this.settings = { ...DEFAULT_SETTINGS, ...data };
     // 1.0.10 之前的调试命令开关已移除；清掉旧 data.json 残留，避免下次保存继续带回。
     delete (this.settings as VinylSettings & { debugCommands?: unknown }).debugCommands;
+    // 统计导出 / 队列笔记目录：1.2.0 之前没有这两项，按当时的推导口径补齐
+    // （专辑笔记目录的上一级 + Stats / Queues）—— 改过专辑笔记目录的用户，落点不会凭空换地方。
+    const statsRoot = this.settings.albumFolder.split('/').slice(0, -1).join('/') || 'Vinyl Life';
+    const savedStatsFolder = typeof data?.statsFolder === 'string' ? data.statsFolder.trim() : '';
+    this.settings.statsFolder = savedStatsFolder || `${statsRoot}/Stats`;
+    const savedQueueFolder = typeof data?.queueFolder === 'string' ? data.queueFolder.trim() : '';
+    this.settings.queueFolder = savedQueueFolder || `${statsRoot}/Queues`;
+    // 播放明细裁剪：**先归档，再裁**。两年保留规则一旦执行就再也回不来了，
+    // 而「很久没打开插件」的用户根本没有机会手动备份 —— 所以把要被裁掉的那批明细
+    // 连同一份完整设置写成可恢复的备份 JSON（恢复流程原样能用），再裁内存里的。
+    const allEvents = normalizePlayEvents(data?.stats?.events);
     this.settings.stats = ensureStats(data?.stats);
+    // **先归档成功，才认裁剪结果**（启动路径；播放中的那条在 recordPlay 里走同一个函数）
+    await this.retainEventsOrKeepAll(allEvents, this.settings.stats.events);
+    this.settings.sourceFailures = data?.sourceFailures && typeof data.sourceFailures === 'object' && !Array.isArray(data.sourceFailures)
+      ? { ...data.sourceFailures } : {};
     // 卡片属性：数组结构必须显式归一化——Object.assign 对数组会产出 {0:…,length:…} 类数组怪物，
     // 且浅拷贝会让设置与 DEFAULT_SETTINGS 共享引用（push 即污染默认值）；归一化同时完成旧 boolean 结构迁移
     this.settings.shelfProps = normalizeShelfProps(data?.shelfProps);
@@ -280,6 +366,10 @@ export default class VinylLifePlugin extends Plugin {
     if (!Object.keys(SPIN_SPEEDS).includes(this.settings.turntableSpeed)) {
       this.settings.turntableSpeed = DEFAULT_SETTINGS.turntableSpeed;
     }
+    // 七个目录名统一（旧默认名 → 首字母大写）：设置都归一完了再改名，
+    // 改名后的 saveSettings 落的就是干净数据；它也可能把模板路径改掉，
+    // 所以必须排在下面「模板文件路径注入索引层」之前。
+    await this.migrateFolderNames();
     // 模板文件路径注入索引层（避免它自己被当成专辑）
     setAlbumTemplatePath(this.settings.albumNoteTemplate);
     // 界面语言（i18n 模块级当前语言）
@@ -288,8 +378,14 @@ export default class VinylLifePlugin extends Plugin {
     this.settings.playerDeck = normalizeDeckStyle(data?.playerDeck);
     this.settings.recordColor = normalizeRecordColor(data?.recordColor);
     this.settings.toolbarPosition = normalizeToolbarPosition(data?.toolbarPosition);
+    // 搓碟（外观页）：开关与预载默认开（只有显式写了 false 才当关），音效档不认识就回落「完整」
+    this.settings.scratchEnabled = data?.scratchEnabled !== false;
+    this.settings.scratchSound = normalizeScratchSound(data?.scratchSound);
+    this.settings.scratchPreload = data?.scratchPreload !== false;
     // 在线搜索的来源范围（「添加」面板记住的上次选择；不认识的旧值回落聚合）
     this.settings.searchSource = normalizeSearchScope(data?.searchSource);
+    // 健康检查的试播范围（同上：记忆型，不认识的旧值回落「全部」）
+    this.settings.probeScope = normalizeProbeScope(data?.probeScope);
   }
 
   /** 音量与播放位置的防抖持久化入口（引擎每次 emit 都会调，落盘由 5 秒防抖兜住） */
@@ -346,6 +442,8 @@ export default class VinylLifePlugin extends Plugin {
   }
 
   async saveSettings() {
+    // 恢复后旧播放引擎仍在运行；在重启前不允许它把旧会话状态覆盖刚恢复的 data.json。
+    if (this.awaitingRestartAfterRestore) return;
     // 模板文件本身不能被当成专辑展示（模板里通常也写着 tags: [album]）
     setAlbumTemplatePath(this.settings.albumNoteTemplate);
     setLanguage(this.settings.language);
@@ -366,10 +464,27 @@ export default class VinylLifePlugin extends Plugin {
     }
   }
 
-  // 生成一份可编辑的模板文件并写进设置（内容 = 内置模板，随便改）
-  async createAlbumTemplate() {
+  /** 模板文件的默认落点：专辑笔记目录的上一级 + Template/（与其它六个目录同一套命名；
+   *  文件名仍是中文，用户在文件列表里一眼认得） */
+  defaultTemplatePath(): string {
     const root = this.settings.albumFolder.split('/').slice(0, -1).join('/');
-    const path = normalizePath(`${root ? root + '/' : ''}模板/专辑笔记模板.md`);
+    return normalizePath(`${root ? root + '/' : ''}Template/专辑笔记模板.md`);
+  }
+
+  /** 打开模板文件；配置的路径上没有文件就按内置模板生成一份再打开。
+   *  顺带把 1.3.0 之前的旧默认目录（模板/）迁到 template/ —— 那是最常见的「设置里指着一个
+   *  不存在的文件、导入却静默用内置模板」的来源。 */
+  async openAlbumTemplate(): Promise<void> {
+    const configured = String(this.settings.albumNoteTemplate || '').trim();
+    if (configured) {
+      const found = this.app.vault.getAbstractFileByPath(normalizePath(configured));
+      if (found instanceof TFile) {
+        await this.app.workspace.getLeaf(false).openFile(found);
+        return;
+      }
+    }
+    const legacy = !configured || /(^|\/)(模板|template|Template)\/专辑笔记模板\.md$/.test(configured);
+    const path = legacy ? this.defaultTemplatePath() : normalizePath(configured);
     let file: TFile;
     const existing = this.app.vault.getAbstractFileByPath(path);
     if (existing instanceof TFile) {
@@ -389,12 +504,65 @@ export default class VinylLifePlugin extends Plugin {
     notice(tf('notice.templateReady', { path }));
   }
 
-  // 三个数据目录不存在则创建（新用户首次启用装完即用；用户改过路径设置也会补齐）
+  /** 目录名统一（1.3.0）：旧默认名 → 新默认名，七个目录一律首字母大写。
+   *  **只迁仍是旧默认值的那一项**：用户改过路径的一律不碰；旧目录不在 / 新目录已存在也跳过
+   *  （绝不做合并，宁可不动）。改名走 fileManager，笔记里的链接会跟着更新。 */
+  private async migrateFolderNames(): Promise<void> {
+    const root = this.settings.albumFolder.split('/').slice(0, -1).join('/') || 'Vinyl Life';
+    const renamed: string[] = [];
+    const rename = async (oldPath: string, newPath: string, apply: () => void) => {
+      const folder = this.app.vault.getAbstractFileByPath(oldPath);
+      if (!(folder instanceof TFolder)) return;
+      if (this.app.vault.getAbstractFileByPath(newPath)) return;
+      try {
+        await this.app.fileManager.renameFile(folder, newPath);
+        apply();
+        renamed.push(`${oldPath.slice(root.length + 1)} → ${newPath.slice(root.length + 1)}`);
+      } catch (e) {
+        console.warn('[vinyl] 目录改名失败', oldPath, e);
+      }
+    };
+    // 封面 / 音频：设置里还是旧默认名时才迁
+    const coverOld = normalizePath(`${root}/covers`);
+    if (this.settings.coverFolder === coverOld) {
+      await rename(coverOld, normalizePath(`${root}/Covers`), () => {
+        this.settings.coverFolder = normalizePath(`${root}/Covers`);
+      });
+    }
+    const audioOld = normalizePath(`${root}/audio`);
+    if (this.settings.audioFolder === audioOld) {
+      await rename(audioOld, normalizePath(`${root}/Audio`), () => {
+        this.settings.audioFolder = normalizePath(`${root}/Audio`);
+      });
+    }
+    // 模板目录：模板/（最早的默认）或 template/（上一个默认）→ Template/
+    const tplOld = [normalizePath(`${root}/模板`), normalizePath(`${root}/template`)].find(
+      (p) => this.app.vault.getAbstractFileByPath(p) instanceof TFolder
+    );
+    const tplConfigured = String(this.settings.albumNoteTemplate || '').trim();
+    const tplIsLegacy =
+      !tplConfigured || /(^|\/)(模板|template)\/专辑笔记模板\.md$/.test(tplConfigured);
+    if (tplOld && tplIsLegacy) {
+      await rename(tplOld, normalizePath(`${root}/Template`), () => {
+        if (tplConfigured) {
+          this.settings.albumNoteTemplate = normalizePath(`${root}/Template/专辑笔记模板.md`);
+        }
+      });
+    }
+    if (renamed.length) {
+      await this.saveSettings();
+      notice(tf('notice.foldersRenamed', { list: renamed.join('、') }));
+    }
+  }
+
+  // 五个数据目录不存在则创建（新用户首次启用装完即用；用户改过路径设置也会补齐）
   private async ensureDataFolders() {
     for (const p of [
       this.settings.albumFolder,
       this.settings.coverFolder,
       this.settings.audioFolder,
+      this.settings.statsFolder,
+      this.settings.queueFolder,
     ]) {
       try {
         await ensureFolder(this.app, p);
@@ -563,7 +731,11 @@ export default class VinylLifePlugin extends Plugin {
     // 行里的曲名只有「正在播这张专辑」时才有意义；否则退回专辑名（笔记文件名即专辑名）
     const playingThis = !!snap.albumNotePath && snap.albumNotePath === target;
     const title = playingThis ? snap.current?.title ?? '' : file.basename;
-    const line = tf('note.listeningLine', { ts, title });
+    // 位置写成可点的链接（obsidian://vinyl-life）：日后从笔记里点回来，直接续上那一刻
+    const position = playingThis && snap.current
+      ? ` · [${fmtTime(snap.currentTime)}](${this.resumeLink(target!, snap.current.title, snap.currentTime)})`
+      : '';
+    const line = tf('note.listeningLine', { ts, title, position });
     const content = await this.app.vault.read(file);
     const newContent = content.trimEnd() + (content.trim() ? '\n\n' : '') + line + '\n';
     await this.app.vault.modify(file, newContent);
@@ -575,6 +747,66 @@ export default class VinylLifePlugin extends Plugin {
       editor.setCursor({ line: lastLine, ch: editor.getLine(lastLine).length });
     }
     notice(tf('notice.appended', { name: file.basename }));
+  }
+
+  /** 笔记里那条播放位置的链接：点一下回到那首歌的那一秒。
+   *  走 Obsidian 的协议处理器（obsidian://vinyl-life?…），笔记被同步到别的设备也照样能用。 */
+  resumeLink(albumPath: string, trackTitle: string, posSec: number): string {
+    const q = (v: string | number) => encodeURIComponent(String(v));
+    return (
+      `obsidian://vinyl-life?album=${q(albumPath)}` +
+      `&track=${q(trackTitle)}&pos=${Math.max(0, Math.floor(posSec))}`
+    );
+  }
+
+  /** 健康检查的「重试并清除」：按那条失败记录的音源策略再试一次。
+   *  成功（能建出队列 / 能拿到播放地址）返回 null，失败返回错误文本。 */
+  async retryAlbumSource(album: AlbumInfo, source: ActiveSource | 'auto'): Promise<string | null> {
+    if (source === 'netease' || source === 'qq' || source === 'kugou') {
+      return this.checkOnlineSource(album, source);
+    }
+    try {
+      const result = await buildAlbumQueue({ ...album, sourcePref: source === 'auto' ? 'auto' : 'local' }, {
+        local: this.local, netease: this.netease, qq: this.qq, kugou: this.kugou,
+        defaultSource: this.settings.defaultSource,
+      });
+      return result.tracks.length ? null : result.reason || t('player.noPlayableTrack');
+    } catch (e) {
+      return (e as Error).message;
+    }
+  }
+
+  /** 从笔记里的时间点跳回播放：载入那张专辑、按曲名定位、跳到那一刻并开始播。
+   *  参数全来自笔记正文（用户可能手改过），一律当脏数据校验。 */
+  async resumeFromNote(params: Record<string, string>): Promise<void> {
+    // 协议处理器给的是已解码的值；手写的链接可能是编码过的，兜一次解码
+    const rawAlbum = String(params?.album || '');
+    const albumPath = (rawAlbum.includes('%') ? safeDecode(rawAlbum) : rawAlbum).trim();
+    const trackTitle = String(params?.track || '').trim();
+    const pos = Number(params?.pos);
+    const file = albumPath ? this.app.vault.getAbstractFileByPath(albumPath) : null;
+    const album = file instanceof TFile
+      ? getAlbumInfo(this.app, file, { coverFolder: this.settings.coverFolder })
+      : null;
+    if (!album) {
+      notice(t('notice.jumpNoAlbum'));
+      return;
+    }
+    const result = await this.engine.loadAlbum(album, { autoplay: false });
+    if (!result.tracks.length) {
+      notice(tf('notice.jumpNoTrack', { title: album.title }));
+      return;
+    }
+    const queue = this.engine.snapshot().queue;
+    const found = trackTitle ? pickTrackByTitle(queue, trackTitle) : queue[0];
+    const index = found ? queue.indexOf(found) : -1;
+    if (index < 0) {
+      notice(tf('notice.jumpNoTrack', { title: trackTitle || album.title }));
+      return;
+    }
+    await this.engine.preloadIndex(index, Number.isFinite(pos) && pos > 0 ? pos : 0);
+    await this.engine.play();
+    await this.openPlayer();
   }
 
   // 插入此刻正在听：往「用户当前编辑的笔记」光标处插一行曲目信息。
@@ -600,6 +832,98 @@ export default class VinylLifePlugin extends Plugin {
     view.editor.replaceSelection(line + '\n');
   }
 
+  /** 保存队列为笔记：写出来的曲目列表**就是**队列本身（不再藏 JSON 标记） */
+  async saveQueueNote(): Promise<TFile | null> {
+    const tracks = this.engine.snapshot().queue;
+    const lines = queueNoteLines(tracks, albumWikiLink);
+    if (!lines.length) { notice(t('queueNote.empty')); return null; }
+    const folder = normalizePath(this.settings.queueFolder);
+    await ensureFolder(this.app, folder);
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const target = normalizePath(`${folder}/Vinyl queue ${stamp}.md`);
+    const content = [
+      '---',
+      'tags: [vinyl-queue]',
+      '---',
+      '',
+      `# ${t('queueNote.heading')}`,
+      '',
+      t('queueNote.hint'),
+      '',
+      ...lines,
+      '',
+    ].join('\n');
+    const file = await this.app.vault.create(target, content);
+    await this.app.workspace.getLeaf(false).openFile(file);
+    notice(tf('queueNote.saved', { path: file.path }));
+    return file;
+  }
+
+  /** 从当前笔记载入队列：按可见列表逐行还原（改列表即改队列，见 core/queue-note） */
+  async loadQueueFromActiveNote(): Promise<void> {
+    const file = this.app.workspace.getActiveFile();
+    if (!(file instanceof TFile)) { notice(t('queueNote.openFirst')); return; }
+    const entries = parseQueueEntries(await this.app.vault.read(file));
+    if (!entries.length) { notice(t('queueNote.badFile')); return; }
+    const tracks: Track[] = [];
+    const skipped: string[] = [];
+    // 每张专辑解析出来的曲目缓存（同一张专辑在列表里出现多次时不重复请求）
+    const cache = new Map<string, Track[]>();
+    for (const entry of entries) {
+      const albumFile = this.app.vault.getAbstractFileByPath(entry.albumPath);
+      const album = albumFile instanceof TFile
+        ? getAlbumInfo(this.app, albumFile, { coverFolder: this.settings.coverFolder })
+        : null;
+      if (!album) { skipped.push(entry.trackTitle); continue; }
+      // 队列可能混着来源（本地 + 在线）：按「这张笔记实际会用的音源」优先，再依次试其余已关联的。
+      // 以前靠隐藏标记里的来源键知道该解析哪一路，现在以「能不能找到这首」为准。
+      const sources = detectAlbumSources(this.app, album);
+      const order: ActiveSource[] = [];
+      const preferred = this.settings.defaultSource !== 'auto' ? this.settings.defaultSource : null;
+      for (const candidate of [
+        album.sourcePref !== 'auto' ? album.sourcePref : null,
+        preferred,
+        'local',
+        'netease',
+        'qq',
+        'kugou',
+      ] as Array<ActiveSource | null>) {
+        if (candidate && sources[candidate] && !order.includes(candidate)) order.push(candidate);
+      }
+      let found: Track | undefined;
+      for (const source of order) {
+        const key = `${album.path}:${source}`;
+        let albumTracks = cache.get(key);
+        if (!albumTracks) {
+          try {
+            const result = await buildAlbumQueue({ ...album, sourcePref: source }, {
+              local: this.local, netease: this.netease, qq: this.qq, kugou: this.kugou,
+              defaultSource: this.settings.defaultSource,
+            });
+            albumTracks = result.tracks;
+          } catch { albumTracks = []; }
+          cache.set(key, albumTracks);
+        }
+        found = pickTrackByTitle(albumTracks, entry.trackTitle);
+        if (found) break;
+      }
+      if (found) tracks.push(found);
+      else skipped.push(entry.trackTitle);
+    }
+    if (!tracks.length) { notice(t('queueNote.nonePlayable')); return; }
+    const first = tracks[0];
+    const source: ActiveSource = first.source === 'local-vault' || first.source === 'local-external'
+      ? 'local' : first.source;
+    this.engine.setQueue(tracks, first.albumNotePath || '', first.album || '', source);
+    this.settings.queueMode = true;
+    await this.saveSettings();
+    await this.engine.preloadIndex(0);
+    await this.openPlayer();
+    notice(tf('queueNote.loaded', { loaded: tracks.length, skipped: skipped.length }));
+    // 跳过的是哪几首：只报数用户没法修（歌名对不上要靠改列表或补音源）
+    if (skipped.length) notice(tf('queueNote.skippedList', { titles: skipped.slice(0, 5).join('、') }));
+  }
+
   recordPlay(track: Track, albumPath?: string, albumTitle?: string) {
     let snapshot: AlbumStatSnapshot | undefined;
     if (albumPath) {
@@ -617,7 +941,107 @@ export default class VinylLifePlugin extends Plugin {
       track.title,
       snapshot
     );
+    // 连续使用中也会到上限（或有超期明细）：与启动时同一条「先归档、再裁剪」流程
+    this.maybeRetainEvents();
     this.scheduleStatsSave();
+  }
+
+  private trackSourceHealth(s: PlayerSnapshot): void {
+    const track = s.current;
+    if (!track || !s.albumNotePath) return;
+    const source: ActiveSource = track.source === 'local-vault' || track.source === 'local-external'
+      ? 'local' : track.source;
+    const key = `${s.albumNotePath}:${source}`;
+    if (s.status === 'playing') {
+      if (this.settings.sourceFailures[key] || this.settings.sourceFailures[`${s.albumNotePath}:auto`]) {
+        delete this.settings.sourceFailures[key];
+        delete this.settings.sourceFailures[`${s.albumNotePath}:auto`];
+        this.scheduleStatsSave();
+      }
+      this.lastReportedSourceFailure = '';
+      return;
+    }
+    if (s.status !== 'error' || !s.error || this.lastReportedSourceFailure === `${key}:${s.error}`) return;
+    this.lastReportedSourceFailure = `${key}:${s.error}`;
+    this.settings.sourceFailures[key] = { message: s.error, at: Date.now() };
+    this.scheduleStatsSave();
+    const file = this.app.vault.getAbstractFileByPath(s.albumNotePath);
+    const album = file instanceof TFile ? getAlbumInfo(this.app, file) : null;
+    if (!album) return;
+    const sources = detectAlbumSources(this.app, album);
+    if (!Object.entries(sources).some(([name, available]) => available && name !== source)) return;
+    const prompt = new Notice('', 12000);
+    prompt.noticeEl.createSpan({ text: `${t('health.switchPrompt')} ` });
+    prompt.noticeEl.createEl('button', { text: t('health.switch') }).onclick = () => {
+      prompt.hide();
+      this.openSourceSwitch(album.path, source);
+    };
+  }
+
+  private reportAlbumSourceFailure(album: AlbumInfo, policy: string, reason: string): void {
+    this.settings.sourceFailures[`${album.path}:${policy}`] = { message: reason, at: Date.now() };
+    this.scheduleStatsSave();
+    const sources = detectAlbumSources(this.app, album);
+    if (Object.values(sources).filter(Boolean).length < 2) return;
+    const prompt = new Notice('', 12000);
+    prompt.noticeEl.createSpan({ text: `${t('health.switchPrompt')} ` });
+    prompt.noticeEl.createEl('button', { text: t('health.switch') }).onclick = () => {
+      prompt.hide();
+      this.openSourceSwitch(album.path);
+    };
+  }
+
+  openLibraryHealth(): void {
+    new LibraryHealthModal(this).open();
+  }
+
+  openSourceSwitch(albumPath: string, exclude?: ActiveSource): void {
+    new SourceSwitchModal(this, albumPath, exclude).open();
+  }
+
+  async switchAlbumSource(albumPath: string, source: ActiveSource): Promise<boolean> {
+    const file = this.app.vault.getAbstractFileByPath(albumPath);
+    if (!(file instanceof TFile)) return false;
+    const album = getAlbumInfo(this.app, file, { coverFolder: this.settings.coverFolder });
+    if (!album) return false;
+    this.pendingSourceSwitch = { path: albumPath, source };
+    try {
+      const res = await this.engine.loadAlbum(album, { source });
+      if (!res.tracks.length) { this.pendingSourceSwitch = null; return false; }
+      await this.openPlayer();
+      return true;
+    } catch (e) {
+      this.pendingSourceSwitch = null;
+      notice((e as Error).message);
+      return false;
+    }
+  }
+
+  /** 用户主动发起的在线检查：只取少量曲目的播放地址，不启动播放。 */
+  async checkOnlineSource(album: AlbumInfo, source: Exclude<ActiveSource, 'local'>): Promise<string | null> {
+    try {
+      const result = await buildAlbumQueue({ ...album, sourcePref: source }, {
+        local: this.local, netease: this.netease, qq: this.qq, kugou: this.kugou,
+        defaultSource: this.settings.defaultSource,
+      });
+      if (!result.tracks.length) return result.reason || t('player.noPlayableTrack');
+      let error = '';
+      for (const track of result.tracks.slice(0, 3)) {
+        try {
+          const response = track.source === 'netease'
+            ? await this.netease.songUrl(track.id, this.settings.quality)
+            : track.source === 'qq'
+              ? await this.qq.songUrl(track.id, this.settings.quality, track.mediaMid)
+              : track.source === 'kugou'
+                ? await this.kugou.songUrl(track.id, this.settings.quality, track.albumId, track.albumAudioId)
+                : null;
+          if (response?.url) return null;
+          error = response?.restriction || t('auth.sourceUnavailable');
+        }
+        catch (e) { error = (e as Error).message; }
+      }
+      return error || t('player.noPlayableTrack');
+    } catch (e) { return (e as Error).message; }
   }
 
   private albumStatSnapshot(album: AlbumInfo): AlbumStatSnapshot {
@@ -625,6 +1049,7 @@ export default class VinylLifePlugin extends Plugin {
     return {
       title: album.title,
       artist: album.artist,
+      edition: album.edition,
       year: album.year,
       genre: album.genre,
       rating: album.rating,
@@ -724,6 +1149,7 @@ export default class VinylLifePlugin extends Plugin {
           if (value !== undefined && value !== '') lines.push(`${key}: ${JSON.stringify(value)}`);
         };
         add('artist', snapshot.artist);
+        add('edition', snapshot.edition);
         add('year', snapshot.year);
         add('genre', snapshot.genre);
         add('rating', snapshot.rating);
@@ -777,9 +1203,7 @@ export default class VinylLifePlugin extends Plugin {
     const stats = this.settings.stats;
     const now = new Date();
     const day = localDayKey(now.getTime());
-    const folder = normalizePath(
-      `${this.settings.albumFolder.split('/').slice(0, -1).join('/') || 'Vinyl Life'}/${STATS_EXPORT_FOLDER}`
-    );
+    const folder = normalizePath(this.settings.statsFolder);
     await ensureFolder(this.app, folder);
     const baseName = tf('stats.exportFile', { date: day });
     let target = normalizePath(`${folder}/${baseName}.md`);
@@ -790,6 +1214,159 @@ export default class VinylLifePlugin extends Plugin {
     const file = await this.app.vault.create(target, this.statsNoteLines(stats).join('\n'));
     notice(tf('stats.exportedNotice', { path: target }));
     return file;
+  }
+
+  /** 可随笔记库同步的完整设置与统计快照；登录凭据另存，不包含在内。 */
+  async exportDataBackup(): Promise<TFile> {
+    const file = await this.writeBackupFile('Vinyl Life backup', this.settings.stats);
+    // 手动备份也算「最近成功备份」：历史页显示的时间是两者的最近一次
+    this.settings.lastBackupAt = Date.now();
+    await this.saveSettings();
+    return file;
+  }
+
+  /** 每周自动备份：到点了就写一份，并按保留份数清掉最旧的**自动**备份。
+   *  手动备份与裁剪归档（`Vinyl Life backup` / `Vinyl Life events archive`）一律不碰。
+   *  失败只提示一次，且不更新「最近成功备份」——下次检查会再试。 */
+  private async maybeAutoBackup(): Promise<void> {
+    if (!this.settings.autoBackup || this.autoBackupFailedThisSession) return;
+    const last = this.settings.lastBackupAt || 0;
+    if (Date.now() - last < AUTO_BACKUP_INTERVAL_MS) return;
+    try {
+      await this.writeBackupFile(AUTO_BACKUP_PREFIX, this.settings.stats);
+      this.settings.lastBackupAt = Date.now();
+      await this.pruneAutoBackups();
+      await this.saveSettings();
+      notice(tf('notice.autoBackupDone', { path: this.backupFolderPath() + '/' }));
+    } catch (e) {
+      console.warn('[vinyl] 自动备份失败', e);
+      this.autoBackupFailedThisSession = true;
+      notice(tf('backup.failed', { msg: (e as Error).message }));
+    }
+  }
+
+  /** 只保留最近 N 份自动备份（按文件名里的时间戳排序，时间戳是 ISO 格式，字典序即时间序） */
+  private async pruneAutoBackups(): Promise<void> {
+    const folder = this.app.vault.getAbstractFileByPath(this.backupFolderPath());
+    if (!(folder instanceof TFolder)) return;
+    const keep = Math.max(1, Math.floor(this.settings.backupKeep || 1));
+    const autos = folder.children
+      .filter((c): c is TFile => c instanceof TFile && c.name.startsWith(AUTO_BACKUP_PREFIX))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    for (const old of autos.slice(0, Math.max(0, autos.length - keep))) {
+      try {
+        await this.app.fileManager.trashFile(old); // 走 Obsidian 的删除方式（回收站 / 永久删除）
+      } catch (e) {
+        console.warn('[vinyl] 清理旧自动备份失败', old.path, e);
+      }
+    }
+  }
+
+  /** 备份目录（Backups 固定在专辑笔记目录的上一级；裁剪归档与自动备份都写这里） */
+  backupFolderPath(): string {
+    const root = this.settings.albumFolder.split('/').slice(0, -1).join('/') || 'Vinyl Life';
+    return normalizePath(`${root}/Backups`);
+  }
+
+  /** 写一份备份格式的 JSON：设置 + 指定统计快照 + 历史封面缓存。
+   *  手动备份与「裁剪前归档」共用它 —— 归档出来的文件能直接用「恢复备份」载回。 */
+  private async writeBackupFile(prefix: string, stats: VinylStats): Promise<TFile> {
+    const folder = this.backupFolderPath();
+    await ensureFolder(this.app, folder);
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    let target = normalizePath(`${folder}/${prefix} ${stamp}.json`);
+    let suffix = 2;
+    while (this.app.vault.getAbstractFileByPath(target)) {
+      target = normalizePath(`${folder}/${prefix} ${stamp} (${suffix++}).json`);
+    }
+    const coverAssets: Record<string, string> = {};
+    for (const stat of Object.values(stats.albums)) {
+      const rel = stat.snapshot?.cachedCover;
+      if (!rel || !/^\.stats-covers\/[0-9a-f]{1,8}\.(?:jpe?g|png|webp|gif)$/i.test(rel)) continue;
+      try { coverAssets[rel] = fs.readFileSync(pluginAbsPath(this, rel)).toString('base64'); }
+      catch { /* 图片已不存在：统计元数据仍能备份。 */ }
+    }
+    const content = JSON.stringify(
+      { format: 'vinyl-life-backup', version: 1, settings: { ...this.settings, stats }, coverAssets },
+      null,
+      2
+    );
+    return this.app.vault.create(target, content);
+  }
+
+  /** 播放明细的保留流程：**先归档成功，才认裁剪结果**。
+   *  归档写不出去（磁盘满 / 权限 / 同步冲突）就把完整明细留在内存里，并提示用户 ——
+   *  之后的保存会把它们原样写回，绝不会出现「没归档、明细还被裁掉」。
+   *  启动时与播放中（到达明细上限 / 有超期明细）共用这一条流程。 */
+  private async retainEventsOrKeepAll(allEvents: PlayEvent[], kept: PlayEvent[]): Promise<void> {
+    const dropped = allEvents.length - kept.length;
+    if (dropped <= 0) return;
+    const archived = await this.archivePrunedEvents(allEvents, dropped);
+    this.settings.stats = { ...this.settings.stats, events: archived ? kept : allEvents };
+  }
+
+  /** 播放中检查一次：达到明细上限或有超期明细就走上面对那条流程（归档失败只提示一次，
+   *  不每条播放都弹；下一轮启动会再试）。 */
+  private maybeRetainEvents(): void {
+    if (this.archiveFailedThisSession) return;
+    if (!needsRetention(this.settings.stats.events)) return;
+    const { kept } = trimPlayEvents(this.settings.stats.events);
+    void this.retainEventsOrKeepAll(this.settings.stats.events, kept);
+  }
+
+  /** 裁剪前的自动归档（见 loadSettings）。**返回是否成功** —— 调用方据此决定保留还是丢掉
+   *  未裁剪的明细：归档失败必须让用户知道，而且要保住明细，不能只是一行 console.warn。 */
+  private async archivePrunedEvents(allEvents: PlayEvent[], dropped: number): Promise<boolean> {
+    try {
+      const file = await this.writeBackupFile('Vinyl Life events archive', {
+        ...this.settings.stats,
+        events: allEvents,
+      });
+      // 归档写完才把裁剪结果落盘：同一批明细不会在下次启动时再裁一遍 / 再归档一份
+      await this.saveSettings();
+      notice(tf('notice.eventsArchived', { n: dropped, path: file.path }));
+      return true;
+    } catch (e) {
+      console.warn('[vinyl] 播放明细归档失败', e);
+      // 一轮会话里只提醒一次：播放中可能反复触发，别每条播放都弹一个气泡
+      if (!this.archiveFailedThisSession) {
+        this.archiveFailedThisSession = true;
+        notice(tf('notice.eventsArchiveFailed', { n: dropped, msg: (e as Error).message }));
+      }
+      return false;
+    }
+  }
+
+  /** 恢复前由 UI 明确确认；先保存现状，旧备份始终可回退。 */
+  async restoreDataBackup(raw: string): Promise<void> {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') throw new Error(t('backup.badFormat'));
+    const backup = parsed as { format?: unknown; version?: unknown; settings?: unknown; coverAssets?: unknown };
+    if (backup.format !== 'vinyl-life-backup' || backup.version !== 1 ||
+        !backup.settings || typeof backup.settings !== 'object' || Array.isArray(backup.settings)) {
+      throw new Error(t('backup.badFormat'));
+    }
+    const restoredSettings = backup.settings as Record<string, unknown>;
+    if (!restoredSettings.stats || typeof restoredSettings.stats !== 'object' ||
+        typeof (restoredSettings.stats as Record<string, unknown>).totalPlays !== 'number') {
+      throw new Error(t('backup.badFormat'));
+    }
+    await this.exportDataBackup();
+    if (backup.coverAssets && typeof backup.coverAssets === 'object' && !Array.isArray(backup.coverAssets)) {
+      const cache = pluginAbsPath(this, '.stats-covers');
+      fs.mkdirSync(cache, { recursive: true });
+      for (const [rel, encoded] of Object.entries(backup.coverAssets)) {
+        if (!/^\.stats-covers\/[0-9a-f]{1,8}\.(?:jpe?g|png|webp|gif)$/i.test(rel) ||
+            typeof encoded !== 'string' || encoded.length > 16_000_000) continue;
+        fs.writeFileSync(path.join(cache, path.basename(rel)), Buffer.from(encoded, 'base64'));
+      }
+    }
+    await this.saveData(backup.settings);
+    await this.loadSettings();
+    this.awaitingRestartAfterRestore = true;
+    this.refreshLanguage();
+    this.refreshAppearance();
+    notice(t('backup.restartNotice'));
   }
 
   /** 专辑在导出笔记里的写法：笔记还在就给可点击链接，删了只报名字。
@@ -818,18 +1395,39 @@ export default class VinylLifePlugin extends Plugin {
       }
       if (!groups.size) continue;
       const label = propLabel(prop, this.settings.shelfPropLabels);
-      out.push(`### ${label}`, '', tf('stats.exportPropsHead', { name: label }), '| --- | ---: | ---: |');
+      const max = Math.max(...Array.from(groups.values(), (g) => g.plays));
+      out.push(`### ${label}`, '', tf('stats.exportPropsHead', { name: label }), '| --- | ---: | ---: | --- |');
       for (const [value, group] of Array.from(groups).sort((a, b) => b[1].plays - a[1].plays)) {
-        out.push(`| ${tableCell(value)} | ${group.plays} | ${group.albums} |`);
+        out.push(`| ${tableCell(value)} | ${group.plays} | ${group.albums} | ${textBar(group.plays, max)} |`);
       }
       out.push('');
     }
     return out;
   }
 
-  /** 导出笔记的正文：摘要 + 概览 + 月度分布 + 播放最多 + 最近播放 + 按属性汇总 + 每日播放。
-   *  内容对齐统计页（页面上看得到的这里都有），并补上页面没直接给的记录跨度与最活跃的一天；
-   *  分布用字符柱状（页面是热力图，笔记里给等价的文字版）。 */
+  /** 专辑封面在笔记里的嵌入写法：只有**库内**文件或 http(s) 图能嵌（快照里的缓存副本在插件目录，
+   *  笔记够不着）；拿不到就返回空串，那一行不显示图。 */
+  private albumCoverEmbed(albumPath: string, stat: AlbumPlayStat): string {
+    const current = this.app.vault.getAbstractFileByPath(albumPath);
+    if (current instanceof TFile) {
+      const album = getAlbumInfo(this.app, current);
+      const file = album ? this.albumCoverFile(album) : null;
+      if (file) return `![[${file.path}|120]]`;
+      const raw = String(album?.coverRaw || '').trim();
+      if (/^https?:\/\//i.test(raw)) return `![](${raw})`;
+      return '';
+    }
+    const vaultPath = stat.snapshot?.coverVaultPath;
+    return vaultPath && this.app.vault.getAbstractFileByPath(vaultPath) instanceof TFile
+      ? `![[${vaultPath}|120]]`
+      : '';
+  }
+
+  /** 导出笔记的正文。版式按笔记自己读着舒服来排：
+   *  - 摘要做成 callout（Obsidian 会把标题渲染成带图标的一块），关键数字加粗；
+   *  - 每个榜都带一行字符柱状，一眼看出分布（页面是热力图，笔记里给等价的文字版）；
+   *  - 播放最多的前五张给封面条（库内封面才嵌，嵌不到的自动略过）；
+   *  - 末尾一段「关于这份统计」的 callout 说明口径与导出时间。 */
   private statsNoteLines(stats: VinylStats): string[] {
     const albumCount = Object.keys(stats.albums).length;
     const trackCount = Object.keys(stats.tracks).length;
@@ -843,23 +1441,27 @@ export default class VinylLifePlugin extends Plugin {
       (best, cur) => (!best || cur[1] > best[1] ? cur : best),
       null
     );
+    const albums = Object.entries(stats.albums).sort((a, b) => b[1].plays - a[1].plays);
 
-    // 不写 H1：笔记标题就是文件名，正文再来一行「Vinyl Life 播放统计 · 日期」是重复
+    // 不写 H1：笔记标题就是文件名
     const lines = [
-      tf('stats.exportSummary', {
+      `> [!abstract] ${t('stats.exportTitle')}`,
+      `> ${tf('stats.exportSummary', {
         plays: stats.totalPlays,
         albums: albumCount,
         tracks: trackCount,
         days: days.length,
-      }),
-      '',
-      tf('stats.exportTotal', { n: stats.totalPlays }),
-      tf('stats.exportAlbums', { n: albumCount }),
-      tf('stats.exportTracks', { n: trackCount }),
+      })}`,
     ];
     if (days.length && busiest) {
-      lines.push(tf('stats.exportFirst', { date: days[0][0] }));
-      lines.push(tf('stats.exportBusiest', { date: busiest[0], n: busiest[1] }));
+      lines.push(
+        `> ${tf('stats.exportSpan', {
+          first: days[0][0],
+          last: days[days.length - 1][0],
+          date: busiest[0],
+          n: busiest[1],
+        })}`
+      );
     }
     lines.push('');
 
@@ -871,27 +1473,47 @@ export default class VinylLifePlugin extends Plugin {
       }
       const rows = Array.from(months.entries()).sort((a, b) => b[0].localeCompare(a[0]));
       const max = Math.max(...rows.map(([, n]) => n));
-      lines.push(t('stats.exportMonthlyHeading'), '', t('stats.exportMonthlyHead'), '| --- | ---: | --- |');
-      for (const [month, count] of rows) lines.push(`| ${month} | ${count} | ${textBar(count, max)} |`);
+      const total = rows.reduce((sum, [, n]) => sum + n, 0);
+      lines.push(t('stats.exportMonthlyHeading'), '', t('stats.exportMonthlyHead'), '| --- | ---: | ---: | --- |');
+      for (const [month, count] of rows) {
+        const share = total ? `${Math.round((count / total) * 100)}%` : '';
+        lines.push(`| ${month} | ${count} | ${share} | ${textBar(count, max)} |`);
+      }
       lines.push('');
     }
 
-    const albums = Object.entries(stats.albums).sort((a, b) => b[1].plays - a[1].plays);
     if (albums.length) {
-      lines.push(t('stats.exportTopHeading'), '', t('stats.exportTopHead'), '| ---: | --- | ---: | --- |');
+      const max = albums[0][1].plays;
+      lines.push(t('stats.exportTopHeading'), '', t('stats.exportTopHead'), '| ---: | --- | ---: | --- | --- |');
       albums.forEach(([albumPath, stat], index) => {
+        const rank = index < 3 ? `**${index + 1}**` : String(index + 1); // 前三名加粗，扫一眼就找到
         lines.push(
-          `| ${index + 1} | ${this.albumCell(albumPath, stat)} | ${stat.plays} | ${localDayKey(stat.lastPlayedAt)} |`
+          `| ${rank} | ${this.albumCell(albumPath, stat)} | ${stat.plays} | ${textBar(stat.plays, max)} | ${localDayKey(stat.lastPlayedAt)} |`
         );
       });
       lines.push('');
+
+      // 封面条：前五张里能嵌的才列（嵌不到图的不占位置）
+      const covers = albums
+        .slice(0, 5)
+        .map(([albumPath, stat]) => {
+          const embed = this.albumCoverEmbed(albumPath, stat);
+          if (!embed) return '';
+          const title = stat.snapshot?.title || albumPath.split('/').pop()?.replace(/\.md$/, '') || albumPath;
+          return `- ${embed} **${tableCell(title)}** · ${tf('stats.plays', { n: stat.plays })}`;
+        })
+        .filter(Boolean);
+      if (covers.length) lines.push(`### ${t('stats.exportCovers')}`, '', ...covers, '');
     }
 
     const recent = [...albums].sort((a, b) => b[1].lastPlayedAt - a[1].lastPlayedAt).slice(0, 10);
     if (recent.length) {
-      lines.push(t('stats.exportRecentHeading'), '', t('stats.exportRecentHead'), '| --- | ---: | --- |');
+      const max = Math.max(...recent.map(([, stat]) => stat.plays));
+      lines.push(t('stats.exportRecentHeading'), '', t('stats.exportRecentHead'), '| --- | ---: | --- | --- |');
       for (const [albumPath, stat] of recent) {
-        lines.push(`| ${this.albumCell(albumPath, stat)} | ${stat.plays} | ${localDayKey(stat.lastPlayedAt)} |`);
+        lines.push(
+          `| ${this.albumCell(albumPath, stat)} | ${stat.plays} | ${textBar(stat.plays, max)} | ${localDayKey(stat.lastPlayedAt)} |`
+        );
       }
       lines.push('');
     }
@@ -908,7 +1530,14 @@ export default class VinylLifePlugin extends Plugin {
       lines.push('');
     }
 
-    lines.push(t('stats.exportMigrationNote'), '');
+    lines.push(
+      '---',
+      '',
+      `> [!note] ${t('stats.exportAbout')}`,
+      `> ${t('stats.exportMigrationNote')}`,
+      `> ${tf('stats.exportFooter', { time: new Date().toLocaleString() })}`,
+      ''
+    );
     return lines;
   }
 
