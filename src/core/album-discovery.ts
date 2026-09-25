@@ -1,4 +1,5 @@
 import { App } from 'obsidian';
+import { scalarText } from '../util';
 import { AlbumInfo, findAlbumNotes, getAlbumInfo } from './album-index';
 import { isRateLimited } from './request-error';
 import { tf } from './i18n';
@@ -54,8 +55,10 @@ export interface AlbumDiscoveryContext {
   kugou: Pick<KugouService, 'search'>;
 }
 
+// scalarText 而非 String(value)：上游字段缺省时可能是对象，String() 会得到 "[object Object]"
+// 这种看似有效实则无意义的取值，scalarText 对非标量一律给空串（与 import.ts / album-index.ts 同一口径）
 function text(value: unknown): string {
-  return String(value ?? '').trim();
+  return scalarText(value).trim();
 }
 
 function yearOf(value: unknown): string | undefined {

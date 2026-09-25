@@ -45,7 +45,7 @@ export function queueNoteLines(
     .filter((track) => !!track.albumNotePath)
     .map(
       (track) =>
-        `- ${link(track.albumNotePath!, track.album || track.albumNotePath!)} · ${track.title.replace(/\r?\n/g, ' ')}`
+        `- ${link(track.albumNotePath, track.album || track.albumNotePath)} · ${track.title.replace(/\r?\n/g, ' ')}`
     );
 }
 

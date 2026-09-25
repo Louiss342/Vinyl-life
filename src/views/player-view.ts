@@ -332,7 +332,7 @@ export class VinylPlayerView extends ItemView {
   private labelEls: Array<() => void> = [];
   // 空队列提示节点（随队列重建；切语言时就地改文本，不重建节点）
   private emptyQueueEl: HTMLElement | null = null;
-  // 条件更新缓存（值不变不写 DOM，减少样式失效与 :has() 重算）
+  // 条件更新缓存（值不变不写 DOM：每写一次都要重新算样式，进度条每秒都来，攒起来不便宜）
   private lastRatio = -1;
   private lastTimeText = '';
   private lastVol = -1;

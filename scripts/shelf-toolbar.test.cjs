@@ -157,8 +157,15 @@ test('样式：窄窗一格一格让位（先省计数，再让搜索占用标�
   // 两条容器查询：460px 省计数、380px 搜索展开时藏标题
   const q460 = /@container \(max-width: 460px\) \{[\s\S]*?\.vinyl-shelf-heading-count\s*\{[^}]*display:\s*none/;
   assert.match(CSS, q460, '≤460px：先省计数');
-  const q380 = /@container \(max-width: 380px\) \{[\s\S]*?\.vinyl-shelf-search\.is-open[\s\S]{0,80}?\.vinyl-shelf-heading\s*\{[^}]*display:\s*none/;
+  // 状态类挂在工具栏自己身上（父元素），不是用 :has 由搜索控件反查父元素（审核的性能警告）
+  const q380 = /@container \(max-width: 380px\) \{[\s\S]*?\.vinyl-shelf-toolbar\.is-searching[\s\S]{0,80}?\.vinyl-shelf-heading\s*\{[^}]*display:\s*none/;
   assert.match(CSS, q380, '≤380px：搜索展开时输入框占用标题那一片');
+  assert.match(
+    VIEW,
+    /private syncSearchOpenClass\(open: boolean\): void \{[\s\S]{0,120}?toolbarEl\?\.toggleClass\('is-searching', open\)/,
+    '工具栏那份状态类由 shelf-view 与搜索控件一起同步（只此一处写，两边不漂移）'
+  );
+  assert.match(VIEW, /syncSearchOpenClass\(this\.searchOpen\)/, '重建工具栏时状态类要立刻回填');
 });
 
 test('样式：搜索原位展开（图标 ↔ 输入框），输入框宽度跟窗格走', () => {

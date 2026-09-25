@@ -263,6 +263,9 @@ export function setAlbumTemplatePath(p: string): void {
   albumTemplatePath = String(p || '').trim();
 }
 
+/** 全库枚举笔记：专辑墙的数据源就是「带 album 标签的笔记」，只有扫一遍才知道有哪些 ——
+ *  这也是审核披露的 vault 枚举能力，来源即此处（为什么需要，见 CONTRIBUTING）。
+ *  启动时索引一次，之后一律按路径取单篇（getAbstractFileByPath），不再重复枚举。 */
 export function findAlbumNotes(app: App): TFile[] {
   return app.vault.getMarkdownFiles().filter((f) => {
     if (albumTemplatePath && f.path === albumTemplatePath) return false;

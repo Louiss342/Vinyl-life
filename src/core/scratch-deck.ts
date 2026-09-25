@@ -154,7 +154,8 @@ let negativeRateSupport: Promise<boolean> | null = null;
 /** 浏览器是否支持 AudioBufferSourceNode 的负 playbackRate（反向播放）。
  *  一次探测、结果缓存；任何异常按「不支持」处理（退回倒放副本那条路，功能不受影响）。 */
 export function supportsNegativeRate(): Promise<boolean> {
-  if (!negativeRateSupport) {
+  // 显式比较 null：这里判的是「缓存里有东西没有」，写成 !cached 会让 Promise 参与布尔判断（审核规则盯着）
+  if (negativeRateSupport === null) {
     negativeRateSupport = probeNegativeRate().catch(() => false);
   }
   return negativeRateSupport;
@@ -163,8 +164,10 @@ export function supportsNegativeRate(): Promise<boolean> {
 /** 渲染一小段斜坡、从中间倒着播：输出该是递减的（正着播是递增，静音则两者都不是）。
  *  为什么从中间起播：从 0 起播时「倒着」与「正着」都立刻到头，分不出方向。 */
 async function probeNegativeRate(): Promise<boolean> {
+  // 浏览器全局构造器一律从 window 取：globalThis 在弹出窗口场景下会指到不是当前窗口的那份全局
+  // （审核规则 obsidianmd/no-global-this 也禁用）；取不到按「不支持」处理，另有退路。
   const Ctor = (
-    globalThis as unknown as {
+    window as unknown as {
       OfflineAudioContext?: new (c: number, l: number, r: number) => AudioContextLike & {
         startRendering(): Promise<AudioBufferLike>;
       };
@@ -216,9 +219,10 @@ export function probeMediaDuration(
     try {
       const create =
         opts?.create ??
-        (() => (globalThis as unknown as { Audio?: new () => HTMLAudioElement }).Audio
-          ? new (globalThis as unknown as { Audio: new () => HTMLAudioElement }).Audio()
-          : null);
+        (() => {
+          const Ctor = (window as unknown as { Audio?: new () => HTMLAudioElement }).Audio;
+          return Ctor ? new Ctor() : null;
+        });
       el = create();
       if (!el) return finish(0);
       el.preload = 'metadata';
@@ -424,9 +428,12 @@ export class ScratchDeck {
   private context(): AudioContextLike | null {
     if (this.ctx) return this.ctx;
     try {
-      const Ctor = (globalThis as unknown as { AudioContext?: new () => AudioContextLike })
-        .AudioContext;
-      const ctx = this.deps.createContext ? this.deps.createContext() : Ctor ? new Ctor() : null;
+      // 有注入口就先走注入口（测试替身）：别为了拿构造器去碰浏览器全局
+      const factory = this.deps.createContext;
+      const Ctor = factory
+        ? null
+        : (window as unknown as { AudioContext?: new () => AudioContextLike }).AudioContext;
+      const ctx = factory ? factory() : Ctor ? new Ctor() : null;
       if (!ctx) return null;
       this.ctx = ctx;
       this.gain = ctx.createGain();
@@ -450,7 +457,7 @@ export class ScratchDeck {
   private decodeBytes(bytes: ArrayBuffer, sampleRate: number): Promise<AudioBufferLike> {
     if (this.deps.decode) return this.deps.decode(bytes, sampleRate);
     const Ctor = (
-      globalThis as unknown as {
+      window as unknown as {
         OfflineAudioContext?: new (c: number, l: number, r: number) => {
           decodeAudioData(data: ArrayBuffer): Promise<AudioBufferLike>;
         };

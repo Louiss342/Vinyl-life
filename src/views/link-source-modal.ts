@@ -157,7 +157,8 @@ export class LinkSourceModal extends Modal {
     const { candidate, idField, confirm } = this;
     if (confirm) confirm.disabled = true;
     try {
-      await this.app.fileManager.processFrontMatter(album.file, (fm) => {
+      // 回调参数显式标注（理由同 import.ts）：不标注则 fm 是 any，动态键读写都算不安全访问
+      await this.app.fileManager.processFrontMatter(album.file, (fm: Record<string, unknown>) => {
         if (fm[idField]) throw new Error(t('link.conflict'));
         fm[idField] = candidate.source === 'netease' ? Number(candidate.sourceAlbumId) : candidate.sourceAlbumId;
       });

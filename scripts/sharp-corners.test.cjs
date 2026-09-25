@@ -1,9 +1,10 @@
 // 全直角（用户要求）：插件 UI 不再出现圆角矩形 —— 与专辑墙上的专辑一致。
-// 纯文本扫描，不需要 Obsidian：
+// 本文件放「整份 styles.css 都成立」的样式纪律。纯文本扫描，不需要 Obsidian：
 //   1) styles.css 里每一处 border-radius 只能是 0（直角）/ 50%（圆形对象）/ inherit；
 //   2) 50% 只允许出现在「本来就是圆的」白名单选择器上（唱片 / 圆钮 / 圆勾 …）；
-//   3) 用户点名的几处必须是 0：专辑架（.vinyl-pick）、专辑墙封面、设置页三件套、工具栏 / 动作条；
-//   4) 宿主控件与弹层的兜底段在位：.modal.vinyl-modal / .menu.vinyl-menu + 各处接线。
+//   3) 不出现 :has（审核口径：宽泛选择器失效）＝ 与本条同一性质的全局约束，也放在这里；
+//   4) 用户点名的几处必须是 0：专辑架（.vinyl-pick）、专辑墙封面、设置页三件套、工具栏 / 动作条；
+//   5) 宿主控件与弹层的兜底段在位：.modal.vinyl-modal / .menu.vinyl-menu + 各处接线。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -63,6 +64,15 @@ test('样式：全插件的 border-radius 只有 0 / 50% / inherit，没有圆�
       `圆形白名单里的 ${selector} 不再是 50% —— 圆形对象被改动了吗`
     );
   }
+});
+
+test('样式：styles.css 里不出现 :has（审核口径：宽泛选择器失效是性能警告）', () => {
+  // 与全直角同一性质：一条「全插件都成立」的样式纪律。原来两处 :has（工具栏藏标题、唱片行左移）
+  // 已改成由 JS 把状态类写在父元素上，触发条件不变。
+  // 先去掉注释：注释里要能自由讨论这条纪律（说明为什么不用它），只扫真选择器。
+  // 正则里把左括号转义着写（\s*\(），不写字面量：免得本文件自己成为仓库里那一处。
+  const selectorsOnly = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.doesNotMatch(selectorsOnly, /:has\s*\(/, 'styles.css 里出现 :has —— 状态该由 JS 写在父元素上');
 });
 
 test('样式：用户点名的几处是直角（专辑架 / 专辑墙封面 / 设置页 / 工具栏与动作条）', () => {

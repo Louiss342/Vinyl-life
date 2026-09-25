@@ -18,10 +18,14 @@ export class AlbumEditionModal extends Modal {
     actions.createEl('button', { text: t('common.cancel') }).onclick = () => this.close();
     const save = actions.createEl('button', { text: t('common.save'), cls: 'mod-cta' });
     save.onclick = async () => {
-      await this.app.fileManager.processFrontMatter(this.album.file, (fm) => {
-        if (input.value.trim()) fm.edition = input.value.trim();
-        else delete fm.edition;
-      });
+      // 回调参数显式标注（理由同 import.ts）：不标注则 fm 是 any，读写属性都算不安全访问
+      await this.app.fileManager.processFrontMatter(
+        this.album.file,
+        (fm: Record<string, unknown>) => {
+          if (input.value.trim()) fm.edition = input.value.trim();
+          else delete fm.edition;
+        }
+      );
       this.close();
       this.onSaved();
     };

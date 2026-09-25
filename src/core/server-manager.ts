@@ -306,6 +306,12 @@ export class ServerManager {
   // —— 旧网关 PID 记录与清理（只服务升级路径）——
   // ≤1.0.8 的版本用系统 Node spawn 网关：它不随插件重载消失，会常驻堆积，所以按 PID 记录清理。
   // 现行（应用内）网关随插件卸载 / Obsidian 退出回收，不再写 PID 记录。
+  //
+  // 这里是全插件唯一用到 child_process 的地方，审核会把它列为「Shell Execution」能力披露。
+  // 非用不可：要确认一个 PID 确实是本插件的网关，只能读它的命令行 —— 只认 PID 的话，
+  // 号被系统复用之后就会杀掉无关进程（杀错别人的进程远比留一个僵尸网关严重）。
+  // 只在 .gateway.pid 存在时跑一次（即从 ≤1.0.8 升上来的那次启动），不是常驻能力。
+  // 为什么留着，见 CONTRIBUTING 的「审核的能力披露」一节。
 
   private stalePidFile(): string {
     return pluginAbsPath(this.plugin, '.gateway.pid');

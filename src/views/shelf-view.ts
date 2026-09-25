@@ -457,7 +457,7 @@ export class VinylShelfView extends ItemView {
     // —— 搜索：图标 ↔ 原位展开的输入框（输入框向左长，右侧三个按钮原地不动）——
     const search = bar.createDiv({ cls: 'vinyl-shelf-search' });
     this.searchEl = search;
-    search.toggleClass('is-open', this.searchOpen);
+    this.syncSearchOpenClass(this.searchOpen);
     const toggle = search.createEl('button', { cls: 'clickable-icon vinyl-shelf-search-toggle' });
     setIcon(toggle, 'search');
     toggle.setAttribute('aria-label', t('toolbar.search'));
@@ -572,9 +572,17 @@ export class VinylShelfView extends ItemView {
 
   private setSearchOpen(open: boolean): void {
     this.searchOpen = open;
-    this.searchEl?.toggleClass('is-open', open);
+    this.syncSearchOpenClass(open);
     const toggle = this.searchEl?.querySelector<HTMLElement>('.vinyl-shelf-search-toggle');
     toggle?.setAttribute('aria-expanded', String(open));
+  }
+
+  /** 搜索展开状态写两处：控件自己（图标 ↔ 输入框）与工具栏（窄到 380px 时用容器查询藏标题）。
+   *  工具栏那份是替掉原来的 :has 写法的 —— :has 要由子元素反查父元素，会触发大范围选择器
+   *  失效（审核的性能警告）。状态只在这一处写，免得两边的类漂移。 */
+  private syncSearchOpenClass(open: boolean): void {
+    this.searchEl?.toggleClass('is-open', open);
+    this.toolbarEl?.toggleClass('is-searching', open);
   }
 
   /** 应用关键词（防抖 / 组词结束后调用）：更新墙、管滚动位置。

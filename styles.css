@@ -418,7 +418,10 @@
 }
 
 @container (max-width: 380px) {
-  .vinyl-shelf-toolbar:has(.vinyl-shelf-search.is-open) .vinyl-shelf-heading {
+  /* 搜索展开时让输入框占用标题那一片。状态类由 shelf-view 同步写在工具栏上：
+     原写法是工具栏用 :has 去反查搜索控件的 .is-open —— :has 要由子元素反查父元素，
+     会触发大范围选择器失效（审核把它列为性能警告），故改成父元素自带状态类。 */
+  .vinyl-shelf-toolbar.is-searching .vinyl-shelf-heading {
     display: none;
   }
 
@@ -4112,9 +4115,10 @@
 }
 
 /* 右半区正常参与 flex 变宽，同时让整行等量左移：
- * 前面的唱片被推向左，悬停项向左展开，右侧唱片与边界保持原位。 */
-.vinyl-picker-row:has(> .vinyl-pick:nth-child(n + 5):hover),
-.vinyl-picker-row:has(> .vinyl-pick:nth-child(n + 5):focus-visible) {
+ * 前面的唱片被推向左，悬停项向左展开，右侧唱片与边界保持原位。
+ * 状态类（is-hover-shift）由 album-picker 给第 5 列及以后的唱片挂上：原写法用 :has 由
+ * 子元素反查父元素，会触发大范围选择器失效（审核把它列为性能警告）。 */
+.vinyl-picker-row.is-hover-shift {
   --vinyl-hover-shift: calc(24px - var(--vinyl-pick-h, 108px));
 }
 
@@ -4425,5 +4429,5 @@
   .vinyl-link-panes { flex-direction: column; }
 }
 
-/*! vinyl-life styles v1.3.0 — 由 npm run version-bump 维护，勿手改这一行：
+/*! vinyl-life styles v1.3.1 — 由 npm run version-bump 维护，勿手改这一行：
    插件启动时核对版本（见 src/core/style-fallback.ts）；缺失或与 main.js 不符会自动挂上内置副本。 */

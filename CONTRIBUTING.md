@@ -29,6 +29,16 @@ npm test
 - **注释写中文**，并且写「为什么」而不是「做了什么」。仓库里现有的注释密度可以当参考。
 - 新增依赖前先想一想：能内联进 `main.js` 的小实现，好过一个只用到一次的三方包。
 
+## 审核的「能力披露」：这三项是有意保留的
+
+社区审核会把下面三项作为能力列出来。它们是功能的一部分，不是待修的缺陷 —— 动手删任何一项之前，先看为什么需要它：
+
+- **文件系统访问（`fs`）**：本地音源的两种形态都靠它 —— 库外绝对路径的音频（`audio:` 列表）要读字节才能解码、生成 Blob URL；插件凭据（`.cookie` / `.qq-cookie` / `.kugou-cookie` / `.anon-token`）与网关产物也在 vault 之外。vault 内的笔记与附件一律走 Obsidian API（`app.vault.*`），不碰 `fs`。
+- **Shell 执行（`child_process`）**：全插件只有一处 —— `src/core/server-manager.ts` 清理 ≤1.0.8 遗留的常驻网关进程。要确认某个 PID 确实是本插件的网关，只能读它的命令行（`powershell` / `ps`）：只看 PID 会在号被系统复用后误杀别人的进程。只在 `.gateway.pid` 存在时跑一次（即从 ≤1.0.8 升上来的那次启动），不是常驻能力。
+- **全库枚举（`vault.getMarkdownFiles` / `getFiles`）**：专辑墙的数据源就是「带 `album` 标签的笔记」，启动时要扫一遍建索引；之后按路径取单篇，不重复枚举。
+
+插件是 `isDesktopOnly: true`（本地音频与本地网关都只在桌面端成立）。这三项的理由也写在各自的调用处注释里，方便审核对照。
+
 ## 测试
 
 - `npm test`：`node --test`，纯 Node 环境，不需要 Obsidian。用例用 esbuild 把真实 TS 编译进 `node:vm`，再用 stub 顶掉 `obsidian` 模块 —— 所以如果你在新的源码里 import 了 stub 里没有的类（例如 `SettingPage`），记得在相关测试文件的 stub 里补上，否则整个用例文件会加载失败。
@@ -89,6 +99,16 @@ Local debugging: copy `main.js`, `manifest.json` and `styles.css` into `<vault>/
 - **Other than that, no deprecated APIs.**
 - **Comments are written in Chinese**, and they explain *why*, not *what*. Match the existing comment density.
 - Think twice before adding a dependency: a small inlined implementation usually beats a third-party package used once.
+
+## Review "capability disclosures": these three are intentional
+
+Community review lists the three capabilities below. They are part of the feature set, not defects waiting to be fixed — read why each is needed before removing anything:
+
+- **Filesystem access (`fs`)**: both shapes of local sources rely on it — audio at absolute paths outside the vault (the `audio:` list) has to be read as bytes to be decoded and turned into Blob URLs, and the plugin's credentials (`.cookie` / `.qq-cookie` / `.kugou-cookie` / `.anon-token`) plus the gateway artefacts live outside the vault too. Notes and attachments *inside* the vault always go through the Obsidian API (`app.vault.*`), never `fs`.
+- **Shell execution (`child_process`)**: exactly one place — `src/core/server-manager.ts` cleaning up the resident gateway process left behind by ≤1.0.8. Confirming a PID really is this plugin's gateway requires reading its command line (`powershell` / `ps`): trusting the PID alone would kill an unrelated process once the OS recycles the number. It runs once, and only when `.gateway.pid` exists (i.e. the first launch after upgrading from ≤1.0.8) — not a standing capability.
+- **Vault enumeration (`vault.getMarkdownFiles` / `getFiles`)**: the album shelf is built from "notes tagged `album`", so it scans once at startup to build the index; afterwards notes are fetched by path, with no repeat enumeration.
+
+The plugin is `isDesktopOnly: true` (local audio and the local gateway only exist on desktop). The same reasoning sits in a comment at each call site, for reviewers to follow.
 
 ## Tests
 

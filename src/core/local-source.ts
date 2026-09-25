@@ -2,6 +2,8 @@
 //   vault 内  → adapter 扫描 + getResourcePath 流式直出（首选），readBinary→Blob 兜底
 //   外链绝对路径 → Node fs 扫描/读取 → Blob URL（按文件缓存，内存拷贝）
 // Blob URL 生命周期：按专辑小缓存，切专辑回收，unload 全清。
+// 库外音频本来就不在 Obsidian API 的范围内，只能用 fs —— 审核披露的 fs 能力主要来自这里
+// 与 credential-file（为什么需要，见 CONTRIBUTING）。
 import { App, TFile, TFolder, normalizePath } from 'obsidian';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -162,7 +164,7 @@ export class LocalSource {
       }
       if (track.source === 'local-external') {
         const buf = fs.readFileSync(track.path);
-        return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
+        return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
       }
     } catch (e) {
       console.warn('[vinyl] 读取音轨字节失败（这首曲子只走轻量音效）', e);

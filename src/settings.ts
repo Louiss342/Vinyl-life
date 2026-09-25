@@ -22,7 +22,7 @@ import { markVinylModal } from './util';
 import type VinylLifePlugin from './main';
 import { QrLoginModal, kugouQrProvider, qqQrProvider } from './views/qr-login-modal';
 import { StatsPage } from './views/stats-page';
-import { SettingsSection, settingsSection } from './views/settings-section';
+import { settingsSection } from './views/settings-section';
 import { attachAboutInk, renderAboutPage } from './views/about-page';
 import { DiscDirection, DISC_DIRECTIONS, SpinSpeed, SPIN_SPEEDS } from './core/disc-motion';
 import {
@@ -270,6 +270,9 @@ const SCRATCH_SOUND_KEYS: Record<ScratchSound, string> = {
   light: 'settings.scratchLight',
 };
 
+// 自绘面板是有意为之（为什么，见文件头注释与 CONTRIBUTING.md）。审核会提示「未实现 getSettingDefinitions」，
+// 但那是取舍不是缺陷：声明式的分页列表做不出浏览器标签页，官方文档写明两条路只能二选一。
+// 不去禁用它 —— 本仓库的 lint 配置禁止豁免 obsidianmd/* 规则（eslint-comments/no-restricted-disable）。
 export class VinylSettingTab extends PluginSettingTab {
   plugin: VinylLifePlugin;
   /** 当前标签页：切标签 / 重绘后仍停在这一页 */

@@ -313,7 +313,7 @@ export async function importQqAlbum(ctx: ImportContext, input: string): Promise<
 
 /** 发行年份：酷狗的 publishtime 可能是「2020-01-01」这类日期串，也可能是秒级时间戳字符串 */
 function yearFromKugouDate(raw: unknown): string | undefined {
-  const s = String(raw ?? '').trim();
+  const s = scalarText(raw).trim();
   if (!s) return undefined;
   const m = /^(\d{4})/.exec(s);
   if (m) return m[1];

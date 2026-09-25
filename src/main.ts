@@ -213,7 +213,10 @@ export default class VinylLifePlugin extends Plugin {
             this.pendingSourceSwitch = null;
             const file = this.app.vault.getAbstractFileByPath(pending.path);
             if (file instanceof TFile) {
-              void this.app.fileManager.processFrontMatter(file, (fm) => { fm.source = pending.source; });
+              // 回调参数显式标注（理由同 import.ts）：不标注则 fm 是 any，写属性算不安全访问
+              void this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+                fm.source = pending.source;
+              });
             }
           }
         }
@@ -733,7 +736,7 @@ export default class VinylLifePlugin extends Plugin {
     const title = playingThis ? snap.current?.title ?? '' : file.basename;
     // 位置写成可点的链接（obsidian://vinyl-life）：日后从笔记里点回来，直接续上那一刻
     const position = playingThis && snap.current
-      ? ` · [${fmtTime(snap.currentTime)}](${this.resumeLink(target!, snap.current.title, snap.currentTime)})`
+      ? ` · [${fmtTime(snap.currentTime)}](${this.resumeLink(target, snap.current.title, snap.currentTime)})`
       : '';
     const line = tf('note.listeningLine', { ts, title, position });
     const content = await this.app.vault.read(file);
@@ -971,8 +974,8 @@ export default class VinylLifePlugin extends Plugin {
     const sources = detectAlbumSources(this.app, album);
     if (!Object.entries(sources).some(([name, available]) => available && name !== source)) return;
     const prompt = new Notice('', 12000);
-    prompt.noticeEl.createSpan({ text: `${t('health.switchPrompt')} ` });
-    prompt.noticeEl.createEl('button', { text: t('health.switch') }).onclick = () => {
+    prompt.messageEl.createSpan({ text: `${t('health.switchPrompt')} ` });
+    prompt.messageEl.createEl('button', { text: t('health.switch') }).onclick = () => {
       prompt.hide();
       this.openSourceSwitch(album.path, source);
     };
@@ -984,8 +987,8 @@ export default class VinylLifePlugin extends Plugin {
     const sources = detectAlbumSources(this.app, album);
     if (Object.values(sources).filter(Boolean).length < 2) return;
     const prompt = new Notice('', 12000);
-    prompt.noticeEl.createSpan({ text: `${t('health.switchPrompt')} ` });
-    prompt.noticeEl.createEl('button', { text: t('health.switch') }).onclick = () => {
+    prompt.messageEl.createSpan({ text: `${t('health.switchPrompt')} ` });
+    prompt.messageEl.createEl('button', { text: t('health.switch') }).onclick = () => {
       prompt.hide();
       this.openSourceSwitch(album.path);
     };
@@ -1172,7 +1175,7 @@ export default class VinylLifePlugin extends Plugin {
           const coverParent = snapshot.coverVaultPath.split('/').slice(0, -1).join('/');
           if (coverParent) await ensureFolder(this.app, coverParent);
           const bytes = fs.readFileSync(pluginAbsPath(this, snapshot.cachedCover));
-          const data = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+          const data = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
           await this.app.vault.createBinary(snapshot.coverVaultPath, data);
         }
       }

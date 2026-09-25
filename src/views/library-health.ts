@@ -16,7 +16,7 @@ import {
 } from '../core/library-health';
 import { sourceName } from '../core/track';
 import { t, tf } from '../core/i18n';
-import { markVinylModal, notice, pickedFolderPath } from '../util';
+import { markVinylModal, notice, pickedFolderPath, scalarText } from '../util';
 import { SetCoverModal } from './set-cover-modal';
 
 /** 两次试播之间留一口气：收藏多时是几十次连续请求，平台限流看的就是这个间隔 */
@@ -103,23 +103,30 @@ export class RelocateAudioModal extends Modal {
     }
     button.disabled = true;
     const oldRef = this.issue.detail.trim();
-    const norm = (v: unknown) => String(v ?? '').trim().replace(/^\[\[|\]\]$/g, '');
+    // scalarText 而非 String(v)：旧数据里这一项可能是对象，String() 会得到 "[object Object]"
+    // 这种看似有效实则匹配不上的取值（scalarText 对非标量一律给空串，同 import.ts 的口径）
+    const norm = (v: unknown) => scalarText(v).trim().replace(/^\[\[|\]\]$/g, '');
     const sep = next.includes('\\') ? '\\' : '/';
     let changed = 0;
     try {
-      await this.plugin.app.fileManager.processFrontMatter(this.issue.album.file, (fm) => {
-        if (norm(fm.audioFolder) === oldRef) {
-          fm.audioFolder = next;
-          changed++;
-        }
-        if (Array.isArray(fm.audio)) {
-          fm.audio = fm.audio.map((raw) => {
-            if (norm(raw) !== oldRef) return raw;
+      // 回调参数显式标注（理由同 import.ts）：不标注则 fm 是 any，读写属性都算不安全访问
+      await this.plugin.app.fileManager.processFrontMatter(
+        this.issue.album.file,
+        (fm: Record<string, unknown>) => {
+          if (norm(fm.audioFolder) === oldRef) {
+            fm.audioFolder = next;
             changed++;
-            return `${next}${sep}${String(raw).split(/[\\/]/).pop() || ''}`;
-          });
+          }
+          const audio = fm.audio;
+          if (Array.isArray(audio)) {
+            fm.audio = audio.map((raw: unknown) => {
+              if (norm(raw) !== oldRef) return raw;
+              changed++;
+              return `${next}${sep}${scalarText(raw).split(/[\\/]/).pop() || ''}`;
+            });
+          }
         }
-      });
+      );
       notice(changed ? tf('health.relocated', { n: changed }) : t('health.relocateNoMatch'));
       this.close();
       this.onDone();
@@ -218,7 +225,7 @@ export class LibraryHealthModal extends Modal {
         row.createEl('button', { text: t('health.retry'), cls: 'mod-cta' }).onclick = async (ev) => {
           const button = ev.currentTarget as HTMLButtonElement;
           button.disabled = true;
-          await this.retryPlayback(issue.album, issue.source!, button);
+          await this.retryPlayback(issue.album, issue.source, button);
         };
       }
       // 仅收藏只对「无音源 / 无封面」这类提示有意义：写完这条，下次扫描就不再提它
@@ -273,9 +280,13 @@ export class LibraryHealthModal extends Modal {
     const file = this.plugin.app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile)) return;
     try {
-      await this.plugin.app.fileManager.processFrontMatter(file, (fm) => {
-        fm.collectOnly = true;
-      });
+      // 回调参数显式标注（理由同 import.ts）：不标注则 fm 是 any，写属性算不安全访问
+      await this.plugin.app.fileManager.processFrontMatter(
+        file,
+        (fm: Record<string, unknown>) => {
+          fm.collectOnly = true;
+        }
+      );
       notice(t('health.markedNotice'));
       // 元数据缓存是异步更新的：立刻重画会照旧读到旧属性（用户以为没生效）。
       // 等这条笔记的缓存更新事件再重画；弹窗关掉时 Component 的清理会自动摘掉监听。

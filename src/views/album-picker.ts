@@ -21,6 +21,13 @@ export const PICKER_ROWS = 3;
 export const PICKER_COLUMNS = 8;
 /** 鼠标横向划过当前行时的最大视差幅度（px）。 */
 const PARALLAX_PX = 22;
+/** 从第几列（0 基）起算右半区：这些唱片展开时会顶到右边界，整行要等量左移补偿。
+ *  口径同 styles.css 的 .vinyl-picker-row.is-hover-shift（本文件是唯一给它挂类的地方）。 */
+const SHIFT_FROM_COLUMN = 4;
+
+/** 每行「当前算数（悬停 / 键盘焦点）的右半区唱片」：任一张在集合里，整行就左移。
+ *  按行存，所以同一行里滑来滑去不会互相打架（见 bindRowShift）。 */
+const rowShiftOwners = new WeakMap<HTMLElement, Set<HTMLElement>>();
 
 /** 顺序分行：先填满上一行，且始终保留至少三行的架子。 */
 export function pickerRows<T>(items: T[], columns = PICKER_COLUMNS): T[][] {
@@ -129,12 +136,12 @@ export class AlbumPicker {
       const row = this.track.createDiv({ cls: 'vinyl-picker-row' });
       // 保留原有的层次感：越靠下视差系数越大，但只在该行被指向时生效。
       row.style.setProperty('--vinyl-row-k', (0.45 + rowIdx * 0.35).toFixed(2));
-      for (const album of rowAlbums) this.buildTile(row, byPath.get(album.path));
+      rowAlbums.forEach((album, col) => this.buildTile(row, byPath.get(album.path), col));
     });
     this.applyLabels();
   }
 
-  private buildTile(row: HTMLElement, entry: PickerEntry) {
+  private buildTile(row: HTMLElement, entry: PickerEntry, col: number) {
     const { album } = entry;
     const tile = row.createEl('button', { cls: 'vinyl-pick' });
     tile.dataset.path = album.path;
@@ -157,6 +164,35 @@ export class AlbumPicker {
     tile.createSpan({ cls: 'vinyl-pick-name', text: album.title });
     tile.createSpan({ cls: 'vinyl-pick-mark' });
     if (!entry.local && !entry.netease && !entry.qq && !entry.kugou) tile.addClass('is-collect');
+    // 只有右半区（第 5 列起）展开时才需要整行左移，左半区挂监听也没用
+    if (col >= SHIFT_FROM_COLUMN) this.bindRowShift(row, tile);
+  }
+
+  /** 右半区的唱片被悬停 / 键盘聚焦时给整行挂上左移类（.vinyl-picker-row.is-hover-shift）。
+   *  为什么不用选择器 :has：它要由子元素反查父元素，会触发大范围选择器失效（审核的性能警告）。
+   *  判定与原来那两条选择器一一对应：
+   *    · hover 用 mouseenter / mouseleave，而不是 matches(':hover') —— 后者在离开事件里读到的
+   *      状态取决于浏览器的更新时序，读到旧值就会留下一行错位的唱片；
+   *    · 焦点要求 :focus-visible（键盘过来的才算）：鼠标点选后唱片并不展开，行却左移会很怪。
+   *  状态记成「本行当前有几张算数」的集合，而不是每张各挂一个布尔量：从一张滑到另一张时
+   *  两个事件谁先谁后由浏览器定，布尔量会拼出「还悬着却已复位」的中途态，集合则只增删自己那个。 */
+  private bindRowShift(row: HTMLElement, tile: HTMLElement): void {
+    let owners = rowShiftOwners.get(row);
+    if (!owners) {
+      owners = new Set();
+      rowShiftOwners.set(row, owners);
+    }
+    const active = owners;
+    const sync = () => row.toggleClass('is-hover-shift', active.size > 0);
+    const mark = (on: boolean) => {
+      if (on) active.add(tile);
+      else active.delete(tile);
+      sync();
+    };
+    tile.addEventListener('mouseenter', () => mark(true));
+    tile.addEventListener('mouseleave', () => mark(false));
+    tile.addEventListener('focusin', () => mark(tile.matches(':focus-visible')));
+    tile.addEventListener('focusout', () => mark(false));
   }
 
   /** 语言切换后就地更新文案（不重建唱片架：展开态 / 滚动位置都保留） */

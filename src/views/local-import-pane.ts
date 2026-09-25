@@ -3,7 +3,6 @@
 //   专辑墙的「添加」浮层把它当第二层（选文件 / 拖进来的入口），
 //   本地导入弹窗（卡片右键「导入本地音频…」、命令面板）把它当弹窗内容。
 // 文件夹 = 一张专辑；子目录结构保留（audio/<专辑>/CD1/01.flac）；音乐库根目录改成逐张勾选。
-import { TFile } from 'obsidian';
 import { AlbumInfo } from '../core/album-index';
 import {
   ImportContext,

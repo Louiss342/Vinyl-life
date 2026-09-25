@@ -81,15 +81,14 @@ export function retainPlayEvents(events: PlayEvent[], now = Date.now()): PlayEve
 export function normalizePlayEvents(raw: unknown): PlayEvent[] {
   if (!Array.isArray(raw)) return [];
   return raw
-    .filter(
-      (e): e is PlayEvent =>
-        !!e &&
-        typeof e === 'object' &&
-        typeof e.at === 'number' &&
-        isFinite(e.at) &&
-        e.at > 0 &&
-        typeof e.trackKey === 'string'
-    )
+    // 参数标注 unknown：Array.isArray 只把它窄到 any[]，不标注则下面每次取值都是 any 上的不安全访问
+    .filter((e: unknown): e is PlayEvent => {
+      if (typeof e !== 'object' || e === null) return false;
+      const ev = e as { at?: unknown; trackKey?: unknown };
+      return (
+        typeof ev.at === 'number' && isFinite(ev.at) && ev.at > 0 && typeof ev.trackKey === 'string'
+      );
+    })
     .map((e) => ({ at: e.at, trackKey: e.trackKey, albumPath: e.albumPath }));
 }
 

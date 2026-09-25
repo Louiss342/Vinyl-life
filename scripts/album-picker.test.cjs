@@ -101,6 +101,12 @@ function fakeEl(tag = 'div', parent = null) {
       }
       return null;
     },
+    // 只实现唱片区问得到的那一个伪类：:focus-visible 由用例自己摆（真机上由浏览器判定）
+    focusVisible: false,
+    matches(sel) {
+      if (sel === ':focus-visible') return el.focusVisible === true;
+      throw new Error(`假 DOM 没有实现的选择器：${sel}`);
+    },
   };
   el.classList = {
     toggle: (n, on) => el.toggleClass(n, on),
@@ -369,6 +375,45 @@ test('视差：只移动鼠标所在行，第一行交互不再带动下方专�
   assert.notEqual(rows[1].vars.get('--vinyl-parallax'), '0px', '新行接管视差');
 });
 
+test('整行左移：右半区（第 5 列起）悬停 / 键盘焦点才挂类，左半区与鼠标点选不动', () => {
+  // 原来是两条 :has 选择器（子元素 hover / focus-visible → 父元素行），改成 JS 挂类后
+  // 触发条件必须一一对应：这里就是那份对照表。
+  const albums = Array.from({ length: 10 }, (_, i) => entry(`专辑/${i}.md`, String(i)));
+  const { picker } = makePicker({ albums });
+  const rows = picker.el.querySelectorAll('.vinyl-picker-row');
+  const [row] = rows;
+  const rowTiles = row.children;
+  assert.equal(rowTiles.length, 8, '一行 8 张（固定列数）');
+
+  rowTiles[2].fire('mouseenter');
+  assert.equal(row.hasClass('is-hover-shift'), false, '第 3 列展开不会顶到右边界，整行不动');
+  rowTiles[2].fire('mouseleave');
+
+  rowTiles[4].fire('mouseenter');
+  assert.equal(row.hasClass('is-hover-shift'), true, '第 5 列悬停：整行等量左移');
+  assert.equal(rows[1].hasClass('is-hover-shift'), false, '别的行纹丝不动');
+  rowTiles[4].fire('mouseleave');
+  assert.equal(row.hasClass('is-hover-shift'), false, '移开即复位');
+
+  rowTiles[5].focusVisible = true;
+  rowTiles[5].fire('focusin');
+  assert.equal(row.hasClass('is-hover-shift'), true, '键盘 Tab 过来（focus-visible）同样左移');
+  rowTiles[5].fire('focusout');
+  assert.equal(row.hasClass('is-hover-shift'), false, '焦点离开复位');
+
+  rowTiles[6].fire('focusin'); // focusVisible 仍为 false = 鼠标点选
+  assert.equal(row.hasClass('is-hover-shift'), false, '鼠标点选不左移（唱片本来也没展开，行不该歪）');
+  rowTiles[6].fire('focusout');
+
+  // 从一张滑到另一张：两个事件的先后由浏览器定，整行都不该掉类（集合只增删自己那一个）
+  rowTiles[4].fire('mouseenter');
+  rowTiles[5].fire('mouseenter');
+  rowTiles[4].fire('mouseleave');
+  assert.equal(row.hasClass('is-hover-shift'), true, '滑到下一张的途中不掉类');
+  rowTiles[5].fire('mouseleave');
+  assert.equal(row.hasClass('is-hover-shift'), false, '最后一张也移开才复位');
+});
+
 test('样式：恢复原来的窄侧脊 → 悬停展开封面，保留纵向视窗与行视差', () => {
   const css = fs.readFileSync(path.join(__dirname, '../styles.css'), 'utf8');
   assert.match(css, /\.vinyl-picker-row\s*\{[^}]*display:\s*flex/, '唱片仍是原来的横向侧脊队列');
@@ -376,9 +421,10 @@ test('样式：恢复原来的窄侧脊 → 悬停展开封面，保留纵向视
   assert.match(css, /\.vinyl-pick\s*\{[^}]*border-radius:\s*0/, '全直角（用户点名：与专辑墙上的专辑一致）');
   assert.match(css, /\.vinyl-pick\s*\{[^}]*width:\s*24px[^}]*height:\s*var\(--vinyl-pick-h/, '默认是原来的窄侧脊');
   assert.match(css, /\.vinyl-pick:hover,[\s\S]{0,120}?\.vinyl-pick:focus-visible\s*\{[^}]*width:\s*var\(--vinyl-pick-h/, '悬停展开成完整封面');
+  // 状态类挂在行自己身上，不再用 :has 由子元素反查父元素（审核的性能警告）
   assert.match(
     css,
-    /\.vinyl-picker-row:has\(> \.vinyl-pick:nth-child\(n \+ 5\):(?:hover|focus-visible)\)[\s\S]{0,180}?--vinyl-hover-shift:\s*calc\(24px - var\(--vinyl-pick-h, 108px\)\)/,
+    /\.vinyl-picker-row\.is-hover-shift\s*\{[^}]*--vinyl-hover-shift:\s*calc\(24px - var\(--vinyl-pick-h, 108px\)\)/,
     '右半区悬停时整行等量左移，让前面的唱片产生被推开的动画'
   );
   assert.match(
@@ -403,6 +449,16 @@ test('样式：恢复原来的窄侧脊 → 悬停展开封面，保留纵向视
   const src = fs.readFileSync(path.join(__dirname, '../src/views/album-picker.ts'), 'utf8');
   assert.match(src, /--vinyl-parallax/, '鼠标位置仍会写入视差变量');
   assert.match(src, /--vinyl-row-k/, '行深度系数保留');
+  // 左移类的触发条件：第 5 列起、hover 用 enter/leave 判定、焦点要 :focus-visible
+  assert.match(src, /const SHIFT_FROM_COLUMN = 4;/, '右半区从第 5 列起算（与 n + 5 同口径）');
+  assert.match(src, /if \(col >= SHIFT_FROM_COLUMN\) this\.bindRowShift\(row, tile\)/, '只给右半区的唱片挂监听');
+  assert.match(src, /'mouseenter', \(\) => mark\(true\)/, '悬停进：整行左移');
+  assert.match(src, /'mouseleave', \(\) => mark\(false\)/, '悬停出：复位');
+  assert.match(
+    src,
+    /'focusin', \(\) => mark\(tile\.matches\(':focus-visible'\)\)/,
+    '键盘焦点才左移（鼠标点选后唱片不展开，行就不该左移）'
+  );
 });
 
 test('样式：减少动效时翻面直接切、悬停不倾斜、视差不追手', () => {

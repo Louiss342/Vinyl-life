@@ -17,6 +17,7 @@ class VaultImageSuggest extends FuzzySuggestModal<TFile> {
     this.setPlaceholder(t('cover.pickInVault'));
   }
 
+  /** 候选图 = 库内所有图片：选封面时用户要能挑到任意一张（审核披露的 vault 枚举之一，见 CONTRIBUTING） */
   getItems(): TFile[] {
     return this.app.vault.getFiles().filter((f) => isImageFile(f.name));
   }
