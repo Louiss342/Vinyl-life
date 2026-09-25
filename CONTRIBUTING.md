@@ -34,6 +34,7 @@ npm test
 - `npm test`：`node --test`，纯 Node 环境，不需要 Obsidian。用例用 esbuild 把真实 TS 编译进 `node:vm`，再用 stub 顶掉 `obsidian` 模块 —— 所以如果你在新的源码里 import 了 stub 里没有的类（例如 `SettingPage`），记得在相关测试文件的 stub 里补上，否则整个用例文件会加载失败。
 - 改动涉及解析、归一化、播放状态这类纯逻辑时，请补上用例：一个「名字说明它测什么」的 `test()` 比一堆断言注释有用。
 - README 有中英对照与手记逐字校验的用例，改 README 时别破坏 `## 中文` / `## English` 结构。
+- **本地 Node 24、CI 是 Node 20**：用例和被测代码都别依赖只在较新 Node 上成立的行为。已经踩过一次：`privateDecrypt` 配 `RSA_PKCS1_PADDING` 从 Node 20.11 起被 CVE-2023-46809 的修复禁掉、Node 24 又放开，本地 585 条全绿、CI 直接红（现在 `.test.cjs` 里改成无填充解密 + 手工剥填充，见 `kugou-auth.test.cjs` 的 `rsaPkcs1Decrypt`）。拿不准就换个 Node 20 跑一遍 `node --test` 再提交。
 
 ## 提交与 Pull Request
 
@@ -94,6 +95,7 @@ Local debugging: copy `main.js`, `manifest.json` and `styles.css` into `<vault>/
 - `npm test` runs `node --test`, entirely in Node, no Obsidian needed. Tests compile the real TypeScript with esbuild into `node:vm` and stub the `obsidian` module. If your source imports a class the stub lacks (e.g. `SettingPage`), add it to the stubs in the affected test files — otherwise the whole test file fails to load.
 - For parsing, normalisation or playback-state logic, add cases: a `test()` whose name says what it checks beats a pile of commented assertions.
 - The README has tests for its Chinese/English parity and the verbatim author's note. Keep the `## 中文` / `## English` structure intact when editing it.
+- **Local Node is 24, CI runs Node 20**: neither the tests nor the code under test may rely on behaviour that only newer Node provides. We have been bitten once: `privateDecrypt` with `RSA_PKCS1_PADDING` is blocked by the CVE-2023-46809 fix from Node 20.11 on and allowed again in Node 24, so all 585 tests were green locally and CI went red (the tests now decrypt with no padding and strip it by hand — see `rsaPkcs1Decrypt` in `kugou-auth.test.cjs`). When in doubt, run `node --test` under Node 20 before committing.
 
 ## Commits and pull requests
 

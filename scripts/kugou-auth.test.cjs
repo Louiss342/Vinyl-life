@@ -291,6 +291,20 @@ test('kugou：首次取流先注册设备，dfid/guid/mid 落盘且第二次不�
   assert.equal(g.requests.filter((x) => x.url.includes('r_register_dev')).length, 1, '复用已落盘的设备身份');
 });
 
+/** PKCS#1 v1.5 私钥解密：走 RSA_NO_PADDING + 手工剥填充。
+ *  不能直接 privateDecrypt + RSA_PKCS1_PADDING —— Node 20.11 起为 CVE-2023-46809（Marvin 攻击）
+ *  把它禁掉了（ERR_INVALID_ARG_VALUE 抛错），Node 24 又放开。直接调会让这条用例的结论随 Node 版本变：
+ *  本地 Node 24 绿、CI 的 Node 20 红。无填充解密各版本一致，剥填充这几行照 RFC 8017 §7.2.2 写。
+ *  实现侧的 publicEncrypt(RSA_PKCS1_PADDING) 不受影响 —— 那次修复禁的只是私钥解密。 */
+const rsaPkcs1Decrypt = (crypto, key, data) => {
+  const em = crypto.privateDecrypt({ key, padding: crypto.constants.RSA_NO_PADDING }, data);
+  if (em[0] !== 0x00 || em[1] !== 0x02) throw new Error('不是 PKCS#1 v1.5 加密块');
+  let i = 2;
+  while (i < em.length && em[i] !== 0x00) i++;
+  if (i >= em.length) throw new Error('PKCS#1 v1.5 块里没有 0x00 分隔符');
+  return em.subarray(i + 1);
+};
+
 test('kugou：设备注册返回加密体（同一会话 key）时也能解出 dfid', async () => {
   const { privateKey, publicKey } = nodeCrypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
   const publicPem = publicKey.export({ type: 'spki', format: 'pem' });
@@ -304,9 +318,7 @@ test('kugou：设备注册返回加密体（同一会话 key）时也能解出 d
     deviceRegisterEncrypted: (url, init) => {
       const p = new URL(url).searchParams.get('p');
       const info = JSON.parse(
-        nodeCrypto
-          .privateDecrypt({ key: privateKey, padding: nodeCrypto.constants.RSA_PKCS1_PADDING }, Buffer.from(p, 'hex'))
-          .toString('utf8')
+        rsaPkcs1Decrypt(nodeCrypto, privateKey, Buffer.from(p, 'hex')).toString('utf8')
       );
       const key = nodeCrypto.createHash('md5').update(info.aes).digest('hex').slice(0, 16);
       const iv = nodeCrypto.createHash('md5').update(info.aes).digest('hex').slice(16, 32);
