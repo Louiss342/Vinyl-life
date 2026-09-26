@@ -2,7 +2,7 @@
 //   按下 → 转过阈值起手 → 逐帧把转角喂成角度与倍速 → 松手 → 马达回正 → 交还位置与盘面。
 // 盯住的坑（只看代码看不出来的那种）：
 //   ① 起手必须把元素停掉、把位置交给手势（时间不进则退，音乐不能继续从旧位置往前走）；
-//   ② 逐帧要把转角写进 --vinyl-scratch-angle（盘面跟手）、把位置喂给引擎与搓碟台；
+//   ② 逐帧要把转角写进 --vinyl-spin-angle（盘面跟手）、把位置喂给引擎与搓碟台；
 //   ③ 抬手必须把最终位置交回引擎（否则音乐跳到别处），并摘掉接管类、留下负 animation-delay；
 //   ④ 减速回正是有终点的：到了正常转速要停表（否则 rAF 永远转下去）。
 const { test } = require('node:test');
@@ -93,6 +93,8 @@ function fakeEl(tag = 'div') {
     // 唱片盒：视口里一个 200×200 的圆（圆心 200,200，半径 100）
     getBoundingClientRect: () => ({ left: 100, top: 100, width: 200, height: 200 }),
     getAnimations: () => [],
+    // 定位正在播的那首：假的 DOM 给个空实现（真机上滚的是队列容器）
+    scrollIntoView() {},
     animate: () => ({}),
     closest: () => null,
     querySelector: () => null,
@@ -372,7 +374,7 @@ test('闭环（轻量音效）：起手 → 逐帧 → 松手 → 回正 → 交
 
   clock.now = 1100; // 第一帧：10° / 100ms → 原始倍速 = 10×1.8/(360×0.1) = 0.5（平滑后略小）
   assert.equal(runFrame(raf, clock), true);
-  const angle = Number(String(view.els.vinyl.vars.get('--vinyl-scratch-angle')).replace('deg', ''));
+  const angle = Number(String(view.els.vinyl.vars.get('--vinyl-spin-angle')).replace('deg', ''));
   assert.ok(Math.abs(angle - 10) < 1e-6, `盘面角度 = 手指划过的角，实得 ${angle}`);
   const rate = lastOf(calls, 'rate');
   assert.ok(rate > 0 && rate < 0.5, `轻量路按倍速驱动元素，实得 ${rate}`);

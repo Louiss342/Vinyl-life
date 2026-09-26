@@ -58,3 +58,18 @@ test('样式兜底：这排按钮可以换行、单颗不会撑出卡片', () =>
   assert.ok(button, '有按钮规则');
   assert.match(button[0], /max-width:\s*100%/, '单颗按钮不撑出卡片');
 });
+
+test('自定义属性汇总：全库扫描带签名缓存（不该每次重绘白扫一遍 frontmatter）', () => {
+  assert.match(PAGE, /private albumPropKeys\(\): string\[\]/, '扫全库那一步抽成带缓存的方法');
+  assert.match(PAGE, /f\.stat\?\.mtime/, '签名含 mtime：改了笔记 / 增删了专辑才重扫');
+  assert.match(
+    PAGE,
+    /if \(this\.propKeyCache\?\.sig === sig\) return this\.propKeyCache\.keys;/,
+    '命中签名就直接用缓存'
+  );
+  assert.doesNotMatch(
+    PAGE,
+    /private renderCustom[\s\S]{0,400}?for \(const file of findAlbumNotes/,
+    'renderCustom 里不该再直接扫全库（走 albumPropKeys）'
+  );
+});

@@ -10,6 +10,8 @@ import * as fs from 'fs';
 import * as crypto from 'crypto';
 import { restrictionText, scalarText } from '../util';
 import { t } from './i18n';
+import { withRequestTimeout } from './request-error';
+import { paceUpstream } from './probe-pacing';
 import type {
   LoginResponse,
   NeteaseAlbumResponse,
@@ -164,6 +166,7 @@ export class WebClient {
   }
 
   private async post<T>(uri: string, data: Record<string, unknown>, mode: 'weapi' | 'eapi'): Promise<T> {
+    await paceUpstream(); // 试播期间才生效（见 core/probe-pacing）：网页直连也是一次上游请求
     // 前缀必须以斜杠结尾：uri 形如 '/api/v1/album/1'，slice(5) 去掉 '/api/' 后直接拼在后面。
     // 少这个斜杠时上游回「HTTP 200 + {"code":404,"接口未找到！"}」—— 既不抛错也不报错，
     // 于是整条「网页会话优先」悄悄失效、全部落回网关（0.6.0 起一直如此，见 netease-search 测试）。
@@ -174,17 +177,20 @@ export class WebClient {
       mode === 'weapi'
         ? new URLSearchParams(weapi(data)).toString()
         : new URLSearchParams(eapi(uri, data)).toString();
-    const r = await requestUrl({
-      url: `${base}${uri.slice(5)}`,
-      method: 'POST',
-      contentType: 'application/x-www-form-urlencoded',
-      headers: {
-        'User-Agent': mode === 'weapi' ? UA_WEAPI : UA_API,
-        Referer: 'https://music.163.com',
-        ...(musicU ? { Cookie: `MUSIC_U=${musicU}` } : {}),
-      },
-      body,
-    });
+    // 直连上游同样要超时：网页会话是「优先通道」，它吊住时整条链路一起卡
+    const r = await withRequestTimeout(
+      requestUrl({
+        url: `${base}${uri.slice(5)}`,
+        method: 'POST',
+        contentType: 'application/x-www-form-urlencoded',
+        headers: {
+          'User-Agent': mode === 'weapi' ? UA_WEAPI : UA_API,
+          Referer: 'https://music.163.com',
+          ...(musicU ? { Cookie: `MUSIC_U=${musicU}` } : {}),
+        },
+        body,
+      })
+    );
     const json = r.json as { code?: number | string } | null;
     // 上游用「200 + body.code」表达失败（接口未找到 / 参数错 / 未登录…）。不在这里抛，
     // 调用方的 catch 就永远不触发 —— 兜底通道形同虚设，坏响应还会被当成正常数据往下传。

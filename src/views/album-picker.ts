@@ -147,7 +147,10 @@ export class AlbumPicker {
     tile.dataset.path = album.path;
     // 悬停提示只报专辑名（Obsidian 按 aria-label 出提示气泡；点选语义由界面自己说明）
     tile.setAttribute('aria-label', album.title);
-    if (album.path === this.deps.currentPath()) tile.addClass('is-current');
+    // 正在播的那张唱片：类名给视觉，aria-current 给读屏（只靠颜色的话，读屏用户不知道现在放的是哪张）
+    const isCurrent = album.path === this.deps.currentPath();
+    if (isCurrent) tile.addClass('is-current');
+    tile.setAttribute('aria-current', isCurrent ? 'true' : 'false');
     if (this.selection.includes(album.path)) tile.addClass('is-selected');
 
     const cover = tile.createSpan({ cls: 'vinyl-pick-cover' });

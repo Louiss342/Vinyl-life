@@ -6,7 +6,7 @@
   "license": "MIT",
   "scripts": {
     "build": "node esbuild.config.mjs",
-    "lint": "eslint --quiet src package.json",
+    "lint": "eslint src package.json",
     "typecheck": "tsc --noEmit",
     "test": "node --test",
     "version-bump": "node version-bump.mjs"

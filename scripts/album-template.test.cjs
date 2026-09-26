@@ -187,6 +187,32 @@ test('接线：模板行不设行名（免得被挤成竖排），读屏名字�
   assert.match(i18n, /'settings\.albumTemplate':/, '文案键留着：现在当 aria-label 用');
 });
 
+test('样式：模板行控件能被压窄、按钮不被压碎（英文长文案顶出卡片）', () => {
+  const css = fs.readFileSync(path.join(__dirname, '../styles.css'), 'utf8');
+  const rule = (selector) => {
+    const at = css.indexOf(selector + ' {');
+    return at < 0 ? '' : css.slice(at, css.indexOf('}', at));
+  };
+  // 宿主（Obsidian）的 .setting-item-control 是 flex: 1 1 auto / min-width: auto，
+  // min-content 里含着输入框那条定宽（min(310px, 34vw)）与两个按钮的完整文案。
+  // 中文三项相加还在卡片内；英文按钮长一截，9 月 25 日实测（设置窗 900×700）
+  // 控件右缘超出卡片 48px，靠卡片的 overflow: hidden 裁掉半颗按钮。
+  const base = '.vinyl-settings-section .setting-item.vinyl-template-setting';
+  const control = rule(`${base} .setting-item-control`);
+  assert.match(control, /min-width:\s*0/, '控件要允许被压窄，否则整行顶出卡片');
+  assert.match(control, /flex-wrap:\s*wrap/, '真放不下时按钮整颗换行，而不是被卡片裁掉');
+  assert.match(
+    rule(`${base} .setting-item-control > button`),
+    /flex:\s*0 0 auto/,
+    '按钮不参与伸缩：文案完整留在按钮里'
+  );
+  assert.match(
+    rule(`${base} input[type='text']`),
+    /flex:\s*1 1 140px/,
+    '输入框基准是一个最小可用宽度：换行判定只看按钮，余下的宽度仍归输入框'
+  );
+});
+
 test('接线：在线导入（三个平台）与本地导入都走同一条模板路', () => {
   const src = fs.readFileSync(path.join(__dirname, '../src/import.ts'), 'utf8');
   assert.equal(

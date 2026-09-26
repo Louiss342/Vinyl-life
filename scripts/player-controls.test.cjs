@@ -130,13 +130,13 @@ test('播放器版面（设计稿）：三张卡 —— 顶部三键 / 唱机 / 
   // 唱片区（背面）与唱机面共用同一块面板 —— 翻面时两面材质一致，不会「转到一半换脸」
   assert.match(
     css,
-    /\.vinyl-flip-face\.is-deck,\s*\.vinyl-flip-face\.is-crate\s*\{[^}]*background-image:/,
-    '材质挂在翻转面（木纹一张到底，两面同一块面板）'
+    /\.vinyl-flip-face\.is-deck,\s*\.vinyl-flip-face\.is-crate,\s*\.vinyl-flip-face\.is-lyrics\s*\{[^}]*background-image:/,
+    '材质挂在翻转面（木纹一张到底，三面同一块面板）'
   );
   assert.match(
     css,
-    /\.vinyl-flip-face\.is-deck,\s*\.vinyl-flip-face\.is-crate\s*\{[^}]*box-shadow:/,
-    '落影也归翻转面（两面共用一道影）'
+    /\.vinyl-flip-face\.is-deck,\s*\.vinyl-flip-face\.is-crate,\s*\.vinyl-flip-face\.is-lyrics\s*\{[^}]*box-shadow:/,
+    '落影也归翻转面（三面共用一道影）'
   );
   assert.match(css, /\.vinyl-deck,\s*\.vinyl-amp\s*\{[^}]*border:\s*1px solid/, '两张卡保留外框线（拼成同一道外框）');
   assert.match(css, /\.vinyl-deck,\s*\.vinyl-amp\s*\{[^}]*border-radius:\s*0/, '棱角照旧');
@@ -248,24 +248,27 @@ test('翻转区命中测试：overflow 不在「面」上，滚动交给板与�
   assert.match(view, /const queueBox = board\.createDiv\(\{ cls: 'vinyl-queue' \}\)/);
 });
 
-test('按键卡（设计稿）：三枚键 2 : 1 : 1 —— 选取专辑占一半，两个模式开关各占四分之一', () => {
-  assert.match(view, /cls: 'vinyl-btn-wide vinyl-pick-album'/);
+test('按键卡：四枚等宽键 1 : 1 : 1 : 1 —— 歌词（左转）/ 选取专辑（右转）/ 队列 / 播放模式', () => {
+  assert.match(view, /cls: 'vinyl-btn-mode vinyl-open-lyrics'/, '一号键 = 歌词（向左转）');
+  assert.match(view, /cls: 'vinyl-btn-mode vinyl-pick-album'/, '二号键 = 选取专辑（向右转）');
   assert.match(view, /const queueModeBtn = header\.createEl\('button', \{ cls: 'vinyl-btn-mode vinyl-queue-mode' \}\)/);
   assert.match(view, /const playModeBtn = header\.createEl\('button', \{ cls: 'vinyl-btn-mode vinyl-play-mode' \}\)/);
   // 卡片底色 + 描边；宽度写死百分比（flex-basis 0 会被 padding 撑出「地板宽」，比例就不准了）
   assert.match(css, /\.vinyl-player-header\s*\{[^}]*border/, '按键卡有自己的描边');
-  assert.match(css, /\.vinyl-btn-wide\s*\{[^}]*flex:\s*0 0 calc\(50% - 3px\)/, '宽键占一半');
-  assert.match(css, /\.vinyl-btn-mode\s*\{[^}]*flex:\s*0 0 calc\(25% - 3px\)/, '模式键各占四分之一');
-  // 标题行没了：专辑名归 Vinyl order 行（orderAlbum）；播放错误由引擎的 Notice 弹窗报出
+  // 四枚等宽：4 × (25% − 4.5px) + 3 道 6px 缝 = 100%，一行正好铺满、右边不留空
+  assert.match(css, /\.vinyl-btn-mode\s*\{[^}]*flex:\s*0 0 calc\(25% - 4\.5px\)/, '四枚键各占四分之一');
+  assert.doesNotMatch(css, /vinyl-btn-wide/, '旧的「占一半」宽键已撤（用户把它一分为二）');
+  assert.doesNotMatch(view, /vinyl-btn-wide/, '视图里也不再挂宽键类');
+  // 标题行没了，专辑名也不在这张卡上（Vinyl order 行只放两枚图标钮）；播放错误由引擎的 Notice 弹窗报出
   assert.doesNotMatch(view, /vinyl-player-header-title/);
   // 唱盘上那块「来源 · 档位」读数已按用户要求撤掉（视图里不再有对应节点）
   assert.doesNotMatch(view, /qualityEl|qualityReadout|vinyl-quality/);
   // 用户改：选取专辑只留图标（去文字）；整卡瘦长（键高 28）且全棱角
   assert.doesNotMatch(view, /vinyl-btn-wide-label/);
   assert.doesNotMatch(css, /vinyl-btn-wide-label/);
-  assert.match(css, /\.vinyl-player \.vinyl-btn-wide,[\s\S]{0,80}?height:\s*28px/, '键高 28（整卡瘦长）');
+  assert.match(css, /\.vinyl-player \.vinyl-btn-mode\s*\{[\s\S]{0,80}?height:\s*28px/, '键高 28（整卡瘦长）');
   assert.match(css, /\.vinyl-player-header\s*\{[^}]*border-radius:\s*0/, '按键卡全棱角');
-  assert.match(css, /\.vinyl-player \.vinyl-btn-wide,[\s\S]{0,320}?border-radius:\s*0/, '键也全棱角');
+  assert.match(css, /\.vinyl-player \.vinyl-btn-mode\s*\{[\s\S]{0,320}?border-radius:\s*0/, '键也全棱角');
 });
 
 test('唱机卡（设计稿）：横向长方形唱盘 + 左下角长方形播放键（棱角、离唱片留缝）', () => {
@@ -307,15 +310,15 @@ test('唱机卡（设计稿）：横向长方形唱盘 + 左下角长方形播�
   assert.match(css, /--vinyl-key-shadow:[\s\S]{0,200}?inset 0 0 0 2px[\s\S]{0,120}?inset 0 0 0 3px/, '双线条：外描边之内再收一道线');
   // 真机踩坑：宿主的 button:not(.clickable-icon) 是 (0,1,1)，会盖掉单类选择器 (0,1,0) 的
   // color / box-shadow —— 黑键面（双线条是 inset box-shadow 画的）那几条必须挂前缀，否则真机上不生效
-  assert.match(css, /\.vinyl-player \.vinyl-btn-wide,\s*\.vinyl-player \.vinyl-btn-mode\s*\{/, '三键基样式带 .vinyl-player 前缀（压过宿主按钮样式）');
+  assert.match(css, /\.vinyl-player \.vinyl-btn-mode\s*\{/, '键基样式带 .vinyl-player 前缀（压过宿主按钮样式）');
   assert.match(css, /\.vinyl-turntable \.vinyl-deck-play\s*\{/, '唱机键基样式带 .vinyl-turntable 前缀');
-  // 用户改（第三轮）：顶部三键做成唱机暂停键那样的样式与动效
-  assert.match(css, /\.vinyl-player \.vinyl-btn-wide,[\s\S]{0,400}?background:\s*var\(--vinyl-key-face\)/, '三键共用同一套黑键面');
-  assert.match(css, /\.vinyl-player \.vinyl-btn-wide,[\s\S]{0,500}?box-shadow:\s*var\(--vinyl-key-shadow\)/, '三键共用同一套双线条 + 落影');
-  assert.match(css, /\.vinyl-btn-mode\.is-active,[\s\S]{0,120}?background:\s*var\(--vinyl-key-face-lit\)/, '亮起 = 键面亮一档');
+  // 用户改（第三轮）：顶部键做成唱机暂停键那样的样式与动效（第六轮起是四枚等宽键）
+  assert.match(css, /\.vinyl-player \.vinyl-btn-mode\s*\{[\s\S]{0,600}?background:\s*var\(--vinyl-key-face\)/, '四键共用同一套黑键面');
+  assert.match(css, /\.vinyl-player \.vinyl-btn-mode\s*\{[\s\S]{0,700}?box-shadow:\s*var\(--vinyl-key-shadow\)/, '四键共用同一套双线条 + 落影');
+  assert.match(css, /\.vinyl-btn-mode\.is-active\s*\{[\s\S]{0,120}?background:\s*var\(--vinyl-key-face-lit\)/, '亮起 = 键面亮一档');
   assert.match(css, /@keyframes vinyl-key-breathe-icon/, '图标版呼吸关键帧');
-  assert.match(css, /\.vinyl-btn-mode\.is-active \.svg-icon,[\s\S]{0,120}?animation:\s*vinyl-key-breathe-icon/, '亮起时图标呼吸');
-  assert.match(css, /\.vinyl-btn-wide:active,[\s\S]{0,120}?transform:\s*translateY\(1px\)/, '按下有行程感（与唱机键一致）');
+  assert.match(css, /\.vinyl-btn-mode\.is-active \.svg-icon\s*\{[\s\S]{0,120}?animation:\s*vinyl-key-breathe-icon/, '亮起时图标呼吸');
+  assert.match(css, /\.vinyl-btn-mode:active\s*\{[\s\S]{0,120}?transform:\s*translateY\(1px\)/, '按下有行程感（与唱机键一致）');
   // 用户改：键面图标换成那一版手写体字标（第四轮去掉「Life」、第五轮缩成品牌缩写「V-L」，不折行）
   assert.match(view, /deckPlayBtn\.createSpan\(\{ cls: 'vinyl-deck-play-mark', text: 'V-L' \}\)/, '键面 = 手写体字标「V-L」');
   assert.doesNotMatch(view, /setIcon\(deckPlayBtn/, '三角图标已撤掉');

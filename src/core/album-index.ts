@@ -283,8 +283,40 @@ export interface AlbumSources {
   kugou: boolean;
 }
 
+/** 检测结果的缓存世代（见 invalidateSourceCache） */
+let sourcesEpoch = 0;
+/** album.path → 上次算出来的结论。判据见 sig：frontmatter 里那几项 + 世代计数器 */
+const sourcesCache = new Map<string, { epoch: number; sig: string; sources: AlbumSources }>();
+
+/** 作废全部检测结果。调用点就三处，各自的理由：
+ *    · main.ts：vault 的 create / delete / rename —— 库内结构变了（导入、删除、同步、改名）；
+ *    · 专辑墙「更多 → 刷新专辑墙」—— 用户显式要求「重新看一遍」；
+ *    · 健康检查打开时 —— 「检查一遍」的语义，扫描前先把结论归零。
+ *
+ *  为什么要缓存：这条检测要碰文件系统 —— audio: 里的库外目录是 fs.readdirSync 递归三层，
+ *  而专辑墙每次刷新都会对**每张**专辑调一遍（编辑一个 frontmatter 字段 = N 次目录遍历），
+ *  卡顿就出在这儿。frontmatter 侧的变化（id、引用路径）另有 sig 兜着，不必等作废。
+ *  库外目录「自己」变了没有事件可听（在资源管理器里丢进一首歌）：那要等上面三处之一作废，
+ *  与缓存前一样都得靠一次刷新才看得到，只是现在得是显式的那一次。 */
+export function invalidateSourceCache(): void {
+  sourcesEpoch++;
+}
+
 // 同步检测（不读取音频内容）：本地 = 引用的音频文件夹/文件实际存在且含受支持音频
 export function detectAlbumSources(app: App, album: AlbumInfo): AlbumSources {
+  // frontmatter 侧的判据（id 与引用路径）进 sig：改了笔记就重算，不必等作废
+  // （用 JSON 而不是拼接：引用路径里出现分隔符也不会串味）
+  const sig = JSON.stringify([
+    album.audioFolderRef ?? '',
+    album.audioRefs,
+    album.neteaseId ?? '',
+    album.qqId ?? '',
+    album.kugouId ?? '',
+  ]);
+  const hit = sourcesCache.get(album.path);
+  // 返回副本：调用方拿到的是一份结论，不是共享状态（改一处不会串到别处）
+  if (hit && hit.epoch === sourcesEpoch && hit.sig === sig) return { ...hit.sources };
+
   let local = false;
   if (album.audioFolderRef) {
     local = folderRefHasAudio(app, album.audioFolderRef);
@@ -297,7 +329,15 @@ export function detectAlbumSources(app: App, album: AlbumInfo): AlbumSources {
       }
     }
   }
-  return { local, netease: !!album.neteaseId, qq: !!album.qqId, kugou: !!album.kugouId };
+  const sources: AlbumSources = {
+    local,
+    netease: !!album.neteaseId,
+    qq: !!album.qqId,
+    kugou: !!album.kugouId,
+  };
+  // 删掉的笔记会留下一条死条目：路径复用必然伴随一次作废（删除会触发 vault 事件），不会串味
+  sourcesCache.set(album.path, { epoch: sourcesEpoch, sig, sources: { ...sources } });
+  return sources;
 }
 
 function folderRefHasAudio(app: App, ref: string): boolean {
@@ -330,38 +370,6 @@ function audioRefExists(app: App, ref: string): boolean {
   return file instanceof TFile && isAudioFile(file.name);
 }
 
-// 简易 YAML frontmatter 解析（metadataCache 未命中时的兜底）
-export function parseFrontmatterSimple(text: string): Frontmatter {
-  const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  if (!m) return {};
-  const out: Frontmatter = {};
-  let listKey = '';
-  for (const line of m[1].split(/\r?\n/)) {
-    const listMatch = line.match(/^\s*-\s+(.+)$/);
-    if (listMatch && listKey) {
-      const list = out[listKey];
-      if (Array.isArray(list)) list.push(unquote(listMatch[1].trim()));
-      continue;
-    }
-    listKey = '';
-    const kv = line.match(/^([A-Za-z_][A-Za-z0-9_-]*):\s*(.*)$/);
-    if (!kv) continue;
-    const key = kv[1];
-    const rawVal = kv[2].trim();
-    if (rawVal === '') {
-      // 数组起始
-      out[key] = [];
-      listKey = key;
-      continue;
-    }
-    out[key] = unquote(rawVal);
-  }
-  return out;
-}
-
-function unquote(s: string): string {
-  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
-    return s.slice(1, -1);
-  }
-  return s;
-}
+// 这里曾有一个 parseFrontmatterSimple（自己扫 YAML 的小解析器，2026-09-26 删）。
+// 它从 0.6.0 起就没有调用方：frontmatter 一律走 metadataCache（见 asFrontmatter 与
+// getAlbumInfo）—— 解析口径只有一份。手写解析器留着只会诱人绕过缓存另开一条。

@@ -264,6 +264,9 @@ function fakeEl(tag = 'div') {
       return child;
     },
     getAnimations: () => [],
+    // 定位正在播的那首（locateCurrentRow / currentRowVisible）要用到：假 DOM 给最小实现
+    scrollIntoView() {},
+    getBoundingClientRect: () => ({ top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 }),
     animate: () => ({}),
     closest: () => null,
     querySelector: () => null,

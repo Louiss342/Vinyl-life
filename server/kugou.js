@@ -432,6 +432,66 @@ MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDIAG7QOELSYoIJvTFJhMpe1s/gbjDJX51HBNnEl5HX
 
   const HASH_RE = /^[0-9a-f]{32}$/;
 
+  // ==================== 歌词 ====================
+  // 两步链（2026-09-26 实机验证，探针见 tmp/kugou-lyric-probe.cjs）：
+  //   ① krcs.kugou.com/search —— 关键词 + hash + duration(ms) + album_audio_id 换候选（实测一次回 20 条）
+  //   ② lyrics.kugou.com/download —— id + accesskey 换正文；content 是 **base64**，
+  //      charset=utf8 时解出来就是 UTF-8 的 LRC。要 lrc 不要 krc：krc 是加密格式，还得再解一层。
+  // 为什么不能「取第一条」：上游的 candidates 按 **score** 排序，而 score 排的是歌词本身的热度，
+  // 不是「与这首歌的匹配度」——实测同一首歌里 score 最高的那条是 UGC 上传（歌手字段是上传者昵称、
+  // 正文头部还写着别人的名字）。所以由 pickLyricCandidate 按曲名 / 歌手 / 时长重排。
+  const LRC_SEARCH_BASE = 'https://krcs.kugou.com';
+  const LRC_DOWNLOAD_BASE = 'https://lyrics.kugou.com';
+
+  /** 归一：大小写、空白与常见分隔符不影响「是不是同一个词」的判断 */
+  function normalizeForMatch(s) {
+    return String(s || '')
+      .toLowerCase()
+      .replace(/[\s\-_·、，,。.()（）[\]【】'"]/g, '');
+  }
+
+  /** 候选打分（纯函数，便于用例直接喂样本）。判据权重：曲名 40 > 歌手 30 > 时长（每 0.5 秒扣 1 分，
+   *  最多扣 20）> 上游 score（每 10 分折 1 分，最多 10）。
+   *  时长只作辅助：曲库给的是整秒，候选给的是毫秒，本来就有系统性误差，压过曲名就本末倒置了。 */
+  function pickLyricCandidate(candidates, want) {
+    const list = (Array.isArray(candidates) ? candidates : []).filter(
+      (c) => c && c.id && c.accesskey
+    );
+    if (!list.length) return null;
+    const title = normalizeForMatch(want.title);
+    const artist = normalizeForMatch(want.artist);
+    let best = list[0];
+    let bestScore = -Infinity;
+    for (const c of list) {
+      const song = normalizeForMatch(c.song);
+      const singer = normalizeForMatch(c.singer);
+      let s = 0;
+      if (title && song && (song.includes(title) || title.includes(song))) s += 40;
+      if (artist && singer && (singer.includes(artist) || artist.includes(singer))) s += 30;
+      const d = Number(c.duration);
+      if (want.durationMs > 0 && d > 0) s -= Math.min(20, Math.abs(d - want.durationMs) / 500);
+      s += Math.min(10, Number(c.score || 0) / 10);
+      if (s > bestScore) {
+        bestScore = s;
+        best = c;
+      }
+    }
+    return best;
+  }
+
+  /** 歌词上游的一次 GET → JSON（解不出来按空对象：调用方按「没有歌词」处理，不抛） */
+  async function lrcGet(base, pathname, params) {
+    const url = `${base}${pathname}?${new URLSearchParams(
+      Object.entries(params).map(([k, v]) => [k, String(v)])
+    ).toString()}`;
+    const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: timeout(15000) });
+    try {
+      return JSON.parse(await res.text());
+    } catch (_) {
+      return {};
+    }
+  }
+
   // ==================== 路由 ====================
 
   route('GET', '/api/kugou/login/qr/key', async () => {
@@ -561,6 +621,45 @@ MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDIAG7QOELSYoIJvTFJhMpe1s/gbjDJX51HBNnEl5HX
     );
     // 曲目里逐条的封面是 union_cover（每首一张图）；专辑封面以专辑信息为准
     return { code: 0, data: { album, songs } };
+  });
+
+  route('GET', '/api/kugou/lyric', async ({ query }) => {
+    const hash = String((query && query.id) || '').trim().toLowerCase();
+    if (!HASH_RE.test(hash)) throw new Error(msg('gw.kugouBadSongId'));
+    const title = String((query && query.title) || '').trim().slice(0, 100);
+    const artist = String((query && query.artist) || '').trim().slice(0, 100);
+    const durationSec = Math.max(0, Number((query && query.duration) || 0) || 0);
+    const albumAudioId = String((query && query.albumAudioId) || '').trim();
+    const keyword = [artist, title].filter(Boolean).join(' ');
+    // 关键词是搜索的入口：曲名与歌手都缺（酷狗曲目理论上不会）就没得搜
+    if (!keyword) throw new Error(msg('gw.kugouLyricFailed'));
+
+    const durationMs = Math.round(durationSec * 1000);
+    const search = await lrcGet(LRC_SEARCH_BASE, '/search', {
+      ver: '1',
+      man: 'yes',
+      client: 'mobi',
+      keyword,
+      hash,
+      duration: durationMs,
+      album_audio_id: /^\d{1,20}$/.test(albumAudioId) ? albumAudioId : '',
+    });
+    const best = pickLyricCandidate(search && search.candidates, { title, artist, durationMs });
+    if (!best) throw new Error(msg('gw.kugouLyricFailed'));
+
+    const body = await lrcGet(LRC_DOWNLOAD_BASE, '/download', {
+      ver: '1',
+      client: 'pc',
+      id: best.id,
+      accesskey: best.accesskey,
+      fmt: 'lrc',
+      charset: 'utf8',
+    });
+    const text =
+      body && body.content ? Buffer.from(String(body.content), 'base64').toString('utf8') : '';
+    if (!text.trim()) throw new Error(msg('gw.kugouLyricFailed'));
+    // 酷狗只有一条歌词轨（没有翻译轨），trans 恒为空 —— 前端按「无翻译」处理
+    return { code: 0, lyric: text, trans: '' };
   });
 
   route('GET', '/api/kugou/song/url', async ({ query }) => {

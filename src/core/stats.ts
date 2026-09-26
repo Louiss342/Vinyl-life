@@ -244,13 +244,13 @@ export function playsByDay(stats: VinylStats): Map<string, PlayEvent[]> {
   return days;
 }
 
-// 最近播放的专辑（按 lastPlayedAt 降序）
-export function recentAlbums(stats: VinylStats, n: number): { path: string; title: string }[] {
-  return Object.entries(stats.albums)
-    .sort((a, b) => b[1].lastPlayedAt - a[1].lastPlayedAt)
-    .slice(0, n)
-    .map(([path, stat]) => ({
-      path,
-      title: stat.snapshot?.title || path.split('/').pop()?.replace(/\.md$/, '') || path,
-    }));
+/** 榜单 / 历史里显示用的专辑名：优先用播放时留下的快照标题（笔记删了也还显示原名），
+ *  退回路径里的文件名；快照记了版本就缀在后面（与卡片上的写法同一口径）。
+ *
+ *  这里曾有一个 recentAlbums（按 lastPlayedAt 取前 n 张）——2026-09-26 删：
+ *  唯一的调用方是它自己的用例，统计页的榜单要的是「排序 + 每条还要渲染播放次数」，
+ *  拿不到它给的那三个字段。留下的这条被统计页三处共用（此前是页面里的私有副本）。 */
+export function albumTitleOf(path: string, stat: AlbumPlayStat): string {
+  const title = stat.snapshot?.title || path.split('/').pop()?.replace(/\.md$/, '') || path;
+  return stat.snapshot?.edition ? `${title} · ${stat.snapshot.edition}` : title;
 }

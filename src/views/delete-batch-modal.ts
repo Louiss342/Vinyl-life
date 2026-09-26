@@ -147,7 +147,11 @@ export class DeleteBatchModal extends Modal {
     });
 
     // —— 操作区 ——
-    const status = c.createDiv({ cls: 'vinyl-muted vinyl-delete-status' });
+    // 状态行：删除中 / 失败原因都写在这里 —— 标成 status，读屏软件才会播报
+    const status = c.createDiv({
+      cls: 'vinyl-muted vinyl-delete-status',
+      attr: { role: 'status' },
+    });
     const row = c.createDiv({ cls: 'vinyl-import-actions vinyl-delete-actions' });
     const cancelBtn = row.createEl('button', { text: t('common.cancel') });
     const delBtn = row.createEl('button', { text: t('common.delete'), cls: 'mod-warning' });

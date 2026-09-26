@@ -153,10 +153,16 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     zh: '该专辑暂无音源（本地音频、neteaseId、qqId 或 kugouId），已打开笔记',
     en: 'This album has no source (local audio, neteaseId, qqId or kugouId) — opened the note instead',
   },
-  'menu.play': { zh: '播放', en: 'Play' },
   'menu.openNote': { zh: '打开笔记', en: 'Open note' },
   'menu.importAudio': { zh: '导入本地音频…', en: 'Import local audio…' },
   'menu.setCover': { zh: '设置封面…', en: 'Set cover…' },
+  // 评分：菜单项与弹窗标题共用一个键；弹窗里的输入提示与校验文案另两个
+  'menu.rating': { zh: '评分', en: 'Rating' },
+  // 评分弹窗：自由填数字（用户 2026-09-26 定稿），留空 = 清除
+  'rating.placeholder': { zh: '填一个数字，留空则清除', en: 'Type a number; leave it empty to clear' },
+  'rating.invalid': { zh: '请输入一个数字（例如 4 或 4.5）', en: 'Please type a number (for example 4 or 4.5)' },
+  // 卡片上的「⋯」菜单入口（右键菜单此前是设置封面 / 在源站打开的唯一入口）
+  'menu.cardMenu': { zh: '专辑操作：{name}', en: 'Album actions: {name}' },
   'menu.openNetease': { zh: '在网易云打开', en: 'Open in NetEase' },
   'menu.openQq': { zh: '在 QQ 音乐打开', en: 'Open in QQ Music' },
   'menu.openKugou': { zh: '在酷狗音乐打开', en: 'Open in Kugou Music' },
@@ -757,6 +763,16 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     en: 'Insert the currently playing track',
   },
   'cmd.ribbonShelf': { zh: 'Vinyl Life 专辑墙', en: 'Vinyl Life album shelf' },
+  // 新增命令（core/commands.ts）：此前这些动作只有鼠标路径
+  'cmd.appendNote': { zh: '写听歌记录到当前专辑笔记', en: 'Append a listening entry to the playing album' },
+  'cmd.setCover': { zh: '给当前专辑设置封面', en: 'Set the cover of the playing album' },
+  'cmd.openInSource': { zh: '在源站打开当前专辑', en: 'Open the playing album on its source site' },
+  'cmd.importLocalToCurrent': {
+    zh: '给当前专辑导入本地音频',
+    en: 'Import local audio into the playing album',
+  },
+  'cmd.segmentUp': { zh: '队列：当前专辑整段上移', en: 'Queue: move the playing album up' },
+  'cmd.segmentDown': { zh: '队列：当前专辑整段下移', en: 'Queue: move the playing album down' },
 
   // —— 提示（main.ts 里的 notice） ——
   'notice.templateFailed': { zh: '创建模板失败：{msg}', en: 'Could not create the template: {msg}' },
@@ -794,6 +810,10 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'notice.albumDeleted': { zh: '已删除专辑「{title}」', en: 'Deleted album "{title}"' },
   'notice.albumsDeleted': { zh: '已删除 {n} 张专辑', en: 'Deleted {n} album(s)' },
   'notice.albumDeletedAssets': { zh: '（含 {n} 项本地文件）', en: ' (including {n} local file(s))' },
+  'notice.noOnlineSource': {
+    zh: '这张专辑没有关联在线音源，没有可打开的源站。',
+    en: 'This album has no linked online source to open.',
+  },
   'notice.noAlbumNote': {
     zh: '找不到这张专辑的笔记（可能已被删除或改名）',
     en: 'The note for this album is gone (deleted or renamed)',
@@ -873,6 +893,19 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     en: 'Album queue mode is off: clicking an album switches to it immediately (queued albums stay)',
   },
   'player.queueRemoveAlbum': { zh: '从队列移除「{name}」', en: 'Remove “{name}” from the queue' },
+  'player.queueRemoveTrack': { zh: '从队列移除这首：{name}', en: 'Remove “{name}” from the queue' },
+  'player.locateCurrent': { zh: '定位到正在播放', en: 'Scroll to the playing track' },
+  'player.lyrics': { zh: '歌词', en: 'Lyrics' },
+  'lyrics.idle': { zh: '还没有开始播放', en: 'Nothing playing yet' },
+  'lyrics.loading': { zh: '正在取歌词…', en: 'Loading lyrics…' },
+  'lyrics.empty': { zh: '这首歌还没有歌词', en: 'No lyrics for this track' },
+  // 本地音轨的空态：多给一句出路 —— 旁挂 .lrc 是本地歌词唯一的入口，不说就没人知道
+  'lyrics.emptyLocal': {
+    zh: '这首歌还没有歌词（在音频旁放一个同名的 .lrc 文件就会显示）',
+    en: 'No lyrics for this track (drop a .lrc file with the same name next to the audio)',
+  },
+  'lyrics.seekLine': { zh: '跳到这一句：{text}', en: 'Jump to: {text}' },
+  'lyrics.interlude': { zh: '间奏', en: 'Interlude' },
   'player.queueDragAlbum': { zh: '拖拽调整专辑顺序', en: 'Drag to reorder albums' },
   'notice.queuedAlbum': { zh: '已加入队列：{name}', en: 'Queued: {name}' },
 
@@ -883,6 +916,10 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   },
   'auth.gatewayNotReadyNetease': { zh: '网易云网关未就绪', en: 'The NetEase gateway is not ready' },
   'auth.gatewayHttp': { zh: '网关 HTTP {status}（{path}）', en: 'Gateway HTTP {status} ({path})' },
+  'auth.gatewayTimeout': {
+    zh: '网关 {s} 秒内没有响应，请求已超时',
+    en: 'The gateway did not respond within {s}s — the request timed out',
+  },
   'auth.getUnikeyFailed': { zh: '获取登录 unikey 失败', en: 'Could not obtain the sign-in unikey' },
   'auth.qrGenerateFailed': { zh: '生成二维码失败', en: 'Could not generate the QR code' },
   'auth.qqQrFailed': { zh: '获取 QQ 登录二维码失败', en: 'Could not fetch the QQ sign-in QR code' },
@@ -903,6 +940,18 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'player.playFailed': {
     zh: '《{title}》播放失败（格式不支持、文件损坏或网络问题）',
     en: '“{title}” failed to play (unsupported format, corrupt file, or a network problem)',
+  },
+  'player.loading': { zh: '载入中…', en: 'Loading…' },
+  // 试听片段：角标是常驻的那份（队列行），提示只报一次（引擎侧）
+  'player.trialBadge': { zh: '试听', en: 'Preview' },
+  'player.trialNotice': {
+    zh: '试听片段（完整曲目需要会员）',
+    en: 'Preview clip (the full track requires membership)',
+  },
+  'player.buffering': { zh: '缓冲中…', en: 'Buffering…' },
+  'player.skipFailed': {
+    zh: '《{title}》无法播放，已跳到下一首',
+    en: '“{title}” could not play — skipped to the next track',
   },
   'player.vipNoUrl': {
     zh: '会员/付费曲目，该音源未提供播放地址',

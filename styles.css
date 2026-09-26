@@ -47,6 +47,13 @@
   color: var(--color-purple-7);
 }
 
+/* 试听片段：中性灰（不是来源色，是「这段不完整」的提示） */
+.vinyl-badge.is-trial {
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+
 .vinyl-badge.is-collect {
   background: var(--background-modifier-border);
   color: var(--text-muted);
@@ -484,6 +491,31 @@
   border-color: var(--interactive-accent);
 }
 
+/* 卡片菜单入口（「⋯」）：常态淡出，悬停或键盘聚焦时显形。
+   位置固定在左上角：另外三个方向（唱片朝左/上/下）会把勾选圈挪到别的角，左上角与它都不撞。
+   刻意不用 display:none —— 那样它会从 Tab 序里消失，键盘用户就又回到「够不着卡片菜单」。
+   减少动效的用户不需要这 120ms 的淡入（别的动效同一口径，见文件里的 reduce 段）。 */
+.vinyl-shelf-card-menu {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 3;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.vinyl-shelf-card:hover .vinyl-shelf-card-menu,
+.vinyl-shelf-card:focus-within .vinyl-shelf-card-menu,
+.vinyl-shelf-card-menu:focus-visible {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vinyl-shelf-card-menu {
+    transition: none;
+  }
+}
+
 .vinyl-shelf-card.is-batch-selected .vinyl-shelf-card-check .svg-icon {
   opacity: 1;
 }
@@ -755,9 +787,11 @@
 }
 
 /* ============ 卡片文字：放不下时悬停横向滚动 ============ */
-/* JS（shelf-view 的 onMarqueeOver）只量出「滚多远 / 滚多久」两个变量，滚动本身是纯 CSS：
-   默认截断显示省略号，悬停松开设限再来回滚（alternate），移开自动回到开头。
-   prefers-reduced-motion 的用户不滚，靠悬停提示看全文。 */
+/* JS（shelf-view 的 onMarqueeOver / measureMarqueesIn）只量出「滚多远 / 滚多久」两个变量，
+   滚动本身是纯 CSS：默认截断显示省略号，悬停或键盘焦点松开设限再来回滚（alternate），
+   离开自动回到开头。
+   prefers-reduced-motion 的用户不滚：改为换行展示（见下面的 @media 块）—— 只关掉动画会把
+   文本裁在 .vinyl-marquee 的 overflow 里、又没有省略号，比滚动还难读。 */
 .vinyl-marquee {
   overflow: hidden;
 }
@@ -771,12 +805,16 @@
   vertical-align: bottom;
 }
 
-/* 悬停时松开截断：交给外层裁。否则滚动时右边会挂着一个不动的省略号 */
-.vinyl-marquee:hover .vinyl-marquee-text {
+/* 悬停或卡片拿到键盘焦点时松开截断：交给外层裁。否则滚动时右边会挂着一个不动的省略号。
+   焦点这一支是必需的：读全一张卡片的完整专辑名曾经只有鼠标一条路（卡片能聚焦，但焦点进来
+   什么都不发生）—— 那是全库唯一「悬停才显形、键盘完全够不到」的规则，见 scripts/hover-focus.test.cjs */
+.vinyl-marquee:hover .vinyl-marquee-text,
+.vinyl-shelf-card:focus-visible .vinyl-marquee-text {
   max-width: none;
 }
 
-.vinyl-marquee.is-overflowing:hover .vinyl-marquee-text {
+.vinyl-marquee.is-overflowing:hover .vinyl-marquee-text,
+.vinyl-shelf-card:focus-visible .vinyl-marquee.is-overflowing .vinyl-marquee-text {
   animation: vinyl-marquee-scroll var(--vinyl-marquee-duration, 4s) linear infinite alternate;
 }
 
@@ -787,8 +825,14 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .vinyl-marquee.is-overflowing:hover .vinyl-marquee-text {
+  /* 不滚，但也要读得全：换行展示（卡片按内容取高，只在悬停 / 聚焦的那一张上发生变化）。
+     只写 animation: none 是不够的 —— 上面那条 max-width: none 只是松开自身的设限，
+     外层 .vinyl-marquee 仍然 overflow: hidden，长标题会被裁掉且没有省略号提示。 */
+  .vinyl-marquee.is-overflowing:hover .vinyl-marquee-text,
+  .vinyl-shelf-card:focus-visible .vinyl-marquee.is-overflowing .vinyl-marquee-text {
     animation: none;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 }
 
@@ -1469,6 +1513,12 @@
   transform: rotateY(-90deg);
 }
 
+/* 歌词页：向左转（与唱片区相反的那一面）。两块侧面的几何互为镜像 —— 都在 z = depth 平面上，
+ * 面自己先转 ±90°，内层再反向转同样的角度把它们送到正面。 */
+.vinyl-flip.is-lyrics .vinyl-flip-inner {
+  transform: rotateY(90deg);
+}
+
 /* 减少动效：直接切面，不做转动 */
 .vinyl-flip.is-reduced .vinyl-flip-inner {
   transition: none;
@@ -1493,6 +1543,154 @@
 .vinyl-flip-face.is-crate {
   position: absolute;
   inset: 0;
+}
+
+/* 歌词面（向左转的那一面）：与唱片区同一套「绝对定位填满 + 反向缩放」，只是方向相反 */
+.vinyl-flip-face.is-lyrics {
+  position: absolute;
+  inset: 0;
+  padding: 10px 14px 12px;
+  transform: rotateY(-90deg) translateZ(var(--vinyl-flip-depth, 0px)) scale(var(--vinyl-flip-counter, 1));
+  /* 墨色与唱片区同一套口径：深色面板（胡桃木 / 哑光黑 / 珊瑚红）用奶白墨，
+     雪域白面板翻深灰墨（见下面的 .is-deck-shell 覆盖）。面板材质在四套配色块里。 */
+  --vinyl-lyric-ink: rgba(255, 246, 232, 0.96); /* 正在唱的那一句 */
+  --vinyl-lyric-rest: rgba(255, 240, 215, 0.55); /* 还没唱到的 */
+  --vinyl-lyric-passed: rgba(255, 240, 215, 0.34); /* 唱过的 / 间奏 */
+  --vinyl-lyric-trans: rgba(255, 240, 215, 0.62); /* 翻译 */
+  --vinyl-lyric-lit: #f6e2b8; /* 卡拉OK填充的亮色（与键面点亮同族） */
+  --vinyl-lyric-line: rgba(255, 240, 215, 0.16);
+}
+
+.vinyl-player.is-deck-shell .vinyl-flip-face.is-lyrics {
+  --vinyl-lyric-ink: rgba(38, 44, 52, 0.96);
+  --vinyl-lyric-rest: rgba(72, 80, 92, 0.62);
+  --vinyl-lyric-passed: rgba(92, 100, 111, 0.45);
+  --vinyl-lyric-trans: rgba(72, 80, 92, 0.72);
+  --vinyl-lyric-lit: #8a5a12;
+  --vinyl-lyric-line: rgba(74, 86, 100, 0.2);
+}
+
+/* 抬头两行：曲名 → 歌手 · 专辑（后一行小一号、更淡；两段都可缺，缺的那段连分隔符一起省掉） */
+.vinyl-lyrics-head {
+  flex: none;
+  text-align: center;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--vinyl-lyric-line);
+}
+
+.vinyl-lyrics-title {
+  font-weight: 700;
+  font-size: 1.02em;
+  color: var(--vinyl-lyric-ink);
+}
+
+.vinyl-lyrics-title,
+.vinyl-lyrics-sub {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vinyl-lyrics-sub {
+  margin-top: 1px;
+  font-size: 0.85em;
+  color: var(--vinyl-lyric-rest);
+}
+
+/* 没有值的行不占位（还没在放歌 / 来源既没给艺人也没给专辑名） */
+.vinyl-lyrics-sub:empty {
+  display: none;
+}
+
+/* 滚动区：上下各留半个容器高（--vinyl-lyric-pad 由视图量完写进来 —— 百分比内边距认的是宽度，
+ * 这里必须给像素），首尾两行也能滚到正中；上下缘渐隐，词从中间浮出来。 */
+.vinyl-lyrics-scroll {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding: var(--vinyl-lyric-pad, 40%) 0;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 14%, #000 86%, transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0, #000 14%, #000 86%, transparent 100%);
+}
+
+.vinyl-lyric-line {
+  padding: 5px 2px;
+  text-align: center;
+  color: var(--vinyl-lyric-rest);
+  cursor: pointer;
+  /* 景深（用户按参考效果要的）：离当前行越远越淡、略小。--vinyl-lyric-d 由视图在换行时写一次
+   * （0 = 正在唱，上限 5 档见 core/lyrics 的 MAX_LYRIC_DEPTH —— 更远的行已经落进上下渐隐里了）。
+   * 不做模糊：滤镜会关掉次像素抗锯齿，整片词都发虚（试过 0.3px/档，观感上只有「糊」没有「深」）。 */
+  opacity: calc(1 - var(--vinyl-lyric-d, 0) * 0.16);
+  transform: scale(calc(1 - var(--vinyl-lyric-d, 0) * 0.014));
+  /* 只过渡视觉，不碰位置：位置归 rAF 逐帧写，再叠一层 transition 会拖出糊影 */
+  transition: color 0.2s ease, transform 0.25s ease, opacity 0.3s ease;
+}
+
+/* 唱过的：压暗一档。按**时间**算（与视觉中心无关）—— 它回答「听过没有」，不是「在不在中心」 */
+.vinyl-lyric-line.is-past {
+  color: var(--vinyl-lyric-passed);
+}
+
+/* 视觉中心：**位置**说了算。跟随时就是正在唱的那句，用户自己滚了之后是画面正中那句 */
+.vinyl-lyric-line.is-active {
+  color: var(--vinyl-lyric-ink);
+  transform: scale(1.03);
+}
+
+/* 键盘走到哪一行，哪一行就得看得清：景深不许套在焦点行上（半透明的焦点行等于没有焦点） */
+.vinyl-lyric-line:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
+}
+
+.vinyl-lyric-text {
+  font-size: 0.94em;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+/* 卡拉OK式填充：正在唱的那一行由左往右亮起来（--vinyl-lyric-fill 是 0..1 的进度，视图每帧写一个数）。
+ * 逐字时间戳（网易云的 yrc、QQ 的逐字歌词）拿不到，所以按整行时长匀速填 ——
+ * 观感上仍然是「跟着唱」，而不是「整句突然一起亮」。
+ * 挂在「正在唱」（时间）而不是「视觉中心」（位置）上：用户翻去别的段落时，
+ * 高亮跟着手走，这一行的填充灯还亮着 —— 一眼就能找回播放到哪了。 */
+.vinyl-lyric-line.is-playing .vinyl-lyric-text {
+  background-image: linear-gradient(
+    90deg,
+    var(--vinyl-lyric-lit) 0 calc(var(--vinyl-lyric-fill, 0) * 100%),
+    var(--vinyl-lyric-ink) calc(var(--vinyl-lyric-fill, 0) * 100%) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* 间奏（只有时间戳、没有词）：一行音符，不做填充 */
+.vinyl-lyric-line.is-interlude .vinyl-lyric-text {
+  color: var(--vinyl-lyric-passed);
+  font-size: 0.85em;
+  letter-spacing: 0.4em;
+  text-indent: 0.4em; /* 字距把末字推偏了，补回来才是真居中 */
+}
+
+.vinyl-lyric-trans {
+  margin-top: 2px;
+  font-size: 0.78em;
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--vinyl-lyric-trans);
+}
+
+/* 空态：没有在播 / 没有歌词 / 正在取，都在这里给一句话 */
+.vinyl-lyrics-empty {
+  padding: 0 12px;
+  text-align: center;
+  color: var(--vinyl-lyric-passed);
+  font-size: 0.9em;
 }
 
 /* 反向缩放抵消透视放大（系数由 syncFlipDepth 写入）：必须挂在「面」自己的坐标系里 ——
@@ -1559,10 +1757,9 @@
     0 2px 6px rgba(0, 0, 0, 0.55);
 }
 
-/* 卡里的三枚键：与唱机上的播放键同款黑键面，宽度按 2 : 1 : 1；全棱角。
+/* 卡里的四枚键：与唱机上的播放键同款黑键面，等宽铺满一行（歌词 / 选取专辑 / 队列 / 播放模式）；全棱角。
  * 选择器前面挂 .vinyl-player：宿主的 button:not(.clickable-icon)（0,1,1）会盖掉单类选择器（0,1,0）的
  * color / box-shadow / background-color —— 不挂前缀的话「双线条 + 黑键面」在真机上根本不生效（实测）。 */
-.vinyl-player .vinyl-btn-wide,
 .vinyl-player .vinyl-btn-mode {
   height: 28px;
   min-width: 0;
@@ -1583,28 +1780,20 @@
   transition: background 0.35s ease, box-shadow 0.35s ease, color 0.25s ease;
 }
 
-.vinyl-btn-wide {
-  /* 宽度写死 50%（设计稿：最左边的键占一半）—— 让出半个 6px 缝，三枚合计正好铺满一行 */
-  flex: 0 0 calc(50% - 3px);
-  gap: 6px;
-  padding: 0 10px;
-}
-
 .vinyl-btn-mode {
-  /* 各占四分之一（同样让出半个缝） */
-  flex: 0 0 calc(25% - 3px);
+  /* 四枚等宽（用户把原来的宽键一分为二）：让出半个 6px 缝 —— 4 × (25% − 4.5px) + 3 × 6px = 100%，
+     一行正好铺满，右边不留缝 */
+  flex: 0 0 calc(25% - 4.5px);
   padding: 0 10px;
 }
 
 /* 悬停：键面亮一档（与唱机键同一档） */
-.vinyl-player .vinyl-btn-wide:hover,
 .vinyl-player .vinyl-btn-mode:hover {
   background: var(--vinyl-key-face-hover);
   color: var(--vinyl-key-ink-lit);
 }
 
 /* 按下：整体下沉 1px + 收掉上缘高光（与唱机键同一套行程感） */
-.vinyl-player .vinyl-btn-wide:active,
 .vinyl-player .vinyl-btn-mode:active {
   transform: translateY(1px);
   box-shadow: var(--vinyl-key-shadow-pressed);
@@ -1612,15 +1801,13 @@
 
 /* 亮起：非默认模式（循环 / 随机）与「唱片区翻开」时——键面亮一档、图标暖白发光并呼吸，
  * 与唱机键的「播放中」完全是同一套语言（用户要求：三键做成唱机暂停键那样的样式与动效）。 */
-.vinyl-player .vinyl-btn-mode.is-active,
-.vinyl-player .vinyl-btn-wide.is-active {
+.vinyl-player .vinyl-btn-mode.is-active {
   background: var(--vinyl-key-face-lit);
   color: var(--vinyl-key-ink-lit);
   box-shadow: var(--vinyl-key-shadow-lit);
 }
 
-.vinyl-player .vinyl-btn-mode.is-active .svg-icon,
-.vinyl-player .vinyl-btn-wide.is-active .svg-icon {
+.vinyl-player .vinyl-btn-mode.is-active .svg-icon {
   animation: vinyl-key-breathe-icon 2.8s ease-in-out infinite;
 }
 
@@ -1637,18 +1824,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .vinyl-btn-mode.is-active .svg-icon,
-  .vinyl-btn-wide.is-active .svg-icon {
+  .vinyl-btn-mode.is-active .svg-icon {
     animation: none;
     filter: drop-shadow(0 0 3px rgba(255, 236, 196, 0.5));
   }
-}
-
-/* 选取专辑键只留图标（用户要求去掉文字）：独居宽键，图标放大一档压住版心 */
-.vinyl-btn-wide .svg-icon {
-  width: 17px;
-  height: 17px;
-  stroke-width: 1.8;
 }
 
 .vinyl-btn-mode .svg-icon {
@@ -1695,7 +1874,8 @@
 }
 
 .vinyl-flip-face.is-deck,
-.vinyl-flip-face.is-crate {
+.vinyl-flip-face.is-crate,
+.vinyl-flip-face.is-lyrics {
   background-image:
     /* 缎面漆受光（上缘亮、向下收敛；用近白而非米黄，避免整体发黄） */
     radial-gradient(140% 80% at 50% -5%, rgba(255, 244, 228, 0.1), transparent 60%),
@@ -1729,7 +1909,8 @@
 
 /* 「播放器配色」之二：哑光黑 = 无高光的炭黑面板（默认方案 = .vinyl-flip-face.is-deck 上的胡桃木） */
 .vinyl-player.is-deck-black .vinyl-flip-face.is-deck,
-.vinyl-player.is-deck-black .vinyl-flip-face.is-crate {
+.vinyl-player.is-deck-black .vinyl-flip-face.is-crate,
+.vinyl-player.is-deck-black .vinyl-flip-face.is-lyrics {
   background-image: linear-gradient(180deg, #232327, #1b1b1f 60%, #18181b);
   background-blend-mode: normal;
   box-shadow:
@@ -1748,7 +1929,8 @@
  * 近白但不等于白：基色是「上近纯白、下压一档冷灰白」的清冷渐变，配一道极淡的缎面光泽；
  * 靠描边与落影在白色背景上立住——否则浅色主题里面板会和背景糊成一片，只剩器件浮在空中。 */
 .vinyl-player.is-deck-shell .vinyl-flip-face.is-deck,
-.vinyl-player.is-deck-shell .vinyl-flip-face.is-crate {
+.vinyl-player.is-deck-shell .vinyl-flip-face.is-crate,
+.vinyl-player.is-deck-shell .vinyl-flip-face.is-lyrics {
   background-image:
     radial-gradient(130% 100% at 50% -12%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0) 60%),
     url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='900' height='600'><defs><filter id='a' x='0' y='0' width='100%' height='100%'><feTurbulence type='fractalNoise' baseFrequency='0.008 0.12' numOctaves='3' seed='17'/><feColorMatrix type='matrix' values='0 0 0 0 0.8 0 0 0 0 0.84 0 0 0 0 0.88 0.22 0 0 0 0'/></filter></defs><rect width='900' height='600' filter='url(%23a)'/></svg>"),
@@ -1783,7 +1965,8 @@
 /* 「播放器配色」之四：珊瑚红（Crosley「Coral」的方向：哑光珊瑚漆面 + 帆布织纹 + 缝线描边）。
  * 基色由用户指定：rgb(161 70 67)，是压暗一档的砖红（不再是早先那版偏亮的珊瑚橘）。 */
 .vinyl-player.is-deck-coral .vinyl-flip-face.is-deck,
-.vinyl-player.is-deck-coral .vinyl-flip-face.is-crate {
+.vinyl-player.is-deck-coral .vinyl-flip-face.is-crate,
+.vinyl-player.is-deck-coral .vinyl-flip-face.is-lyrics {
   background-image:
     /* 帆布织纹：±45° 两组细线交叉（1px 亮 / 2px 空） */
     repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.06) 0 1px, rgba(0, 0, 0, 0) 1px 3px),
@@ -1949,7 +2132,7 @@
   animation: vinyl-spin var(--vinyl-spin-duration, 1.8s) linear infinite;
 }
 
-.vinyl-turntable-vinyl.is-spinning.is-paused,
+/* 看不见时按住（省电）：相位留着，回来接着转 */
 .vinyl-turntable-vinyl.is-spinning.is-hidden {
   animation-play-state: paused;
 }
@@ -1960,12 +2143,17 @@
   }
 }
 
-/* —— 搓碟（设置 → 外观 → 播放器 → 搓碟）：手指按在唱片上拖动 = 手动转盘 ——
-   拖拽期间旋转交给 JS：--vinyl-scratch-angle 由 player-view 逐帧写入，CSS 动画让位；
-   抬手时视图把当前角度折成负 animation-delay 再摘掉这个类，转盘从原角度接着转、不会跳。 */
-.vinyl-turntable-vinyl.is-scratching {
+/* —— 旋转归 JS 的两种情形（player-view 的 syncTurntable）：动画让位，角度走 --vinyl-spin-angle ——
+   ① 搓碟：手指按在唱片上拖动 = 手动转盘（--vinyl-spin-angle 逐帧写）；
+   ② 马达：暂停的断电滑停 / 复播的起转（逐帧按 core/motor 的曲线写），以及停住不转的定住 ——
+      暂停时唱片就停在停下的那个角度上，不摆正也不归零（角度不写在这里就成了 transform: none，
+      看着就是「迅速跳帧摆正」）。
+   两种情形结束都由 player-view 把当前角度折成负 animation-delay 再摘掉类：
+   转盘从原角度接着转（或原角度停住），全程不跳。 */
+.vinyl-turntable-vinyl.is-scratching,
+.vinyl-turntable-vinyl.is-spin-held {
   animation: none;
-  transform: rotate(var(--vinyl-scratch-angle, 0deg));
+  transform: rotate(var(--vinyl-spin-angle, 0deg));
 }
 
 /* 装饰层让开指针事件：唱臂裁剪层（inset: 0）盖在盘面上，不让开的话盘面永远不是命中目标，
@@ -2269,6 +2457,24 @@
   text-align: right;
 }
 
+/* 载入 / 缓冲：只在等数据时露面（文本由 player-view 的 update 写，空文本时整块不占位）。
+   没有动效 —— 这是一条状态提示，不是装饰，减少动效与强制色彩下都照常显示。 */
+.vinyl-buffering {
+  display: none;
+  flex: none;
+  font-size: 0.78em;
+  line-height: 1.05;
+  letter-spacing: 0.04em;
+  /* 与读数同一个墨色变量（面板换了材质它跟着走），压一档透明度不当主线 */
+  color: var(--vinyl-amp-ink);
+  opacity: 0.75;
+  white-space: nowrap;
+}
+
+.vinyl-buffering.is-on {
+  display: inline;
+}
+
 /* 原生 range 只承接键盘（Tab + 方向键）；指针全交给自绘控件与 player-view 的 bindPointerScrub
    —— 它的行程是「宽度 − 滑块宽」（两端各让出半个滑块），与自绘几何对不齐：进度条偏 7px，
    音量表则点第 k 格亮的格数总差半格、最左边一格永远够不到 0。 */
@@ -2569,32 +2775,25 @@
 }
 
 /* 队列（滚动交给视图层，列表自然展开不被裁） */
+/* Vinyl order 行：左边标题、右边两枚图标钮，一行放得下就不换行。
+   专辑名不在这一行（用户定稿）：宽度让给按钮，行本身也收窄一点。 */
 .vinyl-order-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 4px;
-}
-
-.vinyl-order-row .vinyl-queue-title {
-  flex: 1;
-  min-width: 0;
+  gap: 6px;
+  margin-top: 2px;
 }
 
 .vinyl-queue-title {
+  /* 吃掉整行的余量 = 把右边那两枚按钮顶到行尾；同时自己不许换行：
+     窄了宁可省略号（`Vinyl order` 很短，实际几乎用不到），折成两行会把按钮挤下去 */
+  flex: 1;
+  min-width: 0;
   font-weight: 600;
   letter-spacing: 0.5px;
-}
-
-/* Vinyl order 行末尾的当前专辑名（设计稿：「(专辑名)」在那一栏的最后）。
- * 放不下时悬停滚动（与顶部标题同一套 marquee），故这里只给布局与弱化色。 */
-.vinyl-order-album {
-  flex: 0 1 auto;
-  max-width: 55%;
-  min-width: 0;
-  text-align: right;
-  font-size: 0.85em;
-  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .vinyl-queue {
@@ -2622,6 +2821,20 @@
 
 .vinyl-queue-item.is-current .vinyl-q-title {
   font-weight: 600;
+}
+
+/* 队列行末尾的「移除这首」：与段头的「写点什么吧:)」同一套显隐口径 ——
+   平时弱化，指到这一行 / 键盘落到按钮上才实心。 */
+.vinyl-queue-remove {
+  flex: none;
+  opacity: 0.55;
+  transition: opacity 0.15s;
+}
+
+.vinyl-queue-item:hover .vinyl-queue-remove,
+.vinyl-queue-remove:hover,
+.vinyl-queue-remove:focus-visible {
+  opacity: 1;
 }
 
 .vinyl-idx {
@@ -2910,13 +3123,31 @@
   display: none;
 }
 
+/* min-width: 0 不能省：控件默认 min-width: auto，取的是 min-content —— 输入框那条定宽
+   （width: min(310px, 34vw)）加两个按钮的完整文案。中文三项相加还在卡片内，英文按钮
+   （Choose file… / Generate template file）长出一大截，加起来就顶出卡片、被卡片的
+   overflow: hidden 裁掉（900×700 的设置窗实测：控件右缘超出卡片 48px，按钮被切一刀）。
+   压窄的活儿交给输入框（它 min-width: 0），按钮由下面的 min-width: auto 兜着。 */
 .vinyl-settings-section .setting-item.vinyl-template-setting .setting-item-control {
   flex: 1 1 auto;
+  min-width: 0;
+  /* 真放不下时整颗按钮换行，而不是被卡片裁掉（与统计页按钮同一套约定）。
+     行距用上面 .setting-item-control 的 gap: 8px，这里不重复写。 */
+  flex-wrap: wrap;
   justify-content: flex-start;
 }
 
+/* 按钮文案必须完整留在按钮里：min-width: auto 本来就拦着压缩，这里写死「不伸缩」，
+   让「谁让位」不看宿主的默认值（宿主是 flex-shrink: 1 / min-width: auto）。 */
+.vinyl-settings-section .setting-item.vinyl-template-setting .setting-item-control > button {
+  flex: 0 0 auto;
+}
+
+/* 基准改成一个「输入框的最小可用宽度」：换行判定只看两个按钮的完整文案，
+   空间够时输入框照旧吃掉全部余量（flex-grow: 1）——定宽 310/34vw 留给其它行，
+   在这一行会变成 min-content 的一部分，正是上一段要拆掉的那个坑。 */
 .vinyl-settings-section .setting-item.vinyl-template-setting input[type='text'] {
-  flex: 1 1 auto;
+  flex: 1 1 140px;
   min-width: 0;
 }
 
@@ -3925,7 +4156,6 @@
 }
 
 .vinyl-btn:focus-visible,
-.vinyl-btn-wide:focus-visible,
 .vinyl-btn-mode:focus-visible,
 .vinyl-props-icon:focus-visible,
 .vinyl-deck button:focus-visible,
@@ -4328,6 +4558,85 @@
   border-radius: 0;
 }
 
+/* ============ 强制色彩与对比度偏好（无障碍 2026-09-26） ============
+ * 这一屏是自绘 UI（手绘笔触 / 自绘轨道 / 自绘电平表 / 热力格），
+ * 强制色彩（Windows 高对比）会把作者色一律换成系统色 —— 于是「只靠背景色区分」的地方
+ * （热力档位 / 音量格子 / 播放中）会糊成同一片，手绘层则可能变成实心块压住内容。
+ * 这里只做三件事：把靠颜色区分的关键状态补成描边、焦点圈保持可见、
+ * 手绘装饰层不参与重着色。对比度偏好那一档把弱化的灰字拉回正文色。 */
+
+@media (forced-colors: active) {
+  /* 焦点圈：本来就是 outline（会被强制成系统 Highlight），这里只是加粗一档，
+     并把靠 box-shadow 画的抬起效果去掉 —— 阴影在强制色彩下会被抹掉，留着反而看不出边界 */
+  .vinyl-shelf-card:focus-visible,
+  .vinyl-queue-item:focus-visible,
+  .vinyl-pick:focus-visible,
+  .vinyl-lyric-line:focus-visible,
+  .vinyl-deck-play:focus-visible,
+  .vinyl-settings-tabs .vinyl-settings-tab:focus-visible {
+    outline: 3px solid Highlight;
+    outline-offset: 2px;
+    box-shadow: none;
+  }
+
+  /* 热力图：档位深浅在强制色彩下没法表达，退一步只分「有播放 / 没播放」——
+     有播放的描 Highlight，其余描 ButtonBorder（outline 不影响格子尺寸） */
+  .vinyl-stats-day {
+    outline: 1px solid ButtonBorder;
+    outline-offset: -1px;
+  }
+
+  .vinyl-stats-day:not(.is-level-0):not(.is-future) {
+    outline: 1px solid Highlight;
+  }
+
+  /* 音量格子与进度填充：亮着的那一段用系统高亮色，别和底槽混成一片 */
+  .vinyl-volume-segment.is-active,
+  .vinyl-seek-fill {
+    background: Highlight;
+    box-shadow: none; /* 强制色彩下外发光会被抹掉，留着只会让亮格看起来脏 */
+  }
+
+  /* 播放中 / 选中这类「只靠颜色」的状态也补一条描边 */
+  .vinyl-shelf-card.is-playing,
+  .vinyl-stats-day.is-selected {
+    outline: 2px solid Highlight;
+    outline-offset: 1px;
+  }
+
+  /* 手绘装饰层（空态教程 / 分隔线 / 虚线框）：不参与重着色。
+     它是 aria-hidden 的装饰，重着色后会变成大块实心图形，把真正的按钮盖住。 */
+  .vinyl-tutorial,
+  .vinyl-tutorial-ink,
+  .vinyl-about-ink {
+    forced-color-adjust: none;
+  }
+}
+
+@media (prefers-contrast: more) {
+  /* 对比度偏好：弱化的灰字拉回正文色（卡片属性行 / 计数 / 读数在这档下最糊） */
+  .vinyl-muted,
+  .vinyl-shelf-prop-value,
+  .vinyl-shelf-heading-count,
+  .vinyl-buffering,
+  .vinyl-lyrics-sub,
+  .vinyl-stats-empty {
+    color: var(--text-normal);
+  }
+
+  /* 半透明的读数与描边提到不透明 */
+  .vinyl-readout,
+  .vinyl-buffering {
+    opacity: 1;
+  }
+
+  .vinyl-shelf-card,
+  .vinyl-shelf-toolbar,
+  .vinyl-settings-section {
+    border-color: var(--text-normal);
+  }
+}
+
 /* ============ 手写体（拉丁 Excalifont + 中文霞鹜文楷，均为官方字体子集） ============
  * 与设计稿同款：拉丁走 Excalifont，中文走霞鹜文楷（Excalidraw 渲染中文时配的就是它）。
  * 用在哪：专辑墙空态教程（Drawing 2026-09-15 14.14.52）、设置面板「关于」页，
@@ -4375,6 +4684,12 @@
 }
 .vinyl-health-actions select { max-width: 260px; }
 .vinyl-health-actions .is-hidden { display: none; }
+
+/* ============ 评分（views/rating-modal）============
+ * 弹窗里就一个输入框：样式全交给宿主的弹窗样式，这里只给校验提示留一点间距。 */
+.vinyl-rating-status:empty {
+  display: none;
+}
 
 /* ============ 关联已有（views/link-source-modal）============
  * 左右并排：左边搜索结果、右边选中的目标笔记 —— 选错发行版代价大，

@@ -66,7 +66,8 @@ export class SetCoverModal extends Modal {
     });
     this.fileInput = fileInput;
 
-    const status = c.createDiv({ cls: 'vinyl-muted' });
+    // 状态行：下载封面 / 复制入库的过程中会变，标成 status 让读屏软件播报
+    const status = c.createDiv({ cls: 'vinyl-muted vinyl-cover-status', attr: { role: 'status' } });
     c.createDiv({
       cls: 'vinyl-muted',
       text: t('cover.conventionHint'),

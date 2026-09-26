@@ -87,6 +87,8 @@ function bootWith(data, opts = {}) {
       createFolder: async () => {},
       create: async (name, content) => {
         if (opts.failCreate) throw new Error(opts.failCreate);
+        // 归档写文件是异步的：onCreate 用来模拟「这段时间里播放还在继续」（见下面对应的用例）
+        if (opts.onCreate) opts.onCreate();
         created.push({ name, content });
         return { path: name };
       },
@@ -243,6 +245,56 @@ test('自动备份：没到一周不写；关掉开关不写', async () => {
   const off = { lastBackupAt: 0, backupKeep: 3, autoBackup: false, stats: { totalPlays: 0, albums: {}, tracks: {}, events: [] } };
   await make(off);
   assert.equal(created.length, 0, '开关关着就完全不碰');
+});
+
+test('归档期间新记的明细不会被一起丢掉', async () => {
+  const now = Date.now();
+  // 播放中碰上限/有超期明细时走的是 recordPlay → maybeRetainEvents 这条路径：
+  // 传进去的 allEvents 就是 settings.stats.events 那个数组本身（recordTrackPlay 是原地 push）。
+  // 归档要写文件、是异步的，这段时间里用户又点了一首 —— 它 push 进的是同一个数组，
+  // 而 kept 是发起归档前算好的，直接拿它整段替换就会把这条新明细一起丢掉。
+  const late = { at: now + 400, trackKey: 'ne:late' };
+  let pluginRef = null;
+  const { plugin, created, savedNow } = bootWith(
+    {
+      stats: {
+        totalPlays: 1,
+        albums: {},
+        tracks: {},
+        events: [{ at: now - 1000, trackKey: 'ne:seed' }],
+      },
+    },
+    { onCreate: () => pluginRef.settings.stats.events.push(late) }
+  );
+  pluginRef = plugin;
+  await plugin.loadSettings();
+  assert.equal(created.length, 0, '启动时没有超期明细：不触发裁剪');
+
+  // 手动制造一条超期明细，再记一次播放 —— 这条路径与真机上「播着播着到达保留边界」一致
+  plugin.settings.stats.events.unshift({ at: now - 3 * YEAR, trackKey: 'ne:old' });
+  plugin.recordPlay({ source: 'netease', id: 999, duration: 180, title: 'T' });
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+
+  const archive = created.find((file) => file.name.includes('events archive'));
+  assert.ok(archive, '写了一份归档文件');
+  assert.ok(
+    JSON.parse(archive.content).settings.stats.events.some((e) => e.trackKey === 'ne:old'),
+    '被裁掉的那条进了归档'
+  );
+  assert.ok(
+    plugin.settings.stats.events.some((e) => e.trackKey === 'ne:late'),
+    '归档期间新记的明细要留在内存里（这条以前会被 kept 整段替换掉）'
+  );
+  assert.ok(
+    !plugin.settings.stats.events.some((e) => e.trackKey === 'ne:old'),
+    '该裁的还是裁掉'
+  );
+  await plugin.saveSettings();
+  assert.ok(
+    savedNow().stats.events.some((e) => e.trackKey === 'ne:late'),
+    '后续保存把这条新明细写下去'
+  );
 });
 
 test('归档写不出去：明细全部保留、不裁剪，并给用户明确提示', async () => {

@@ -12,6 +12,7 @@ const QRCode = require('qrcode');
 const { registerQqRoutes } = require('./qq');
 const { registerKugouRoutes } = require('./kugou');
 const { resolveProxyConfig, createProxyFetch } = require('./proxy');
+const { redactLogText, MAX_LOG_BYTES } = require('./redact');
 
 const login_qr_key = require('NeteaseCloudMusicApi/module/login_qr_key');
 const login_status = require('NeteaseCloudMusicApi/module/login_status');
@@ -170,9 +171,24 @@ const MSG = {
   'gw.kugouBadAlbumId': { zh: '专辑 ID 无效', en: 'Invalid album ID' },
   'gw.kugouBadSongId': { zh: '歌曲 ID 无效', en: 'Invalid song ID' },
   'gw.kugouAlbumFailed': { zh: '酷狗专辑信息获取失败', en: 'Could not fetch the Kugou album info' },
+  'gw.kugouLyricFailed': { zh: '酷狗歌词获取失败', en: 'Could not fetch the Kugou lyrics' },
   'gw.kugouNoUrl': {
     zh: '这首歌暂时拿不到播放地址（可能需要会员，或只有试听片段）',
     en: 'No playable URL for this track right now (it may require membership, or only a preview is available)',
+  },
+  // —— 本机音频按 Range 供流（库外音频播放用，见 README 6.3.1）——
+  'gw.streamBadPath': {
+    zh: '本地音频路径无效（需要绝对路径）',
+    en: 'Invalid local audio path (an absolute path is required)',
+  },
+  'gw.streamNotAudio': {
+    zh: '不是可播放的音频文件：{name}',
+    en: 'Not a playable audio file: {name}',
+  },
+  'gw.streamNotFound': { zh: '音频文件不存在：{name}', en: 'Audio file not found: {name}' },
+  'gw.streamNotAllowed': {
+    zh: '这个路径没有登记给本次会话，拒绝供流：{name}',
+    en: 'This path was not registered for streaming in this session: {name}',
   },
 };
 
@@ -208,7 +224,17 @@ function failureText(e) {
 
 /** 拒绝对应哪个 HTTP 状态：限流给 429，客户端据此让该来源冷却（见 src/core/request-error.ts）。
  *  其它一律 500 —— 客户端只区分「限流」与「出错了」，不靠文案匹配（文案有中英两套）。 */
+/** 路由错误：可以指定 HTTP 状态（默认 500）。供流的三种拒绝各有各的状态：
+ *  路径无效 / 不是音频 400、没登记 403、不存在 404 —— 客户端与排查都靠它分流。 */
+class RouteError extends Error {
+  constructor(message, status) {
+    super(message);
+    this.status = status;
+  }
+}
+
 function failureStatus(e) {
+  if (e instanceof RouteError) return e.status;
   if (e instanceof Error) return 500;
   const body = e && typeof e === 'object' ? e.body : null;
   const code = body && body.code != null ? Number(body.code) : 0;
@@ -367,11 +393,26 @@ function serverLog(...args) {
   console.log(...args);
   if (!LOG_FILE) return;
   try {
-    fs.appendFileSync(
-      LOG_FILE,
-      args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ') + '\n'
-    );
+    // 体积上限：超了就把上一份滚成 .1（只留一代）。日志就长在插件目录（库内）里，
+    // 无上限的 append 会把它撑成几十 MB 跟着同步走。statSync 失败当「没有旧文件」处理。
+    let size = 0;
+    try {
+      size = fs.statSync(LOG_FILE).size;
+    } catch (_) {}
+    if (size > MAX_LOG_BYTES) {
+      try {
+        fs.unlinkSync(LOG_FILE + '.1');
+      } catch (_) {}
+      fs.renameSync(LOG_FILE, LOG_FILE + '.1');
+      args = [`[vinyl-server] 日志超过 ${Math.round(MAX_LOG_BYTES / 1024)} KB，上一份已滚到 gateway.log.1`];
+    }
+    fs.appendFileSync(LOG_FILE, redactLogText(renderLogArgs(args)) + '\n');
   } catch (_) {}
+}
+
+/** 参数拼成一行：字符串原样、其余 JSON（与从前同一口径，只是多过一道脱敏） */
+function renderLogArgs(args) {
+  return args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
 }
 
 // ==================== 出站代理 ====================
@@ -862,6 +903,138 @@ route('DELETE', '/api/cookie', async () => {
   return { ok: true };
 });
 
+// ==================== 本机音频按 Range 供流（库外音频专用） ====================
+// 背景：库外音频（vault 之外的绝对路径）此前由插件整文件读进渲染进程做成 Blob ——
+// 一首 30–50 MB 的无损就是一整块内存，一张 20 首的专辑能上 GB（见 src/core/local-source.ts）。
+// 现在改由网关按 HTTP Range 供流：Chromium 的 <audio> 只取需要的区间，整轨不驻留内存。
+// 代价：库外音频从此也会用到网关（README 里「只放本地音频不启动网关」已按此改写）。
+// 安全：与其它路由同一套 token 鉴权（<audio> 不能自定义请求头，所以走 ?t= 那条路，见上面的鉴权段）；
+// 另外只认「绝对路径 + 音频扩展名 + 常规文件」—— 这条路由不是通用文件读取口。
+// 扩展名表与 src/util.ts 的 AUDIO_EXTENSIONS / MIME_BY_EXT 必须一致（有测试锁着）。
+const STREAM_MIME = {
+  mp3: 'audio/mpeg',
+  m4a: 'audio/mp4',
+  m4b: 'audio/mp4',
+  mp4: 'audio/mp4',
+  aac: 'audio/aac',
+  wav: 'audio/wav',
+  ogg: 'audio/ogg',
+  oga: 'audio/ogg',
+  opus: 'audio/ogg',
+  flac: 'audio/flac',
+  webm: 'audio/webm',
+  weba: 'audio/webm',
+};
+
+/** 本会话允许供流的路径（见 /api/local/allow）。为什么需要这一层：
+ *  <audio> 发的是浏览器级请求、带不了自定义头，所以这条路由的凭据只能是 URL 里的 ?t= 会话 token。
+ *  光有 token 还不够 —— 拿到它的任何进程都能用它读盘上**任意**音频文件；登记过之后，
+ *  能读的就只剩「插件真的声明过要放的那几个路径」，与 README 6.3.1 的口径一致。 */
+const streamAllow = new Set();
+
+/** 登记键：与供流同样的两条硬条件（绝对路径 + 认识的音频扩展名），再 path.resolve 归一
+ *  —— 插件与网关同机，但分隔符写法可能不同。不合格的路径直接不收（返回 null）。 */
+function streamAllowKey(raw) {
+  const p = String(raw || '');
+  if (!path.isAbsolute(p)) return null;
+  if (!STREAM_MIME[path.extname(p).slice(1).toLowerCase()]) return null;
+  return path.resolve(p);
+}
+
+// 供流白名单登记：插件在取流地址之前调一次（见 core/server-manager 的 allowStreamPaths）。
+// 与其它路由同一条鉴权链；没有 token 一样 401。
+route('POST', '/api/local/allow', async ({ body }) => {
+  const list = body && Array.isArray(body.paths) ? body.paths : [];
+  let added = 0;
+  for (const raw of list) {
+    const key = streamAllowKey(raw);
+    if (!key || streamAllow.has(key)) continue;
+    streamAllow.add(key);
+    added++;
+  }
+  return { added, total: streamAllow.size };
+});
+
+/** 校验并描述一个待供流的文件；不是「绝对路径 + 认识的音频扩展名 + 已登记 + 常规文件」就抛。
+ *  未登记的路径在碰文件系统之前就被挡下（不给「存不存在」的探测面）。 */
+function resolveStreamFile(raw) {
+  const p = String(raw || '');
+  if (!path.isAbsolute(p)) throw new RouteError(msg('gw.streamBadPath'), 400);
+  const name = path.basename(p);
+  const contentType = STREAM_MIME[path.extname(p).slice(1).toLowerCase()];
+  if (!contentType) throw new RouteError(msg('gw.streamNotAudio', { name }), 400);
+  if (!streamAllow.has(path.resolve(p))) throw new RouteError(msg('gw.streamNotAllowed', { name }), 403);
+  let stat;
+  try {
+    stat = fs.statSync(p);
+  } catch (_) {
+    throw new RouteError(msg('gw.streamNotFound', { name }), 404);
+  }
+  if (!stat.isFile()) throw new RouteError(msg('gw.streamNotFound', { name }), 404);
+  return { path: p, size: stat.size, contentType };
+}
+
+route('GET', '/api/local/stream', async ({ query }) => ({ file: resolveStreamFile(query.path) }));
+
+/** 解析单区间 Range。返回 {start,end} / null（没带 Range，回全量）/ 'invalid'（不合法或越界 → 416）。
+ *  只认单区间（bytes=a-b / a- / -n）：多区间按规范允许回 200 全量，这里就这么办 —— 音频播放器
+ *  实际只发单区间，为多区间做 multipart 响应没有收益。 */
+function parseRange(header, size) {
+  const m = /^bytes=(\d*)-(\d*)$/.exec(String(header || '').trim());
+  if (!m) return null;
+  const [, rawStart, rawEnd] = m;
+  if (rawStart === '' && rawEnd === '') return null;
+  let start, end;
+  if (rawStart === '') {
+    // bytes=-n：最后 n 字节（n 为 0 按越界处理）
+    const n = Number(rawEnd);
+    if (!n) return 'invalid';
+    start = Math.max(0, size - n);
+    end = size - 1;
+  } else {
+    start = Number(rawStart);
+    end = rawEnd === '' ? size - 1 : Math.min(Number(rawEnd), size - 1);
+  }
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= size) return 'invalid';
+  return { start, end };
+}
+
+/** 按 Range 把一个文件写回去。Accept-Ranges 必须给 —— <audio> 靠它决定能不能拖进度条。 */
+function sendStreamFile(req, res, file) {
+  const total = file.size;
+  const headers = {
+    'Content-Type': file.contentType,
+    'Accept-Ranges': 'bytes',
+    'Cache-Control': 'no-store',
+  };
+  const range = parseRange(req.headers && req.headers.range, total);
+  if (range === 'invalid') {
+    res.writeHead(416, { ...headers, 'Content-Range': `bytes */${total}` });
+    return res.end();
+  }
+  if (!total) {
+    // 空文件：音频不会是 0 字节，但别让 createReadStream(start:0, end:-1) 抛
+    res.writeHead(200, { ...headers, 'Content-Length': '0' });
+    return res.end();
+  }
+  const start = range ? range.start : 0;
+  const end = range ? range.end : total - 1;
+  headers['Content-Length'] = String(end - start + 1);
+  if (range) headers['Content-Range'] = `bytes ${start}-${end}/${total}`;
+  // 先建流再写头：createReadStream 抛（路径含 NUL 之类）时还没发响应，能落回 500 的 JSON 分支
+  const stream = fs.createReadStream(file.path, { start, end });
+  stream.on('error', (e) => {
+    serverLog('[vinyl-server] 音频供流中断:', file.path, String((e && e.message) || e));
+    try {
+      res.destroy();
+    } catch (_) {
+      // 响应已经结束：无处可收，忽略
+    }
+  });
+  res.writeHead(range ? 206 : 200, headers);
+  stream.pipe(res);
+}
+
 // ==================== QQ 音乐路由（/api/qq/*） ====================
 // server/qq.js 为纯注入式模块：fs/fetch/日志/超时/crypto/路径全部由这里注入，
 // 模块自身零 require、零裸 fetch（测试以 vm 替换本文件作用域内的 I/O）。
@@ -930,6 +1103,8 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': result.contentType });
       return res.end(result.binary);
     }
+    // 文件供流（/api/local/stream）：头与流由 sendStreamFile 自己写，不走 JSON 那条路
+    if (result && result.file) return sendStreamFile(req, res, result.file);
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify(result));
   } catch (e) {
@@ -941,7 +1116,20 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+// 端口：VINYL_PORT=0（或未给）时由系统分配，选中的端口回报给父进程。
+// 为什么不让父进程先探测再传进来：探测完必须先关掉那个监听才能交给网关，中间有一段
+// 端口被别人抢走的窗口（TOCTOU）—— 抢到了网关会 EADDRINUSE，用户看到的是「在线音源
+// 莫名其妙不可用」。改成网关自己 bind(0) 再回报真实端口，这条缝就不存在了。
+// 回报格式固定在下面这一行上，插件侧按它解析（改格式要同步改 server-manager 的 PORT_RE）。
 const port = Number(process.env.VINYL_PORT || 0);
 server.listen(port, '127.0.0.1', () => {
   serverLog('[vinyl-server] listening on 127.0.0.1:' + server.address().port);
+});
+
+// 监听失败（端口被占 / 权限 / 网卡异常）：必须有处理，否则 Node 会把 'error' 事件
+// 直接抛成未捕获异常，进程带着一段吓人的堆栈死掉 —— 插件侧只看到「退出」，只能猜。
+// 这里写清原因再退出：父进程按「启动失败」处理（它会换端口重试，见 server-manager 的自愈）。
+server.on('error', (e) => {
+  serverLog('[vinyl-server] 监听失败：' + ((e && e.message) || String(e)));
+  process.exit(1);
 });

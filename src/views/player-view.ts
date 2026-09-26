@@ -20,9 +20,24 @@ import type VinylLifePlugin from '../main';
 import type { PlayerSnapshot } from '../core/player-state';
 import type { Track } from '../core/track';
 import type { PlayMode } from '../core/player-state';
-import { trackSourceLabel, trackSourceClass, trackKey, isLocalTrack } from '../core/track';
+import { trackSourceLabel, trackSourceClass, trackKey, isLocalTrack, isTrialTrack } from '../core/track';
+import {
+  LyricLine,
+  activeLineIndex,
+  centerLineIndex,
+  easeInOutCubic,
+  lineDepth,
+  lineProgress,
+  scrollPlan,
+} from '../core/lyrics';
 import { fmtTime, notice, prefersReducedMotion } from '../util';
 import { SPIN_SECONDS, SPIN_SPEEDS } from '../core/disc-motion';
+import {
+  MotorPhase,
+  motorAdvance,
+  motorDone,
+  motorRate,
+} from '../core/motor';
 import {
   bindScratchGesture,
   approachRate,
@@ -39,9 +54,11 @@ import { resolveAlbumCover, findAlbumNotes, getAlbumInfo, detectAlbumSources } f
 import type { AlbumInfo } from '../core/album-index';
 import { ARM_PARK_ANGLE, albumProgress, armAngleForProgress, armPosture } from '../core/arm-geometry';
 import { t, tf } from '../core/i18n';
-import { onMarqueeOver, onMarqueeOut } from './marquee';
 import { AlbumPicker } from './album-picker';
 import type { PickerEntry } from './album-picker';
+// 整段移动的落点数学：拖拽（resolveSegmentDropIndex）与键盘（segmentMoveBy）共用一份，
+// 免得两条路各写一套、落到不同位置（命令层也走这里）
+import { resolveSegmentDropIndex, segmentMoveBy } from '../core/queue-move';
 
 export const PLAYER_VIEW_TYPE = 'vinyl-player';
 
@@ -63,14 +80,16 @@ interface PlayerEls {
   progressSlider: HTMLInputElement;
   progressRail: HTMLElement;
   timeEl: HTMLElement;
+  /** 载入 / 缓冲的状态位（唱放卡进度行上的一小行字）：只在等数据时露面 */
+  bufferingEl: HTMLElement;
   /** 唱盘左下角的播放 / 暂停键（设计稿：长方形；页面 1 里唯一的播放键） */
   deckPlayBtn: HTMLButtonElement;
   volSlider: HTMLInputElement;
   volSegments: HTMLElement[];
   queueTitle: HTMLElement;
-  /** Vinyl order 行末尾的当前专辑名（设计稿：「(专辑名)」在那一栏的最后） */
-  orderAlbum: HTMLElement;
   queueBox: HTMLElement;
+  /** 歌词键（顶部最左）：翻转区向左转过去的那一面 */
+  lyricsBtn: HTMLButtonElement;
   /** 专辑队列模式开关（顶部，「选取专辑」右边） */
   queueModeBtn: HTMLButtonElement;
 }
@@ -97,6 +116,9 @@ const VOLUME_SEGMENT_HEIGHT_RANGE = 5;
 const SEEK_HOLD_MS = 900;
 /** 保持期的「引擎已到位」容差（占全长比例）：够了就把轨道交还给引擎 */
 const SEEK_HOLD_TOLERANCE = 0.01;
+
+/** 停手后滑回正在唱的那一句的时长：太短像瞬移、太长像拖沓（参考实现多用 300~500ms） */
+const LYRIC_RETURN_MS = 420;
 /** 一次搓碟手势的进行态（抬手回正结束后置空） */
 interface ScratchState {
   /** drag = 手指还按着；settle = 松手后的马达回正 */
@@ -118,6 +140,20 @@ interface ScratchState {
   /** 上一帧时间（performance.now） */
   at: number;
   /** rAF 句柄 */
+  raf: number;
+}
+
+/** 一段马达斜坡的进行态（暂停滑停 / 复播起转；收尾后置空，见 endSpin） */
+interface SpinState {
+  phase: MotorPhase;
+  /** 这一段起点的转速（引擎给的） */
+  from: number;
+  /** 起点角度（接管那一刻的盘面角度） */
+  base: number;
+  /** 接管时刻（performance.now）：角度按「起点 + ∫rate(已走时长)」闭式算，不逐帧累加 */
+  startedAt: number;
+  /** 当前角度（deg）：每次写盘面时重算，收尾时交给 holdSpin / releaseSpin */
+  angle: number;
   raf: number;
 }
 
@@ -227,20 +263,6 @@ export function bindPointerScrub(
   });
 }
 
-/** 拖拽落点 → 结果下标：drop 落在第 target 行的前 / 后（与 shelf-props 的 resolveDropIndex 同构）。
- *  被拖行先移除、其后的行左移一位，故落点在它之后时要减一；落到自己身上返回原位（无副作用）。 */
-/** 整段拖拽的落点换算：块会先被摘掉，所以落点是「摘掉之后」的下标（引擎 moveRange 的语义）。 */
-export function resolveSegmentDropIndex(
-  fromStart: number,
-  count: number,
-  targetStart: number,
-  targetCount: number,
-  after: boolean
-): number {
-  const shift = fromStart < targetStart ? count : 0;
-  return after ? targetStart + targetCount - shift : targetStart - shift;
-}
-
 export function resolveQueueDropIndex(from: number, target: number, after: boolean): number {
   const to = target + (after ? 1 : 0);
   return from < to ? to - 1 : to;
@@ -314,6 +336,58 @@ export class VinylPlayerView extends ItemView {
   private segmentEls: Array<{ el: HTMLElement; head: HTMLElement; seg: { start: number; count: number; albumTitle: string; albumPath: string } }> = [];
   // 队列行右侧的来源角标（文案随语言变；行不重建，切语言时按 renderedQueue 就地重写）
   private queueBadges: HTMLElement[] = [];
+  /** 每行的「移除这首」钮（连曲名一起记着：切语言要按新语言重写 aria-label） */
+  private queueRemoves: Array<{ btn: HTMLElement; title: string }> = [];
+  /** 当前曲目在队列里的下标（定位 / 跟随播放用；-1 = 没在播） */
+  private lastIndex = -1;
+  /** 打开播放器时定位一次「正在播的那首」——之后由跟随逻辑接管（见 update 里的 locate 段） */
+  private pendingLocate = false;
+  /** Vinyl order 行的定位钮：把正在播的那首滚回视野（自己翻看队列翻远了之后的回程） */
+  private locateBtn: HTMLButtonElement | null = null;
+  // —— 歌词页（向左转的那一面）——
+  private lyricsTitleEl: HTMLElement | null = null;
+  /** 抬头第二行：`歌手 · 专辑` 合成一行（用户要求；缺哪个就只显示另一个） */
+  private lyricsSubEl: HTMLElement | null = null;
+  private lyricsScrollEl: HTMLElement | null = null;
+  private lyricsLinesEl: HTMLElement | null = null;
+  private lyricsEmptyEl: HTMLElement | null = null;
+  /** 当前曲目的歌词（null = 还没有 / 这首歌没有）；与 lyricsLineEls 一一对应 */
+  private lyrics: LyricLine[] | null = null;
+  /** 上面那份歌词属于哪首（trackKey）：换歌就整块作废重画 */
+  private lyricsForKey = '';
+  /** 抬头三行的值签名：update 每 400ms 来一次，值不变就别写 DOM（切语言时清空强制重写） */
+  private lyricsHeadSig = '';
+  /** idle → 第一次翻到歌词页才去取；loading 在途中；ready 拿过结论了（含「确实没有」） */
+  private lyricsState: 'idle' | 'loading' | 'ready' = 'idle';
+  /** 当前曲目是不是本地音轨：空态文案要分流（本地多一句「放个同名 .lrc」的出路） */
+  private lyricsLocal = false;
+  /** 取歌词的代次：切歌后回来的旧结果一律丢弃（否则会把上一首的歌词画到这一首上） */
+  private lyricsReq = 0;
+  private lyricsLineEls: HTMLElement[] = [];
+  /** 歌词行「切语言要重放」的标签动作。**与 labelEls 分开**：那张表是建壳时登记一次的
+   *  （有界），歌词行却是每换一首歌整批重建的 —— 混在一起会随换歌无界增长，
+   *  而且每个闭包都攥着一个已被摘除的节点。这里跟着行一起重建。 */
+  private lyricsLabelEls: Array<() => void> = [];
+  /** 每行中心相对滚动容器的像素位置：只在重建 / 改尺寸时量（每帧量会触发布局抖动） */
+  private lyricsOffsets: number[] = [];
+  /** 上一帧的视觉中心行（见 paintLyrics）。-2 = 还没画过：第一帧要把景深写一遍 */
+  private lyricsFocus = -2;
+  /** 上一帧「正在唱」的那一行（卡拉OK填充挂在它身上，与视觉中心是两回事） */
+  private lyricsPlaying = -2;
+  private lyricsFill = -1; // 上一帧写进 --vinyl-lyric-fill 的值（同值不写 DOM）
+  private lyricsRaf = 0;
+  /** 用户手动滚动 = 暂时不跟随；停手 4 秒后自己回来（见 pauseLyricsFollow） */
+  private lyricsFollow = true;
+  private lyricsResumeTimer: number | null = null;
+  /** 翻面后搬焦点的定时器（同一时刻只留一个，见 moveFocusAcrossFlip） */
+  private flipFocusTimer: number | null = null;
+  /** 「刚加入队列」闪烁的定时器集合：行可能在闪完之前被重建，关闭时要能一并撤销 */
+  private segmentFlashTimers = new Set<number>();
+  /** 回位动画：从用户停下的位置平滑滑回正在唱的那一句（瞬移会把人晃一下）。
+   *  from 是起点像素、start 是起始时刻；目标每帧现算（见 writeFollowTop）。 */
+  private lyricsReturn: { from: number; start: number } | null = null;
+  /** 我们上一次写进 scrollTop 的位置：事件发生时位置与它相同 = 那次是我们自己写的，不是用户在滚 */
+  private lyricsWrittenTop = 0;
   /** 段头里的小按钮（写感想 / 移除整段）：切语言时按段就地重写 aria-label */
   private segmentBtns: Array<{ note: HTMLElement; remove: HTMLElement | null; seg: { albumTitle: string; albumPath: string } }> = [];
   /** 封面候选链的签名（链内容变化才换图；链见 core/cover-url.coverChain） */
@@ -321,6 +395,12 @@ export class VinylPlayerView extends ItemView {
   private coverChain: string[] = [];
   private lastAlbumPath: string | null = null;
   private lastSpinning = false;
+  /** 转盘旋转此刻归谁管（三种归属见 syncTurntable）：
+   *  spin = 马达斜坡进行中（JS 逐帧按 core/motor 的曲线写角度）；
+   *  heldAngle = 停在原地不转（暂停 / 出错：角度留在停下的那一刻，不摆正也不归零）；
+   *  两者都是 null = 交给 CSS 动画（稳速播放 / 视图不可见时按住）。 */
+  private spin: SpinState | null = null;
+  private heldAngle: number | null = null;
   private lastArmAngle = NaN;
   /** 唱臂姿态（park / record）：只在变化时写类，避免每帧动 DOM */
   private lastPosture: 'park' | 'record' | null = null;
@@ -336,6 +416,8 @@ export class VinylPlayerView extends ItemView {
   private lastRatio = -1;
   private lastTimeText = '';
   private lastVol = -1;
+  /** 载入 / 缓冲状态位的当前取值（'' = 不显示）：只在这个值翻转时写 DOM */
+  private lastWaitKind: 'loading' | 'buffering' | '' = '';
   /** 进度条被按住拖动中：手指说了算，快照不许回写轨道与读数（见 update 的 seekOwned） */
   private seeking = false;
   /** 抬手 seek 之后的目标值 + 保持期限：等引擎到位再交还控制权（见 SEEK_HOLD_MS） */
@@ -346,12 +428,9 @@ export class VinylPlayerView extends ItemView {
   /** 页面 2 那个面（唱片区挂在这里） */
   private pickerFace: HTMLElement | null = null;
   /** 当前显示的是哪一面（'player' = 唱机卡那面，'picker' = 唱片区那面） */
-  private face: 'player' | 'picker' = 'player';
+  private face: 'player' | 'picker' | 'lyrics' = 'player';
   /** 翻转区半深（px）：= 区宽 / 2，随尺寸变化重算（见 syncFlipDepth） */
   private flipRO: ResizeObserver | null = null;
-  /** Vinyl order 行末尾的专辑名（随当前曲目变，值不变不写 DOM） */
-  private orderAlbumText: HTMLElement | null = null;
-  private lastOrderAlbum = '';
   // 队列拖拽态：dragging 抑制拖拽尾巴上的 click（见 endQueueDrag），dragFrom 是被拖行的下标
   private dragging = false;
   /** 整段拖拽中的来源段（与行拖拽互斥，避免两套拖拽同时生效） */
@@ -410,7 +489,9 @@ export class VinylPlayerView extends ItemView {
       this.scratchWant = null;
       this.disarmScratchPreload();
     } else if (this.els) {
-      // 转速变了会重建旋转动画：清掉上次交还时留下的负延迟（否则相位会跳一下）
+      // 转速换了：动画一圈的时长跟着变，相位（负延迟）在新周期下已经对不上，清掉。
+      // 相位只在「停住 / 滑停」时才有观感意义，而那两个状态的角度在 JS 手里（见 syncTurntable），
+      // 下次交还时按新周期重写延迟 —— 转着的时候相位跳一下看不出来
       this.els.vinyl.style.removeProperty('animation-delay');
       // 从轻量切回完整 / 打开预载开关：按当前状态重新挂表（update 那边不会替我挂，键与状态都没变）
       if (this.lastSnapshot) this.armScratchPreload(this.lastSnapshot);
@@ -418,10 +499,8 @@ export class VinylPlayerView extends ItemView {
   }
 
   async onOpen() {
+    this.pendingLocate = true; // 打开就定位到正在播的那首（一次；之后由跟随逻辑接管）
     this.applyAppearance();
-    // 顶部专辑名的悬停滚动：委托挂在 contentEl（标题文字随播放状态变，逐次挂监听会漏）
-    this.registerDomEvent(this.contentEl, 'pointerover', (ev) => onMarqueeOver(ev));
-    this.registerDomEvent(this.contentEl, 'pointerout', (ev) => onMarqueeOut(ev));
     // 翻转区的半深跟着宽度走（translateZ 不认百分比，只能在尺寸变化时写一次 CSS 变量）
     this.flipRO = new ResizeObserver(() => this.syncFlipDepth());
     this.flipRO.observe(this.contentEl);
@@ -434,16 +513,26 @@ export class VinylPlayerView extends ItemView {
   }
 
   async onClose() {
+    this.stopLyricsLoop(); // 视图没了就别再逐帧跑（rAF 会一直排下去）
+    if (this.lyricsResumeTimer) window.clearTimeout(this.lyricsResumeTimer);
+    this.lyricsResumeTimer = null;
     if (this.unsub) {
       this.unsub();
       this.unsub = null;
     }
     this.scratchAbort();
+    this.spinCancel(); // 视图没了：马达斜坡的逐帧到此为止（引擎那边的声音自己走完）
     this.disarmScratchPreload();
     this.disposeScratchDeck();
     this.flipRO?.disconnect();
     this.flipRO = null;
     document.removeEventListener('visibilitychange', this.onVisibility);
+    // 定时器收尾放在最后：搓碟那三件（作废手势 / 撤预载表 / 释放解码台）是关门时最要紧的，
+    // 排在最前便于一眼核对（用例也按这个顺序盯着，见 scripts/scratch-view.test.cjs）
+    if (this.flipFocusTimer) window.clearTimeout(this.flipFocusTimer);
+    this.flipFocusTimer = null;
+    for (const timer of this.segmentFlashTimers) window.clearTimeout(timer);
+    this.segmentFlashTimers.clear();
   }
 
   /** 翻转区半深 = 区宽 / 2（+ 反向缩放系数：抵消透视放大，静止的一面永远是 1:1）。
@@ -459,6 +548,11 @@ export class VinylPlayerView extends ItemView {
     els.flip.style.setProperty('--vinyl-flip-perspective', `${perspective}px`);
     // 透视会把处在 z = depth 平面上的一面放大 P/(P−depth)，静止时用反向 scale 拉回 1:1
     els.flipInner.style.setProperty('--vinyl-flip-counter', ((perspective - depth) / perspective).toFixed(4));
+    if (this.face === 'lyrics') {
+      // 翻转区尺寸变了：行位置与上下留白都要重量（滚动计划靠这些像素）
+      this.measureLyrics();
+      this.syncLyricsScroll();
+    }
     if (this.picker) {
       const h = els.flip.clientHeight;
       if (h > 0) {
@@ -498,6 +592,9 @@ export class VinylPlayerView extends ItemView {
   // 语言切换后就地更新（不重建 DOM）：只重放登记过的标签赋值，转盘旋转 / 入场动画 / 播放进度都不受影响
   applyLanguage() {
     for (const apply of this.labelEls) apply();
+    // 歌词行不随语言重建 DOM（重建会把滚动位置和逐帧状态一起丢掉），所以它们的标签动作
+    // 各自登记、这里补一次重放
+    for (const apply of this.lyricsLabelEls) apply();
     this.applyQueueLabels();
     this.picker?.applyLabels(); // 唱片区（页面 2）的计数与动作条文案（唱片提示只报专辑名，与语言无关）
     // 文案都由快照决定、由 update 统一维护：切语言时按新语言重放一次即可。
@@ -532,6 +629,10 @@ export class VinylPlayerView extends ItemView {
     for (const { head } of this.segmentEls) head.setAttribute('aria-label', t('player.queueDragAlbum'));
     // 行的拖拽提示改挂序号：行自己已经用 aria-label 报曲名，同一元素只留一个提示来源
     for (const idx of this.queueIdxs) idx.setAttribute('aria-label', t('player.dragToReorder'));
+    // 每行的移除钮：带曲名（「从队列移除《X》」），切语言时按新语言重写
+    for (const { btn, title } of this.queueRemoves) {
+      btn.setAttribute('aria-label', tf('player.queueRemoveTrack', { name: title }));
+    }
     if (this.emptyQueueEl) this.emptyQueueEl.textContent = t('player.emptyQueue');
     // 来源角标走 trackSourceLabel（随语言变）：行不重建，按当前队列就地重写文本
     const queue = this.renderedQueue;
@@ -551,11 +652,18 @@ export class VinylPlayerView extends ItemView {
     // 滚动层（板）：内边距与纵向滚动都挂在这层 —— 所有不参与翻面的内容（按键卡 / 队列）都建在板上
     const board = c.createDiv({ cls: 'vinyl-board' });
 
-    // 卡①：顶部三枚键（设计稿 2 : 1 : 1 —— 选取专辑占一半，两个模式开关各占四分之一）。
-    // 专辑名不占这张卡 —— 设计稿把它放在 Vinyl order 那一栏的最后（见下面的 orderAlbum）。
+    // 卡①：顶部四枚键（设计稿 1 : 1 : 1 : 1 —— 用户把原来的宽键一分为二：歌词 / 选取专辑）。
+    // 两张「翻面键」分居两侧：歌词向左转、选取专辑向右转，转过去的是同一块翻转区（见 flipTo）。
     const header = board.createDiv({ cls: 'vinyl-player-header' });
-    // 选取专辑：翻转区的开关（只留图标 —— 用户不要文字；再点一下转回唱机卡）
-    const pickBtn = header.createEl('button', { cls: 'vinyl-btn-wide vinyl-pick-album' });
+    // 歌词（左转）：与右边的选取专辑成对，都是「把翻转区转过去」的开关
+    const lyricsBtn = header.createEl('button', { cls: 'vinyl-btn-mode vinyl-open-lyrics' });
+    setIcon(lyricsBtn, 'mic-vocal');
+    this.bindLabel(() => {
+      lyricsBtn.setAttribute('aria-label', t('player.lyrics'));
+    });
+    lyricsBtn.addEventListener('click', () => this.flipTo(this.face === 'lyrics' ? 'player' : 'lyrics'));
+    // 选取专辑（右转）：翻转区的开关（只留图标 —— 用户不要文字；再点一下转回唱机卡）
+    const pickBtn = header.createEl('button', { cls: 'vinyl-btn-mode vinyl-pick-album' });
     setIcon(pickBtn, 'disc-3');
     this.bindLabel(() => {
       pickBtn.setAttribute('aria-label', t('player.pickAlbum'));
@@ -576,6 +684,9 @@ export class VinylPlayerView extends ItemView {
     const flipInner = flip.createDiv({ cls: 'vinyl-flip-inner' });
     const deckFace = flipInner.createDiv({ cls: 'vinyl-flip-face is-deck' });
     const crateFace = flipInner.createDiv({ cls: 'vinyl-flip-face is-crate' });
+    // 歌词面（向左转的那一面）：与唱片区同一套「绝对定位填满 + 反向缩放」，见 styles.css
+    const lyricsFace = flipInner.createDiv({ cls: 'vinyl-flip-face is-lyrics' });
+    this.buildLyricsFace(lyricsFace);
 
     // 卡②：唱机（设计稿：横向长方形唱机）。配色见 .vinyl-deck 与 .is-deck-*（四套面板配色）
     const deck = deckFace.createDiv({ cls: 'vinyl-deck' });
@@ -627,6 +738,14 @@ export class VinylPlayerView extends ItemView {
       cls: 'vinyl-range-input vinyl-seek-input',
     });
     const timeEl = progress.createSpan({ text: '–:– / –:–', cls: 'vinyl-readout' });
+    // 载入 / 缓冲：换曲取址与「元素在等字节」是两段不同的等待，都在这枚状态位上报出来。
+    // role=status：读屏也要能知道「在等」而不是「死了」——它是这一行里唯一的异步状态。
+    const bufferingEl = progress.createSpan({ cls: 'vinyl-buffering', attr: { role: 'status' } });
+    // 切语言：状态位上的文案也得跟着换。写文本归 update（它按 lastWaitKind 判重），
+    // 这里只把那份缓存作废，下一次 update 就会用新语言重写一遍 —— 与抬头三行同一套做法。
+    this.bindLabel(() => {
+      this.lastWaitKind = '';
+    });
     this.bindLabel(() => progressSlider.setAttribute('aria-label', t('player.seek')));
     const seekable = () => (this.lastSnapshot?.duration || 0) > 0;
     // 拖动只挪画面与读数（点 / 填充 / 时间立刻跟手），抬手才真正 seek：拖动中反复 seek 会让
@@ -709,17 +828,29 @@ export class VinylPlayerView extends ItemView {
     // 键盘（Tab + 方向键）仍走原生 range 的 input —— 指针已经被 pointer-events: none 让开
     volSlider.addEventListener('input', () => applyVolume(Number(volSlider.value) / 100));
 
-    // Vinyl order 行：标题 + 当前专辑名（设计稿：专辑名跟在那一栏的最后）。
-    // 清空队列 / 恢复发行顺序两个按键及其功能已按设计稿删除；「写点什么吧」移到每个专辑名行里（见 renderQueue）。
+    // Vinyl order 行：左边标题，右边两个图标钮（保存队列 / 定位到正在播的那首）。
+    // 专辑名不在这儿（用户 2026-09-25 定稿）：一行的宽度留给按钮，标题也不再被挤到换行 ——
+    // 当前是哪张专辑，队列里每个专辑的段头写着（见 renderQueue）。
+    // 清空队列 / 恢复发行顺序两个按键及其功能已按设计稿删除；「写点什么吧」移到每个专辑名行里。
     const orderRow = board.createDiv({ cls: 'vinyl-order-row' });
     const queueTitle = orderRow.createDiv({ cls: 'vinyl-queue-title' });
     const saveQueue = orderRow.createEl('button', { cls: 'clickable-icon vinyl-queue-save' });
     setIcon(saveQueue, 'save');
     this.bindLabel(() => saveQueue.setAttribute('aria-label', t('queueNote.save')));
     saveQueue.addEventListener('click', () => void this.plugin.saveQueueNote());
-    const orderAlbum = orderRow.createDiv({ cls: 'vinyl-order-album vinyl-marquee' });
-    const orderAlbumText = orderAlbum.createSpan({ cls: 'vinyl-marquee-text' });
-    this.orderAlbumText = orderAlbumText;
+    // 载入：此前只有命令面板入口（保存有按钮、载入没有 —— 审计点名的半成品）。
+    // 两者是同一条闭环的两端，摆在一起才不会让人以为「存了就回不来」
+    const loadQueue = orderRow.createEl('button', { cls: 'clickable-icon vinyl-queue-load' });
+    setIcon(loadQueue, 'folder-open');
+    this.bindLabel(() => loadQueue.setAttribute('aria-label', t('queueNote.load')));
+    loadQueue.addEventListener('click', () => void this.plugin.loadQueueFromActiveNote());
+    // 定位到正在播的那首：队列长了之后把它滚回视野。跟随播放只在「原本还看得见」时进行，
+    // 所以自己翻远之后要有这条回程（见 update 里的 locate 段）。
+    const locateBtn = orderRow.createEl('button', { cls: 'clickable-icon vinyl-queue-locate' });
+    setIcon(locateBtn, 'locate-fixed');
+    this.locateBtn = locateBtn;
+    this.bindLabel(() => locateBtn.setAttribute('aria-label', t('player.locateCurrent')));
+    locateBtn.addEventListener('click', () => this.locateCurrentRow());
 
     const queueBox = board.createDiv({ cls: 'vinyl-queue' });
     // 队列点击委托（重建不丢监听）。拖拽与点击共存：拖拽中 / 拖拽刚收尾的 click 一律不当切歌，
@@ -748,15 +879,29 @@ export class VinylPlayerView extends ItemView {
       if (!Number.isInteger(idx)) return;
       if (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Spacebar') {
         ev.preventDefault();
+        // 别漏给全局快捷键：用户若把 Enter / 空格绑到了别的命令上，会在这里双触发
+        ev.stopPropagation();
         void this.plugin.engine.playIndex(idx);
         return;
       }
       if (ev.altKey && (ev.key === 'ArrowUp' || ev.key === 'ArrowDown')) {
         ev.preventDefault();
+        ev.stopPropagation();
         const to = ev.key === 'ArrowUp' ? idx - 1 : idx + 1;
         if (to < 0 || to >= this.queueRows.length) return;
         this.plugin.engine.moveTrack(idx, to);
         window.setTimeout(() => this.queueRows[to]?.focus(), 0);
+        return;
+      }
+      // Delete / Backspace = 移除这一行（移除钮的键盘等价）。行没了，焦点挪到同位置那一行上 ——
+      // 否则焦点掉回 body，连删几首就得每次重新 Tab 进来。
+      if (ev.key === 'Delete' || ev.key === 'Backspace') {
+        ev.preventDefault();
+        this.plugin.engine.removeRange(idx, 1);
+        window.setTimeout(() => {
+          const i = Math.min(idx, this.queueRows.length - 1);
+          this.queueRows[i]?.focus();
+        }, 0);
       }
     });
 
@@ -774,6 +919,7 @@ export class VinylPlayerView extends ItemView {
       turntable,
       flip,
       flipInner,
+      lyricsBtn,
       pickBtn,
       queueModeBtn,
       playModeBtn,
@@ -785,11 +931,11 @@ export class VinylPlayerView extends ItemView {
       progressSlider,
       progressRail,
       timeEl,
+      bufferingEl,
       deckPlayBtn,
       volSlider,
       volSegments,
       queueTitle,
-      orderAlbum,
       queueBox,
     };
     // 唱片区先只留个空面：懒建（第一次翻过去才扫专辑，打开播放器不必为它扫全库）
@@ -801,7 +947,7 @@ export class VinylPlayerView extends ItemView {
   // ============ 立方体两面（页面 1 / 页面 2）============
 
   /** 翻转区翻面：左转 = rotateY(-90deg)（只有②③卡片这一区转，两面跟着转；减小动效时直接到位） */
-  private flipTo(face: 'player' | 'picker') {
+  private flipTo(face: 'player' | 'picker' | 'lyrics') {
     const els = this.els;
     if (!els || this.face === face) return;
     this.face = face;
@@ -820,8 +966,21 @@ export class VinylPlayerView extends ItemView {
     }
     if (face === 'picker') this.picker?.render(); // 每次翻过去都重扫一遍专辑（刚导入的立刻能看到）
     els.flip.toggleClass('is-crate', face === 'picker');
+    els.flip.toggleClass('is-lyrics', face === 'lyrics');
     els.flip.toggleClass('is-reduced', prefersReducedMotion());
     els.pickBtn.toggleClass('is-active', face === 'picker');
+    els.lyricsBtn.toggleClass('is-active', face === 'lyrics');
+    // 焦点跟着翻面走：翻过去之后，原来那些元素在背面（还在 DOM 里，但看不见）——
+    // 焦点留在那里时 Enter 会对一个看不见的东西生效，读屏也还在读旧的一面。
+    // 只在「焦点确实落在翻转区里」时搬，免得把用户点按钮后留在按钮上的焦点抢走。
+    this.moveFocusAcrossFlip(face);
+    // 歌词面：翻过去才量行位置（那一面翻上来之前 clientHeight 是 0，量出来全是 0）；
+    // 没在播时循环不跑，翻过去也要摆一次位置（停在当前那句上）
+    if (face === 'lyrics') {
+      this.measureLyrics();
+      this.syncLyricsState(this.lastSnapshot);
+      this.syncLyricsScroll();
+    }
     // 预载只服务唱机面：翻走了就撤表（翻回来重挂，等待时间从这一刻算起）
     if (face === 'player' && this.lastSnapshot) this.armScratchPreload(this.lastSnapshot);
     else this.disarmScratchPreload();
@@ -829,11 +988,36 @@ export class VinylPlayerView extends ItemView {
     els.turntable.toggleClass('is-scratchable', this.canScratch());
   }
 
-  /** 键盘：在唱片区按 Esc 回播放器（焦点不在唱片箱里时也管用 —— 箱内由唱片区自己处理并阻止冒泡）。 */
+  /** 翻面时把焦点搬到新那一面的第一个可操作元素上（见 flipTo 的调用点）。
+   *  搬完要等一轮：唱片区是翻过去那一刻才建的，背面的行位置也要等布局落定。 */
+  private moveFocusAcrossFlip(face: 'player' | 'picker' | 'lyrics'): void {
+    const els = this.els;
+    if (!els) return;
+    // 独立窗口 / 弹窗里的 ownerDocument 才是对的那一份（同 syncVisibility 的口径）；
+    // 极简依赖的测试里没有 containerEl，回落到全局 document
+    const doc = this.containerEl?.ownerDocument ?? document;
+    const active = doc.activeElement;
+    if (!active || !els.flip.contains(active)) return; // 焦点本来就在别处（顶部按键 / 队列）：不动
+    // 上一次搬家还没落地就再翻一次：撤掉旧的（否则两个定时器抢焦点，落到哪一面看运气）
+    if (this.flipFocusTimer) window.clearTimeout(this.flipFocusTimer);
+    this.flipFocusTimer = window.setTimeout(() => {
+      this.flipFocusTimer = null;
+      const target =
+        face === 'picker'
+          ? this.pickerFace?.querySelector<HTMLElement>('.vinyl-pick') ?? null
+          : face === 'lyrics'
+            ? this.lyricsLineEls[0] ?? null
+            : els.deckPlayBtn;
+      // 还在同一面才搬（这一轮里用户可能又翻回去了）
+      if (target && this.face === face) target.focus();
+    }, 0);
+  }
+
+  /** 键盘：在唱片区 / 歌词页按 Esc 回播放器（焦点不在唱片箱里时也管用 —— 箱内由唱片区自己处理并阻止冒泡）。 */
   private onEscape(ev: KeyboardEvent) {
-    if (ev.key !== 'Escape' || this.face !== 'picker') return;
+    if (ev.key !== 'Escape' || this.face === 'player') return;
     ev.preventDefault();
-    if (this.picker?.hasSelection()) {
+    if (this.face === 'picker' && this.picker?.hasSelection()) {
       this.picker.clearSelection(); // 有选中先清空，再按一次才回去
       return;
     }
@@ -900,6 +1084,8 @@ export class VinylPlayerView extends ItemView {
   private update(s: PlayerSnapshot) {
     const els = this.ensureShell();
     this.lastSnapshot = s;
+    // 歌词页（可能没翻到那一面）：抬头三行、换歌作废、循环开关都从这里收口
+    this.syncLyricsState(s);
 
     // 手势期间的意外换曲（媒体键 / 清空队列 / 移除整段）：这次手势作废，
     // 别把位置写到新曲目上（引擎那边已经自行收掉了搓碟会话）。
@@ -944,19 +1130,26 @@ export class VinylPlayerView extends ItemView {
       setIcon(els.playModeBtn, PLAY_MODE_ICON[s.playMode]);
       els.playModeBtn.toggleClass('is-active', s.playMode !== 'once');
     }
-    this.queueRows.forEach((row, i) => row.classList.toggle('is-current', i === s.index));
+    // 正在播的那一行：既给视觉（is-current），也给读屏（aria-current）——
+    // 只有类名的话，读屏用户翻队列时不知道现在放到哪儿了
+    this.queueRows.forEach((row, i) => {
+      row.classList.toggle('is-current', i === s.index);
+      row.setAttribute('aria-current', i === s.index ? 'true' : 'false');
+    });
 
-    // 转盘状态（旋转动画只切 class，不重建节点）
-    const spinning = s.status === 'playing';
-    els.vinyl.classList.toggle('is-spinning', spinning);
-    // 刚转入播放：重算一次可见性，清掉可能残留的 is-hidden（否则动画停在 paused，转不动）；
-    // 旋转动画此刻会重建，顺手清掉上次搓碟交还时留下的负延迟（相位对不上了）
-    if (spinning && !this.lastSpinning) {
-      this.syncVisibility();
-      els.vinyl.style.removeProperty('animation-delay');
+    // 定位正在播的那首：打开时定位一次；之后跟随播放走，但只在「上一条还看得见」时才跟 ——
+    // 自己往上翻看队列了就别把人拽回来（翻远了点 Vinyl order 上的定位钮回来）。
+    const wasVisible = this.currentRowVisible();
+    const indexChanged = s.index !== this.lastIndex;
+    this.lastIndex = s.index;
+    if (this.locateBtn) this.locateBtn.disabled = s.index < 0;
+    if (s.index >= 0 && (this.pendingLocate || (indexChanged && wasVisible))) {
+      this.pendingLocate = false;
+      this.locateCurrentRow();
     }
-    this.lastSpinning = spinning;
-    els.vinyl.classList.toggle('is-paused', s.status === 'paused');
+
+    // 转盘状态（旋转动画只切 class，不重建节点）：三种归属都在 syncTurntable 里切换
+    this.syncTurntable(s);
     els.vinyl.classList.toggle('is-empty', !s.queue.length);
 
     // 唱片中心封面：库内封面 → 曲目远程封面 → 备用图床（见 coverChain）。
@@ -994,6 +1187,18 @@ export class VinylPlayerView extends ItemView {
       els.timeEl.textContent = timeText;
     }
 
+    // 载入 / 缓冲状态位。两段等待是两件事：loading = 换曲后正在取址（还没有可播的 src），
+    // buffering = 已经有 src 但元素在等字节。文本只在状态翻转时写 —— update 每 400ms 一条，
+    // 反复写同一个字符串会让读屏把这句话一遍遍重播。
+    const waitKind: 'loading' | 'buffering' | '' =
+      s.status === 'loading' ? 'loading' : s.buffering ? 'buffering' : '';
+    if (waitKind !== this.lastWaitKind) {
+      this.lastWaitKind = waitKind;
+      els.bufferingEl.textContent =
+        waitKind === 'loading' ? t('player.loading') : waitKind === 'buffering' ? t('player.buffering') : '';
+      els.bufferingEl.toggleClass('is-on', waitKind !== '');
+    }
+
     // 唱臂姿态（设计稿）：未播放专辑 / 暂停 = 姿态 1（归位支架）；
     // 播放专辑 = 姿态 2（落针），且唱针到唱片圆心的「距离」= 专辑进度（换算见 core/arm-geometry）。
     // loading（换曲取址的间隙）保持落针，避免唱臂在换曲时来回摆。
@@ -1005,14 +1210,6 @@ export class VinylPlayerView extends ItemView {
         els.arm.toggleClass('is-parked', posture === 'park');
       }
       this.writeArm(posture === 'park' ? ARM_PARK_ANGLE : this.armAngleFor(s, s.currentTime));
-    }
-
-    // Vinyl order 行末尾的当前专辑名（设计稿：「专辑名」在那一栏最后；空队列不占位）
-    const orderAlbum = s.albumTitle || '';
-    if (orderAlbum !== this.lastOrderAlbum) {
-      this.lastOrderAlbum = orderAlbum;
-      if (this.orderAlbumText) this.orderAlbumText.textContent = orderAlbum;
-      els.orderAlbum.toggleClass('vinyl-hidden', !orderAlbum);
     }
 
     // 播放键的点亮状态（状态变化才写）：唱机左下角那一枚长方形键，键面是「Vinyl」字标，
@@ -1056,6 +1253,331 @@ export class VinylPlayerView extends ItemView {
     els.labelEmpty.addClass('vinyl-hidden');
   }
 
+  /** 正在播的那一行此刻在不在队列的视野里（跟随播放的判据：切歌前还看得见才跟） */
+  private currentRowVisible(): boolean {
+    const row = this.queueRows[this.lastIndex];
+    const box = this.els?.queueBox;
+    if (!row || !box) return true; // 判不了就当可见：保持旧行为（跟随）
+    const r = row.getBoundingClientRect();
+    const b = box.getBoundingClientRect();
+    return r.bottom > b.top && r.top < b.bottom;
+  }
+
+  /** 把正在播的那首滚进视野：block:'nearest' —— 已经在视野里就一点都不动
+   *  （不打断正在看队列的人）；减少动效时不做平滑滚动。 */
+  private locateCurrentRow(): void {
+    const row = this.queueRows[this.lastIndex];
+    if (!row) return;
+    row.scrollIntoView({ block: 'nearest', behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
+  }
+
+  // ============ 歌词页（向左转的那一面）============
+  // 版式：抬头两行（曲名 / 歌手 · 专辑）+ 剩下全部给歌词滚动区。
+  // 滚动是**连续**的（用户按参考效果定的）：位置由 core/lyrics 的 scrollPlan 按时间轴给出 ——
+  // 两行之间的全部时间都在从「当前行居中」走向「下一行居中」，没有静止期。这里只负责把计划
+  // 变成像素：量一次每行的 offsetTop（改尺寸才重量），每帧插值写 scrollTop。
+  // 景深：每行按离当前行的距离渐淡 + 略小（--vinyl-lyric-d，换行时写一次）。
+  // 参考的几家做法：聚焦行放大提亮 + 容器上下渐隐（Apple Music）、行内卡拉OK式填充
+  // （逐字做不到：网易云 / QQ 给的是行级 LRC，没有字级时间戳）、手动滚动接管 + 停手后跟回。
+
+  private buildLyricsFace(host: HTMLElement) {
+    const head = host.createDiv({ cls: 'vinyl-lyrics-head' });
+    this.lyricsTitleEl = head.createDiv({ cls: 'vinyl-lyrics-title' });
+    this.lyricsSubEl = head.createDiv({ cls: 'vinyl-lyrics-sub' });
+    const scroll = host.createDiv({ cls: 'vinyl-lyrics-scroll' });
+    this.lyricsScrollEl = scroll;
+    this.lyricsLinesEl = scroll.createDiv({ cls: 'vinyl-lyrics-lines' });
+    this.lyricsEmptyEl = scroll.createDiv({ cls: 'vinyl-lyrics-empty' });
+    this.bindLabel(() => {
+      this.lyricsHeadSig = ''; // 切语言：抬头三行要按新语言重写（签名拦着的话会留着旧语言）
+      this.writeLyricsHead(this.lastSnapshot);
+      this.syncLyricsEmpty();
+    });
+    // 手动滚动 = 先别跟着走（否则刚翻上去就被拽回来）；点某一行 = 跳到那句并恢复跟随
+    scroll.addEventListener('wheel', () => this.pauseLyricsFollow(), { passive: true });
+    scroll.addEventListener('pointerdown', () => this.pauseLyricsFollow());
+    scroll.addEventListener(
+      'scroll',
+      () => {
+        // 我们自己写 scrollTop 引发的事件不算用户意图（不然一直在「暂停跟随」）。
+        // 连续滚动下我们每帧都在写，所以不能按时间设护栏（护栏永远是新刷的，会把用户滚动一起吞掉）——
+        // 改比值：事件发生时的位置就是我们上次写下的那个，才说明这次是我们自己写的。
+        if (Math.abs(scroll.scrollTop - this.lyricsWrittenTop) < 1) return;
+        this.pauseLyricsFollow();
+        // 暂停时不再逐帧跑：这里补一帧，视觉中心才能跟着手走（暂停中滚动也会亮到对应的那一句）
+        this.syncLyricsScroll();
+      },
+      { passive: true }
+    );
+  }
+
+  /** 抬头两行永远跟着当前曲目走（有没有歌词都要显示「现在在放什么」）。
+   *  第二行 = `歌手 · 专辑`：两段都是可缺的（本地曲目常常没有艺人，线上曲目偶尔没有专辑名），
+   *  空的那段连分隔符一起省掉 —— 只剩一段时不出现孤零零的「·」。 */
+  private writeLyricsHead(s: PlayerSnapshot | null) {
+    const track = s?.current;
+    const album = track?.album || s?.albumTitle || '';
+    const artist = track?.artist || '';
+    // 值不变不写 DOM：update 每 400ms 来一次，抬头两行大部分时候是同一个值
+    // （与旧版「Vinyl order 行末尾的专辑名」同一个口径）
+    // 用 JSON 而不是拼接：标题里有分隔符也不会串味
+    const sig = JSON.stringify([track?.title ?? '', artist, album]);
+    if (sig === this.lyricsHeadSig) return;
+    this.lyricsHeadSig = sig;
+    const headTitle = track?.title || t('lyrics.idle');
+    const headSub = [artist, album].filter(Boolean).join(' · ');
+    this.lyricsTitleEl?.setText(headTitle);
+    this.lyricsSubEl?.setText(headSub);
+  }
+
+  /** 换歌就整块作废重来；人在歌词页且还没取过 → 去取。暂停 / 翻走停循环，暂停时也摆一次位置。 */
+  private syncLyricsState(s: PlayerSnapshot | null) {
+    const track = s?.current ?? null;
+    const key = track ? trackKey(track) : '';
+    // 本地音轨的空态多一句出路（旁挂 .lrc）：文案按它分流，见 syncLyricsEmpty
+    this.lyricsLocal = !!track && isLocalTrack(track);
+    if (key !== this.lyricsForKey) {
+      this.lyricsForKey = key;
+      this.lyrics = null;
+      this.lyricsState = 'idle';
+      this.lyricsFocus = -2; // 还没画过：换歌后第一帧要把景深重写一遍
+      this.lyricsPlaying = -2;
+      this.lyricsFill = -1;
+      this.lyricsFollow = true; // 换歌：跟上
+      this.renderLyricsLines();
+    }
+    this.writeLyricsHead(s);
+    if (this.face === 'lyrics' && track && this.lyricsState === 'idle') {
+      void this.loadLyricsFor(track, key);
+    }
+    this.syncLyricsEmpty();
+    // 回位动画也要帧：暂停时用户滚走再停手，那一段平滑回位同样得有人逐帧推
+    //（不然它停在半路，而且 lyricsReturn 不清空 → 视觉中心会一直跟着手走）
+    const returning = this.lyricsReturn !== null;
+    if (this.face === 'lyrics' && this.lyrics?.length && (s?.status === 'playing' || returning)) {
+      this.startLyricsLoop();
+    } else {
+      this.stopLyricsLoop();
+      if (this.face === 'lyrics') this.syncLyricsScroll(); // 暂停 / 拖进度条后也要摆到正确那句
+    }
+  }
+
+  private async loadLyricsFor(track: Track, key: string) {
+    this.lyricsState = 'loading';
+    this.syncLyricsEmpty();
+    const gen = ++this.lyricsReq;
+    // 极简依赖的测试里没有 loadLyrics：拿不到就当「没有歌词」
+    const lines = (await this.plugin.loadLyrics?.(track)) ?? null;
+    if (gen !== this.lyricsReq || this.lyricsForKey !== key) return; // 期间切歌了：这份作废
+    this.lyrics = lines;
+    this.lyricsState = 'ready';
+    this.renderLyricsLines();
+    this.measureLyrics();
+    this.syncLyricsEmpty();
+    this.syncLyricsScroll();
+  }
+
+  private renderLyricsLines() {
+    const host = this.lyricsLinesEl;
+    if (!host) return;
+    host.empty();
+    this.lyricsLineEls = [];
+    this.lyricsLabelEls = []; // 行没了，逐行的标签动作也一起作废（否则每次重建都往表里堆一批）
+    this.lyricsOffsets = [];
+    this.lyricsFocus = -2; // 还没画过：重建行之后第一帧要把景深重写一遍
+    this.lyricsPlaying = -2;
+    this.lyricsFill = -1;
+    const lines = this.lyrics ?? [];
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const el = host.createDiv({ cls: 'vinyl-lyric-line' });
+      if (!line.text) el.addClass('is-interlude'); // 间奏：一行音符，不做填充
+      el.tabIndex = 0;
+      el.setAttribute('role', 'button');
+      this.bindLyricLineLabel(el, line);
+      el.createDiv({ cls: 'vinyl-lyric-text', text: line.text || '♪' });
+      if (line.trans) el.createDiv({ cls: 'vinyl-lyric-trans', text: line.trans });
+      el.addEventListener('click', () => this.seekToLyric(i));
+      el.addEventListener('keydown', (ev) => {
+        if (ev.key !== 'Enter' && ev.key !== ' ') return;
+        ev.preventDefault(); // 空格别把面板滚走
+        this.seekToLyric(i);
+      });
+      this.lyricsLineEls.push(el);
+    }
+  }
+
+  /** 行的可读名称：切语言时也要跟着换（与队列行同一套做法）。
+   *  登记进 lyricsLabelEls 而不是 labelEls —— 后者是建壳那张一次性的表，见该字段的注释。 */
+  private bindLyricLineLabel(el: HTMLElement, line: LyricLine) {
+    const apply = () =>
+      el.setAttribute('aria-label', tf('lyrics.seekLine', { text: line.text || t('lyrics.interlude') }));
+    this.lyricsLabelEls.push(apply);
+    apply();
+  }
+
+  /** 量一次行位置 + 上下留白。上下各留半个容器高：第一行与最后一行也能滚到正中。
+   *  只在重建 / 改尺寸时量 —— 每帧量 offsetTop 会强制布局，滚动就不丝滑了。 */
+  private measureLyrics() {
+    const scroll = this.lyricsScrollEl;
+    if (!scroll || !this.lyricsLineEls.length) return;
+    const pad = Math.max(16, Math.round(scroll.clientHeight / 2 - 20));
+    scroll.style.setProperty('--vinyl-lyric-pad', `${pad}px`);
+    // 读 offsetTop 会强制布局：上面刚改完留白，这里量到的就是改完之后的位置
+    this.lyricsOffsets = this.lyricsLineEls.map((el) => el.offsetTop + el.offsetHeight / 2);
+  }
+
+  /** 一帧：两套参考系各画各的（换行了才改类与档位，填充每帧只写一个变量）——
+   *   · is-playing（**时间**说了算）：正在被唱的那一句，卡拉OK填充挂在它身上 ——
+   *     用户翻到别的段落时，也能一眼找回播放到哪了；
+   *   · is-active / 景深（**位置**说了算）：视觉中心那一句。自动跟随时就是正在唱的那句，
+   *     用户自己滚了之后是画面正中那一句 —— 滚到哪，哪一句亮。 */
+  private paintLyrics(playing: number, focus: number, ms: number) {
+    const playingMoved = playing !== this.lyricsPlaying;
+    const focusMoved = focus !== this.lyricsFocus;
+    if (playingMoved) {
+      this.lyricsLineEls[this.lyricsPlaying]?.removeClass('is-playing');
+      this.lyricsLineEls[playing]?.addClass('is-playing');
+      this.lyricsPlaying = playing;
+      this.lyricsFill = -1; // 换行：填充重新算
+    }
+    if (focusMoved) {
+      this.lyricsLineEls[this.lyricsFocus]?.removeClass('is-active');
+      this.lyricsLineEls[focus]?.addClass('is-active');
+      this.lyricsFocus = focus;
+    }
+    // 逐行刷（都是行号之差、帧间不变，所以只在换了行 / 换了中心时才写一次）：
+    //   is-past：唱过的压暗一档 —— 按**时间**算，用户翻去别的段落时歌还在走，也要跟着刷
+    //   --vinyl-lyric-d：离视觉中心多远 —— 按**位置**算，CSS 拿它算渐淡 / 略小（见 core/lyrics 的 lineDepth）
+    if (playingMoved || focusMoved) {
+      for (let i = 0; i < this.lyricsLineEls.length; i++) {
+        this.lyricsLineEls[i].toggleClass('is-past', i < playing);
+        if (focusMoved) this.lyricsLineEls[i].style.setProperty('--vinyl-lyric-d', String(lineDepth(i, focus)));
+      }
+    }
+    const el = this.lyricsLineEls[playing];
+    if (!el) return;
+    const p = Math.round(lineProgress(this.lyrics ?? [], playing, ms) * 1000) / 1000;
+    if (p !== this.lyricsFill) {
+      this.lyricsFill = p;
+      el.style.setProperty('--vinyl-lyric-fill', String(p));
+    }
+  }
+
+  /** 一帧：把滚动计划（从哪一行 → 哪一行、进度）变成滚动像素；高亮与景深按视觉中心画 */
+  private syncLyricsScroll() {
+    const lines = this.lyrics;
+    const scroll = this.lyricsScrollEl;
+    if (!lines?.length || !scroll || !this.lyricsLineEls.length) return;
+    const ms = this.lyricsTimeMs();
+    const playing = activeLineIndex(lines, ms);
+    if (this.lyricsFollow) {
+      const plan = scrollPlan(lines, ms);
+      const from = this.lyricsOffsets[plan.from] ?? 0;
+      const to = this.lyricsOffsets[plan.to] ?? from;
+      // 先夹到合法范围再比：列表头尾那几行算出来的目标是负的 / 超出的，不夹的话
+      // 每一帧都在「写 0 → 读回 0 → 再写 0」（白写一次 scrollTop，还多发一个 scroll 事件）
+      const target = Math.max(0, from + (to - from) * plan.progress - scroll.clientHeight / 2);
+      this.writeFollowTop(target);
+    }
+    // 视觉中心在**写完位置之后**才定：这一帧真正停在哪，就以哪为中心。
+    // （顺序反了的话，回位收尾那一帧会按上一帧的旧位置算中心，高亮闪一下。）
+    const center = centerLineIndex(this.lyricsOffsets, scroll.scrollTop, scroll.clientHeight);
+    const browsing = !this.lyricsFollow || this.lyricsReturn !== null;
+    const focus = browsing && center >= 0 ? center : playing;
+    this.paintLyrics(playing, focus, ms);
+  }
+
+  /** 跟随位置：平时直接写；回位期间按缓动从「用户停下的地方」滑回正在唱的那一句。
+   *  目标每帧现算是为了接得上连续滚动 —— 缓动只是把起点拉回来，直到走完这一段。 */
+  private writeFollowTop(target: number) {
+    const scroll = this.lyricsScrollEl;
+    if (!scroll) return;
+    const ret = this.lyricsReturn;
+    if (!ret) {
+      if (Math.abs(target - scroll.scrollTop) > 0.5) this.setLyricsScrollTop(target);
+      return;
+    }
+    const p = (Date.now() - ret.start) / LYRIC_RETURN_MS;
+    this.setLyricsScrollTop(ret.from + (target - ret.from) * easeInOutCubic(p));
+    if (p >= 1) this.lyricsReturn = null; // 到位：之后交回普通的跟随写入
+  }
+
+  private startLyricsLoop() {
+    if (this.lyricsRaf) return;
+    const tick = () => {
+      this.lyricsRaf = window.requestAnimationFrame(tick);
+      this.syncLyricsScroll();
+    };
+    this.lyricsRaf = window.requestAnimationFrame(tick);
+  }
+
+  private stopLyricsLoop() {
+    if (this.lyricsRaf) window.cancelAnimationFrame(this.lyricsRaf);
+    this.lyricsRaf = 0;
+  }
+
+  /** 播放位置（毫秒）：优先问引擎要实时读数 —— 快照是 400ms 节流过的，撑不起逐帧滚动。
+   *  引擎缺失（极简依赖的测试）退回最近一次快照。 */
+  private lyricsTimeMs(): number {
+    const live = this.plugin.engine?.liveSeconds?.();
+    const sec =
+      typeof live === 'number' && Number.isFinite(live) ? live : this.lastSnapshot?.currentTime ?? 0;
+    return sec * 1000;
+  }
+
+  private setLyricsScrollTop(y: number) {
+    const el = this.lyricsScrollEl;
+    if (!el) return;
+    const next = Math.max(0, y);
+    // 记下写进去的位置：这次引发的 scroll 事件不算用户手动滚动（见 buildLyricsFace 的 scroll 监听）
+    this.lyricsWrittenTop = next;
+    el.scrollTop = next;
+  }
+
+  /** 用户手动滚了：视觉中心交给滚动位置（滚到哪哪句亮），自动跟随先停；
+   *  停手 4 秒后平滑滑回正在唱的那一句（跟丢最烦人，但正在看的时候也不能被拽走）。 */
+  private pauseLyricsFollow() {
+    this.lyricsFollow = false;
+    this.lyricsReturn = null; // 用户的手胜过回位动画
+    if (this.lyricsResumeTimer) window.clearTimeout(this.lyricsResumeTimer);
+    this.lyricsResumeTimer = window.setTimeout(() => {
+      this.lyricsResumeTimer = null;
+      this.lyricsFollow = true;
+      // 减少动效：直接回位（不滑）——与别的动效口径一致
+      this.lyricsReturn = prefersReducedMotion() ? null : { from: this.lyricsScrollEl?.scrollTop ?? 0, start: Date.now() };
+      this.syncLyricsScroll();
+    }, 4000);
+  }
+
+  /** 点某一行 = 跳到那一句，并立刻恢复跟随 */
+  private seekToLyric(i: number) {
+    const line = this.lyrics?.[i];
+    if (!line) return;
+    this.plugin.engine?.seekTo?.(line.at / 1000);
+    this.lyricsFollow = true;
+    if (this.lyricsResumeTimer) window.clearTimeout(this.lyricsResumeTimer);
+    this.lyricsResumeTimer = null;
+    // 从当前位置滑到点到的那一句（与回位同一条动画），减少动效时直接到位
+    this.lyricsReturn = prefersReducedMotion() ? null : { from: this.lyricsScrollEl?.scrollTop ?? 0, start: Date.now() };
+    this.syncLyricsScroll();
+  }
+
+  private syncLyricsEmpty() {
+    const el = this.lyricsEmptyEl;
+    if (!el) return;
+    const hasLines = !!this.lyrics?.length;
+    el.toggleClass('vinyl-hidden', hasLines);
+    if (hasLines) return;
+    el.setText(
+      this.lyricsState === 'loading'
+        ? t('lyrics.loading')
+        : this.lyricsForKey
+          ? t(this.lyricsLocal ? 'lyrics.emptyLocal' : 'lyrics.empty')
+          : t('lyrics.idle')
+    );
+  }
+
   private rebuildQueue(els: PlayerEls, s: PlayerSnapshot) {
     // 「Vinyl order」是丝印品牌式的固定英文标签（与唱机键上的手写体字标同款）：中英同形，
     // 建 i18n 键会撞上「中英不得逐字相同」的词典测试，故保持硬编码。
@@ -1077,6 +1599,7 @@ export class VinylPlayerView extends ItemView {
     this.queueRows = [];
     this.queueBadges = [];
     this.queueIdxs = [];
+    this.queueRemoves = [];
     this.emptyQueueEl = null;
     this.segmentEls = [];
     this.segmentBtns = [];
@@ -1141,21 +1664,45 @@ export class VinylPlayerView extends ItemView {
             attr: { 'aria-label': t('player.dragToReorder') },
           })
         );
+        // 长曲名会省略号截断：读屏走行的 aria-label（含完整曲名）。
+        // 不给 title —— 提示一律走 aria-label（1.0.19 的双气泡教训，见 i18n.test.cjs 的源码防护）
         row.createSpan({ text: track.title, cls: 'vinyl-q-title' });
         const badge = row.createSpan({
           text: trackSourceLabel(track),
           cls: 'vinyl-badge ' + trackSourceClass(track),
         });
+        // 试听片段（会员曲目匿名取流只给一段）：角标说明白，别让用户以为「怎么放到一半没了」。
+        // 引擎侧开播时还会提示一次（见 player-state 的 trialNoticed）—— 角标是常驻的那份
+        if (isTrialTrack(track)) {
+          row.createSpan({ text: t('player.trialBadge'), cls: 'vinyl-badge is-trial' });
+        }
         row.createSpan({
           text: track.duration ? fmtTime(track.duration) : '–:–',
           cls: 'vinyl-muted',
         });
+        // 单曲移除：设计稿把「清空队列」拿掉了（退出队列模式自然收敛），
+        // 但一行一行地去掉排错的那首是日常动作 —— 挂在这一行自己的尾巴上。
+        // Delete / Backspace 是它的键盘等价（见 queueBox 的 keydown）。
+        const remove = row.createEl('button', { cls: 'clickable-icon vinyl-queue-remove' });
+        setIcon(remove, 'x');
+        remove.addEventListener('click', (ev) => {
+          ev.stopPropagation(); // 别让队列的点击委托把它当成「切到这首」
+          this.plugin.engine.removeRange(i, 1);
+        });
+        remove.addEventListener('pointerdown', (ev) => ev.stopPropagation()); // 行可拖拽：别从按钮上起拖
+        this.queueRemoves.push({ btn: remove, title: track.title });
         this.queueRows.push(row);
         this.queueBadges.push(badge);
       }
       if (flashLast && seg === s.segments[s.segments.length - 1]) {
         segEl.addClass('is-just-added');
-        window.setTimeout(() => segEl.removeClass('is-just-added'), 1200);
+        // 记下来并登记：这一行可能在 1.2 秒内被整块重建（换专辑 / 移除整段），
+        // 那时旧节点已经摘除 —— 不清理的话这个定时器会攥着它（也攥着它的订阅）
+        const flash = window.setTimeout(() => {
+          segEl.removeClass('is-just-added');
+          this.segmentFlashTimers.delete(flash);
+        }, 1200);
+        this.segmentFlashTimers.add(flash);
       }
     }
     this.applyQueueLabels(); // 行拖拽提示 / 来源角标统一在这里按当前语言写（切语言时由 applyLanguage 重放）
@@ -1176,9 +1723,31 @@ export class VinylPlayerView extends ItemView {
     return btn;
   }
 
-  /** 整段拖拽（跨专辑排序）：只认段头作落点，段内单曲拖拽仍走 bindQueueDrag */
+  /** 整段拖拽（跨专辑排序）：只认段头作落点，段内单曲拖拽仍走 bindQueueDrag。
+   *  段头同时是这条动作的键盘入口（Alt+↑/↓）：拖拽能做的事，键盘要有等价的一条。 */
   private bindSegmentDrag(head: HTMLElement, seg: { start: number; count: number }) {
     head.setAttribute('draggable', 'true');
+    // 可聚焦才有人能「站」在这一段上按键；aria-label（拖拽调整专辑顺序）本来挂在段头上，
+    // 但此前段头不可聚焦，读屏永远读不到它
+    head.tabIndex = 0;
+    head.setAttribute('role', 'button');
+    head.addEventListener('keydown', (ev) => {
+      if (!ev.altKey || (ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown')) return;
+      ev.preventDefault();
+      // 别漏给全局快捷键：命令层那两个整段命令的默认键也是 Alt+Shift+↑/↓
+      ev.stopPropagation();
+      const delta = ev.key === 'ArrowUp' ? -1 : 1;
+      const from = this.segmentEls.findIndex((x) => x.head === head);
+      if (from < 0) return;
+      const to = from + delta;
+      if (to < 0 || to >= this.segmentEls.length) return;
+      // 落点换算与命令层共用 segmentMoveBy（它内部就是拖拽那份 resolveSegmentDropIndex）
+      const move = segmentMoveBy(this.lastSnapshot?.segments ?? [], seg.start, delta);
+      if (!move) return;
+      this.plugin.engine.moveRange(move.start, move.count, move.to);
+      // 焦点跟着这一段走：重排后它落在第 to 段（段头重建过，等一轮再聚焦）
+      window.setTimeout(() => this.segmentEls[to]?.head.focus(), 0);
+    });
     head.addEventListener('dragstart', (ev) => {
       this.dragging = true;
       this.dragSegment = { start: seg.start, count: seg.count };
@@ -1361,18 +1930,32 @@ export class VinylPlayerView extends ItemView {
     return SPIN_SECONDS[this.plugin.settings.turntableSpeed] || SPIN_SECONDS.normal;
   }
 
-  /** 当前旋转动画到了哪个角度：接手时对齐用（不然盘面会跳一下）。
-   *  从 CSSAnimation 的 currentTime 反推 —— 比解析 computed transform 的矩阵稳。 */
+  /** CSS 动画此刻转到了哪个角度（0–360）：接手时对齐用（不然盘面会跳一下）。
+   *  从 CSSAnimation 的 currentTime 反推 —— 比解析 computed transform 的矩阵稳。
+   *  负延迟要一起算：交还旋转时相位就存在 animation-delay 里（搓碟抬手、起转到位都是这么交的），
+   *  只读 currentTime 会把它漏掉 —— 接手的一瞬间盘面会跳回相位 0（正是「跳帧摆正」那种观感）。 */
   private currentSpinAngle(): number {
     const el = this.els?.vinyl;
     if (!el || typeof el.getAnimations !== 'function') return 0;
     for (const a of el.getAnimations()) {
       const timing = a.effect?.getComputedTiming?.();
       const duration = typeof timing?.duration === 'number' ? timing.duration : 0;
+      const delay = typeof timing?.delay === 'number' ? timing.delay : 0;
       const t = a.currentTime;
-      if (duration > 0 && typeof t === 'number') return ((t % duration) / duration) * 360;
+      if (duration > 0 && typeof t === 'number') {
+        const phase = (((t - delay) % duration) + duration) % duration;
+        return (phase / duration) * 360;
+      }
     }
     return 0;
+  }
+
+  /** 盘面此刻的角度（deg，0–360）：旋转归谁管就问谁 —— 马达斜坡 / 停住时在 JS 手里，
+   *  否则在 CSS 动画手里。接手（搓碟起手、起转）一律从这里取起点，角度就不会跳。 */
+  private discAngle(): number {
+    if (this.spin) return this.spin.angle;
+    if (this.heldAngle !== null) return this.heldAngle;
+    return this.currentSpinAngle();
   }
 
   /** 专辑进度 → 唱臂角（进度按「当前曲目在本专辑里的位置」算，见 core/arm-geometry） */
@@ -1399,6 +1982,140 @@ export class VinylPlayerView extends ItemView {
     }
   }
 
+  // ============ 转盘马达（暂停的滑停 / 复播的起转）============
+  // 旋转有三种归属，全部在这一处切换（每条快照过一遍）：
+  //   ① CSS 动画（.is-spinning）：稳速播放的常态 —— 交给合成器转，主线程不参与；
+  //   ② 马达斜坡（.is-spin-held + 逐帧写 --vinyl-spin-angle）：暂停滑停 / 复播起转。
+  //      引擎起头（快照的 motor），视图按 core/motor 的同一条曲线写角度 —— 曲线是闭式的，
+  //      只与「起点转速 + 已走时长」有关，所以掉帧不影响角度，两个执行者也必然同时到终点；
+  //   ③ 停住（.is-spin-held + 写死的角度）：暂停 / 出错。唱片停在停下的那个角度上 ——
+  //      不摆正、也不归零；再按播放从同一个角度接着起转，全程不跳。
+  // 换曲的间隙（loading）什么都不动：盘上还是同一张碟，它该接着转（或接着停在原地）。
+
+  /** 按快照切换转盘的旋转归属（见上面三种）。 */
+  private syncTurntable(s: PlayerSnapshot) {
+    const els = this.els;
+    if (!els) return;
+    // 手在盘上：盘面归手势（起手时已经把斜坡收掉了，见 scratchEngage）
+    if (this.scratch) return;
+    const motor = s.motor ?? null;
+    const spinning = !motor && s.status === 'playing';
+    // 刚转入播放：重算一次可见性，清掉可能残留的 is-hidden（动画停在它上面就转不动了）
+    if (spinning && !this.lastSpinning) this.syncVisibility();
+    this.lastSpinning = spinning;
+
+    if (motor) {
+      // 同一段斜坡不重来（rAF 已经排上了）；引擎期间重发快照（音量变化等）也当作同一段
+      if (this.spin?.phase === motor.phase && this.spin.from === motor.rate) return;
+      const base = this.discAngle();
+      this.spinCancel();
+      this.spin = {
+        phase: motor.phase,
+        from: motor.rate,
+        base,
+        startedAt: performance.now(),
+        angle: base,
+        raf: 0,
+      };
+      els.vinyl.addClass('is-spin-held');
+      this.writeSpinAngle(base);
+      this.heldAngle = null; // 接管之后「此刻的角度」由 spin.angle 代表
+      this.spin.raf = window.requestAnimationFrame(this.spinLoop);
+      return;
+    }
+    if (this.spin) {
+      this.endSpin(); // 引擎那边收完了：滑停的定住、起转的交还
+      return;
+    }
+    if (s.status === 'loading') return; // 换曲的间隙：不动转盘
+
+    const onPlatter = !!s.current && s.status !== 'idle';
+    els.vinyl.classList.toggle('is-spinning', onPlatter && s.status === 'playing');
+    // 暂停 / 出错：定住（角度 = 动画现在的相位）。减少动效时动画根本不转，这里定的是 0°，看着就是没动过
+    const frozen = onPlatter && (s.status === 'paused' || s.status === 'error');
+    if (frozen && this.heldAngle === null) this.holdSpin(this.currentSpinAngle());
+    else if (!frozen && this.heldAngle !== null) this.releaseSpin(this.heldAngle);
+  }
+
+  /** 斜坡走到 now 时的角度 = 起点角 + 「走过的时间」换算成转角（与元素的位置前进量是同一个积分）。
+   *  闭式重算而不是逐帧累加：掉帧、后台节流、迟到很久的那一帧都不会让落点走偏。 */
+  private spinAngleAt(st: SpinState, now: number): number {
+    const elapsed = Math.max(0, now - st.startedAt);
+    return st.base + (motorAdvance(st.from, elapsed, st.phase) * 360) / this.spinSeconds();
+  }
+
+  /** 盘面角度的唯一出口（旋转归 JS 的那三种情形都写这一个变量） */
+  private writeSpinAngle(angle: number) {
+    this.els?.vinyl.style.setProperty('--vinyl-spin-angle', `${angle.toFixed(2)}deg`);
+  }
+
+  /** 斜坡的逐帧 */
+  private spinLoop = (now: number) => {
+    const st = this.spin;
+    if (!st) return;
+    st.angle = this.spinAngleAt(st, now);
+    this.writeSpinAngle(st.angle);
+    const elapsed = Math.max(0, now - st.startedAt);
+    if (motorDone(st.phase, motorRate(st.from, elapsed, st.phase), elapsed)) {
+      this.endSpin();
+      return;
+    }
+    st.raf = window.requestAnimationFrame(this.spinLoop);
+  };
+
+  /** 斜坡收尾：滑停 → 就地定住（角度不跳、也不归零）；起转到位 → 交还 CSS 动画（负延迟续上相位）。
+   *  角度在这里按当前时刻重算一次：收尾可能是「快照说引擎收完了」（离最后一帧可能已经很久），
+   *  拿上一帧的角度会停在半路上。 */
+  private endSpin() {
+    const st = this.spin;
+    if (!st) return;
+    this.spin = null;
+    window.cancelAnimationFrame(st.raf);
+    const angle = this.spinAngleAt(st, performance.now());
+    if (st.phase === 'stopping') this.holdSpin(angle);
+    else this.releaseSpin(angle);
+  }
+
+  /** 丢掉进行中的斜坡（手势接管 / 视图关闭）：角度留给调用方处置 */
+  private spinCancel() {
+    const st = this.spin;
+    if (!st) return;
+    this.spin = null;
+    window.cancelAnimationFrame(st.raf);
+  }
+
+  /** 把旋转定在某个角度上（暂停 / 出错）：JS 扶着不动 —— 停在原地，不摆正也不归零 */
+  private holdSpin(angle: number) {
+    const els = this.els;
+    if (!els) return;
+    this.heldAngle = angle;
+    els.vinyl.addClass('is-spin-held');
+    this.writeSpinAngle(angle);
+  }
+
+  /** 交还旋转给 CSS 动画：角度折成负 animation-delay（转盘从原角度接着转，不跳）。
+   *  顺带补上 is-spinning —— 起转刚到位时状态可能还没翻（元素还在缓冲），而盘面这时候
+   *  已经该转起来了（转盘先到速，唱针再落下）。 */
+  private releaseSpin(angle: number) {
+    const els = this.els;
+    if (!els) return;
+    this.heldAngle = null;
+    this.writeSpinDelay(angle);
+    els.vinyl.addClass('is-spinning');
+    els.vinyl.removeClass('is-spin-held');
+    els.vinyl.style.removeProperty('--vinyl-spin-angle');
+  }
+
+  /** 把角度折成负延迟写进 animation-delay：CSS 动画按负延迟创建时，相位就等于这个角度
+   *  （交接必须在同一帧里完成 —— 先写延迟、再摘掉接管类，动画才会带着这个相位建出来）。 */
+  private writeSpinDelay(angle: number) {
+    const els = this.els;
+    if (!els) return;
+    const spinMs = this.spinSeconds() * 1000;
+    const frac = (((angle % 360) + 360) % 360) / 360;
+    els.vinyl.style.setProperty('animation-delay', `-${Math.round(frac * spinMs)}ms`);
+  }
+
   /** 起手（转过 3° 才走到这里）：接管盘面与声音。轻量 / 完整两条路由搓碟台的就绪状态决定。 */
   private scratchEngage() {
     const els = this.els;
@@ -1416,6 +2133,10 @@ export class VinylPlayerView extends ItemView {
     const useDeck = deckReady && !!this.scratchDeck?.begin(key, info.time, this.scratchTracker.rate);
     if (!useDeck) this.plugin.engine.setScratchLive(true);
     this.scratchTracker.reset();
+    // 马达斜坡（滑停 / 起转）到此为止：盘面从此刻的角度归手势 —— 引擎那边已经把斜坡收了。
+    // 角度要在收掉斜坡之前读：滑停到一半被按住时，正主是斜坡那一手算到现在的角度
+    const angle = this.discAngle();
+    this.spinCancel();
     this.scratch = {
       phase: 'drag',
       playing: info.playing,
@@ -1423,7 +2144,7 @@ export class VinylPlayerView extends ItemView {
       key,
       deck: useDeck,
       pos: info.time,
-      angle: this.currentSpinAngle(),
+      angle,
       rate: 0,
       at: performance.now(),
       raf: 0,
@@ -1464,7 +2185,7 @@ export class VinylPlayerView extends ItemView {
   private scratchApply(st: ScratchState, dt: number) {
     const els = this.els;
     if (!els) return;
-    els.vinyl.style.setProperty('--vinyl-scratch-angle', `${st.angle.toFixed(2)}deg`);
+    els.vinyl.style.setProperty('--vinyl-spin-angle', `${st.angle.toFixed(2)}deg`);
     // 轻量路搓到一半、缓冲备好了：这一程余下的交给搓碟台（正反都出声那套）。
     // 起点接着走（当前位置直接交给它），元素让位 —— 第一下搓碟不必等完整的几秒下载。
     if (!st.deck && this.canUpgrade(st) && this.scratchDeck?.begin(st.key, st.pos, st.rate)) {
@@ -1539,11 +2260,10 @@ export class VinylPlayerView extends ItemView {
     };
     const els = this.els;
     if (els) {
-      // 交还旋转：把当前角度写进负 animation-delay，再摘掉接管类 —— 转盘从原角度接着转，不跳。
-      // 下一次「从暂停转回播放」时动画会重建，那时延迟已无意义（update 里清掉）。
-      const spinMs = this.spinSeconds() * 1000;
-      const frac = (((st.angle % 360) + 360) % 360) / 360;
-      els.vinyl.style.setProperty('animation-delay', `-${Math.round(frac * spinMs)}ms`);
+      // 交还旋转：起手前在播 → 盘面从当前角度接着转（负延迟续相位）；
+      // 起手前是暂停 → 就地定住（暂停中搓碟 = 手动定位，松手就停在那儿）。两处都不跳
+      if (st.playing) this.releaseSpin(st.angle);
+      else this.holdSpin(st.angle);
       els.vinyl.removeClass('is-scratching');
       els.turntable.removeClass('is-scratching');
     }
@@ -1636,7 +2356,8 @@ export class VinylPlayerView extends ItemView {
     try {
       let url = '';
       if (track.source === 'local-vault') url = this.plugin.local.resolveVaultUrl(track.file);
-      else if (track.source === 'local-external') url = this.plugin.local.resolveExternalUrl(track.path);
+      // 库外音频与播放引擎同一口径：能起网关就按 Range 供流，起不来才落回 Blob
+      else if (track.source === 'local-external') url = await this.plugin.local.resolveExternalPlayableUrl(track.path);
       else url = await this.plugin.engine.resolveUrl(track);
       if (!url) return { bytes: null, durationSec: 0 };
       const bytes = isLocalTrack(track)
@@ -1684,10 +2405,12 @@ export class VinylPlayerView extends ItemView {
 
   private resetTurntable(els: PlayerEls) {
     this.scratchAbort(); // 清空队列 / 换碟：手还按在盘上的话，这次手势到此为止
-    els.vinyl.classList.remove('is-spinning', 'is-paused');
+    this.spinCancel(); // 马达斜坡（滑停 / 起转）同理：盘子要换了，斜坡没有下文
+    this.heldAngle = null;
+    els.vinyl.classList.remove('is-spinning', 'is-spin-held');
     els.vinyl.classList.add('is-empty');
     els.vinyl.style.removeProperty('animation-delay');
-    els.vinyl.style.removeProperty('--vinyl-scratch-angle');
+    els.vinyl.style.removeProperty('--vinyl-spin-angle');
     // 唱臂归位到支架（显式写死：CSS 变量可能停在播放中的角度上）
     els.arm.style.setProperty('--vinyl-arm-angle', `${ARM_PARK_ANGLE.toFixed(2)}deg`);
     this.lastArmAngle = ARM_PARK_ANGLE;

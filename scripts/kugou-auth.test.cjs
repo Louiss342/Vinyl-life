@@ -181,7 +181,7 @@ function gateway(opts = {}) {
           },
           appendFileSync() {},
         };
-      if (name === 'http') return { createServer: () => ({ listen() {} }) };
+      if (name === 'http') return { createServer: () => ({ listen() {}, on() {} }) };
       if (name === 'crypto') return cryptoStub;
       return requireFromGateway(name);
     },
@@ -240,7 +240,7 @@ const searchUrl = (page) => `/api/kugou/search?keywords=${encodeURIComponent('�
 
 // ============ 路由与纪律 ============
 
-test('kugou：七条路由齐全（方法 + 路径）', async () => {
+test('kugou：八条路由齐全（方法 + 路径）', async () => {
   const g = gateway();
   const routes = g.context.testRoutes
     .map((r) => `${r.method} ${r.pattern.source}`)
@@ -252,6 +252,7 @@ test('kugou：七条路由齐全（方法 + 路径）', async () => {
     'DELETE ^\\/api\\/kugou\\/cookie$',
     'GET ^\\/api\\/kugou\\/search$',
     'GET ^\\/api\\/kugou\\/album$',
+    'GET ^\\/api\\/kugou\\/lyric$',
     'GET ^\\/api\\/kugou\\/song\\/url$',
   ]) {
     assert.ok(routes.includes(want), `${want} 已注册`);

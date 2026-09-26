@@ -53,6 +53,13 @@ jobs:
           fi
           echo "tag $tag == manifest.version $version"
 
+      # 另外两份也跟着 manifest 走的文件：versions.json 与 package.json。
+      # 此前只比对 tag 与 manifest.version，这两份全程无人校验 —— 缺一条 versions.json 条目
+      # （社区市场据此判断能不能装）不会报错，只是更新对任何用户都不可见，见 version-bump.mjs 第 18 行。
+      # 断言与本地 `npm test` 同一份实现，这里只补 tag 那一段。
+      - name: Check versions.json / package.json match manifest
+        run: node --test scripts/release-metadata.test.cjs
+
       - name: Attest release assets
         uses: actions/attest@v4
         with:

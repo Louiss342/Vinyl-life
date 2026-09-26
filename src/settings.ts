@@ -661,7 +661,7 @@ export class VinylSettingTab extends PluginSettingTab {
             new QrLoginModal(
               this.app,
               { server: p.server, auth: p.auth },
-              { onLogin: () => void this.refreshNetease() }
+              { onLogin: () => void this.refreshNetease(), pluginDir: this.plugin.manifest.dir }
             ).open();
           })
         )
@@ -688,7 +688,7 @@ export class VinylSettingTab extends PluginSettingTab {
             new QrLoginModal(
               this.app,
               { server: p.server, auth: p.qqAuth },
-              { provider: qqQrProvider(), onLogin: () => void this.refreshQq() }
+              { provider: qqQrProvider(), onLogin: () => void this.refreshQq(), pluginDir: this.plugin.manifest.dir }
             ).open();
           })
         )
@@ -715,7 +715,7 @@ export class VinylSettingTab extends PluginSettingTab {
             new QrLoginModal(
               this.app,
               { server: p.server, auth: p.kugouAuth },
-              { provider: kugouQrProvider(), onLogin: () => void this.refreshKugou() }
+              { provider: kugouQrProvider(), onLogin: () => void this.refreshKugou(), pluginDir: this.plugin.manifest.dir }
             ).open();
           })
         )
@@ -766,7 +766,8 @@ export class VinylSettingTab extends PluginSettingTab {
   private statusRow(parent: HTMLElement, platform: 'netease' | 'qq' | 'kugou'): void {
     row(parent, t('settings.loginStatus'), (s) => {
       s.settingEl.addClass('vinyl-auth-setting');
-      const el = s.controlEl.createDiv({ cls: 'vinyl-auth-status' });
+      // 登录状态会自己变（扫码轮询 / 退出登录）：标成 status，读屏软件才会播报状态变化
+      const el = s.controlEl.createDiv({ cls: 'vinyl-auth-status', attr: { role: 'status' } });
       if (platform === 'netease') {
         this.neteaseStatusEl = el;
         void this.refreshNetease();

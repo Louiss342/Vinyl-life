@@ -22,11 +22,15 @@ class Element {
     this.tag = tag;
     this.textContent = options.text || '';
     this.cls = options.cls || '';
+    // 属性也要记下来：可访问性靠 alt / role 这些，不记就断言不到（见文件末尾那条用例）
+    this.attrs = { ...(options.attr || {}) };
     this.children = [];
     this.events = {};
     this.value = '';
     this.disabled = false;
   }
+  setAttribute(k, v) { this.attrs[k] = String(v); }
+  getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }
   createEl(tag, options) {
     const child = new Element(tag, options);
     this.children.push(child);
@@ -224,3 +228,15 @@ test('refresh while login verification is pending ignores the obsolete result', 
   assert.equal(h.jobs.size, 1);
 });
 
+
+test('读屏：二维码有替代文本，状态行是 status 区（登录只有扫码这一条路）', async () => {
+  const h = setup();
+  await h.modal.onOpen();
+  const section = h.modal.contentEl.all().find((el) => el.cls === 'vinyl-qr-section');
+  const img = section.children.find((el) => el.tag === 'img');
+  assert.ok(img, '弹窗里要有二维码图片');
+  assert.match(img.attrs.alt || '', /扫码/, '二维码不能是无名图片：替代文本要说明这张码是拿来扫的');
+  const line = section.children.find((el) => el.cls === 'vinyl-muted');
+  assert.equal(line.attrs.role, 'status', '状态行要标成 status 区，读屏软件才播报得到');
+  await flush();
+});

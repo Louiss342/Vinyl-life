@@ -46,6 +46,13 @@ async function build() {
   const src = fs.readFileSync('server.js', 'utf8');
   const hash = crypto.createHash('sha1').update(src).digest('hex').slice(0, 10);
   const gz = zlib.gzipSync(Buffer.from(src, 'utf8'), { level: 9 }).toString('base64');
+  // 与 styles.css 同一条保证：当场解压回验，坏字节 / 版本错位在构建时就失败。
+  // 这份载荷是运行时 gunzipSync 还原的：坏了插件照常启动，只有在线音源整块不可用 ——
+  // 那种故障不该留到用户那里才发现（测试侧另有一条「产物与 server.js 逐字节一致」，
+  // 见 scripts/gateway-bundle.test.cjs）。
+  if (!zlib.gunzipSync(Buffer.from(gz, 'base64')).equals(Buffer.from(src, 'utf8'))) {
+    throw new Error('网关内联校验失败：解压结果与 server.js 不一致');
+  }
   fs.writeFileSync(
     GATEWAY_BUNDLE,
     '// 由 esbuild.config.mjs 构建时生成，请勿手改、勿提交（见 .gitignore）。\n' +
@@ -55,11 +62,18 @@ async function build() {
 
   // 2.5) styles.css → TS 模块（构建中间产物，不提交）：
   //      手工安装漏掉 styles.css 时，插件用它挂一张构造样式表兜底（见 src/core/style-fallback.ts）。
-  //      与网关同一保证：构建期当场校验「解压结果与源文件逐字节一致」，坏了直接构建失败。
-  const cssSrc = fs.readFileSync('styles.css');
-  const cssGz = zlib.gzipSync(cssSrc, { level: 9 }).toString('base64');
-  if (!zlib.gunzipSync(Buffer.from(cssGz, 'base64')).equals(cssSrc)) {
-    throw new Error('styles.css 内联校验失败：解压结果与源文件不一致');
+  //      先压缩再 gzip：源文件保持带注释的可读形态，进产物的只有压缩结果 ——
+  //      实测 199.6 → 132.6 KB（gz 91.7 → 63.0），载荷 122.2 → 82.9 KB，占 main.js 8%。
+  //      省下的几乎全是注释：中文散文在 gzip 下压不动，是这份载荷里唯一一块纯浪费；
+  //      两个字体子集的 base64 本身是 woff2（已压过一遍），gzip 与压缩都动不了它。
+  //      压缩只动记号（空白 / 注释 / 颜色等价写法 / ::after 别名 / 同体相邻规则合并），不改规则 ——
+  //      字体与版本戳逐字节保留，scripts/style-bundle.test.cjs 钉着这一点。
+  //      与网关同一保证：构建期当场校验「解压结果与压缩后的源逐字节一致」，坏了直接构建失败。
+  const cssSrc = fs.readFileSync('styles.css', 'utf8');
+  const cssMin = esbuild.transformSync(cssSrc, { loader: 'css', minify: true }).code;
+  const cssGz = zlib.gzipSync(Buffer.from(cssMin, 'utf8'), { level: 9 }).toString('base64');
+  if (!zlib.gunzipSync(Buffer.from(cssGz, 'base64')).equals(Buffer.from(cssMin, 'utf8'))) {
+    throw new Error('styles.css 内联校验失败：解压结果与压缩后的样式不一致');
   }
   fs.writeFileSync(
     STYLE_BUNDLE,
@@ -120,6 +134,9 @@ async function build() {
   // 恢复与清空的范围说明）、自动备份与保留份数清理、健康检查的三个修复入口
   // （重新定位音频 / 设置封面 / 重试并清除）、播放明细保留改成低水位裁剪。
   // 净增约 10 KB，仍是功能与文案代码，没有新依赖。
+  // （2026-09 审计瘦身：内联样式改成「先压缩再 gzip」，同一份 styles.css 的载荷 122.2 → 83.0 KB，
+  //   main.js 实测 524.8 → 485.5 KB —— 预算不动，余量从 19 KB 回到约 54 KB。省下的全是注释，
+  //   字体子集与版本戳逐字节保留，见上面 2.5) 那一段与 scripts/style-bundle.test.cjs。）
   const MAIN_JS_BUDGET = 540 * 1024;
   if (sizes['main.js'] > MAIN_JS_BUDGET) {
     throw new Error(

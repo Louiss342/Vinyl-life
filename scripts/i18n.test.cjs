@@ -66,7 +66,7 @@ test('i18n：专辑墙用到的键在中英两套里都有且非空', () => {
     'add.title', 'add.placeholder', 'add.localHint', 'add.chooseFiles',
     'import.owned', 'import.adding', 'import.retry', 'import.sameNameHint', 'import.searchFoundOwned',
     'import.searchScope', 'import.scopeAll', 'import.scopeAllHint', 'import.searchingOne',
-    'menu.play', 'menu.openNote', 'menu.importAudio', 'menu.setCover',
+    'menu.openNote', 'menu.importAudio', 'menu.setCover',
     'menu.openNetease', 'menu.openQq', 'menu.openKugou', 'menu.deleteAlbum',
   ];
   for (const k of keys) {
@@ -509,6 +509,9 @@ function fakeEl(tag = 'div') {
       return child;
     },
     getAnimations: () => [],
+    // 定位正在播的那首（locateCurrentRow / currentRowVisible）要用到：假 DOM 给最小实现
+    scrollIntoView() {},
+    getBoundingClientRect: () => ({ top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 }),
     animate: () => ({}),
     closest: () => null,
     // S 型臂管（player-view 的 buildArmTube）要往臂盒子里挂子节点：补齐与 arm-posture.test.cjs 同款的一面
@@ -800,6 +803,9 @@ function makePlugin({ view = null, data = {}, snapshot = null } = {}) {
       adapter: { getBasePath: () => process.cwd() },
       getAbstractFileByPath: () => null,
       createFolder: async () => {},
+      // onload 的缓存作废监听：这里只要求「能注册上」，事件本身的行为由
+      // scripts/album-source-cache.test.cjs 覆盖
+      on: () => ({}),
     },
     workspace: {
       getLeavesOfType: () => [],
@@ -816,6 +822,8 @@ function makePlugin({ view = null, data = {}, snapshot = null } = {}) {
   plugin.addRibbonIcon = () => {};
   plugin.addSettingTab = () => {};
   plugin.register = () => {};
+  // 音源检测缓存的作废监听（main.ts 在 onload 里注册 vault 的 create / delete / rename）
+  plugin.registerEvent = (ref) => ref;
   // 协议处理器（笔记里的位置跳回音乐）与定时器（每周自动备份的每小时检查）
   plugin.registerObsidianProtocolHandler = () => {};
   plugin.registerInterval = () => {};
@@ -825,19 +833,27 @@ function makePlugin({ view = null, data = {}, snapshot = null } = {}) {
   return plugin;
 }
 
-// 日常常驻命令（id 不能改：改了已绑定的快捷键就失效）
+// 日常常驻命令（id 不能改：改了已绑定的快捷键就失效）。
+// 命令表在 core/commands.ts（宿主中立），main.ts 只做接线 —— 运行时注册出来的 id 必须与它一致。
 const KEPT_COMMANDS = [
   'open-shelf',
   'open-player',
   'import-netease',
   'import-local',
   'insert-now-playing',
+  'append-listening-note',
   'save-queue-note',
   'load-queue-note',
   // 播放控制（1.0.6 起常驻）：给快捷键与系统媒体键之外的手动操作用
   'player-toggle',
   'player-next',
   'player-prev',
+  // 只有鼠标路径的几个动作（1.3.2 起补的命令入口）
+  'set-album-cover',
+  'open-album-in-source',
+  'import-local-to-current',
+  'queue-move-segment-up',
+  'queue-move-segment-down',
 ];
 test('main：命令面板 — 注册日常命令与队列保存/载入', async () => {
   const plugin = makePlugin();
@@ -1458,7 +1474,8 @@ test('README：整版中英对照 —— 中文在上、英文在下，小节标
       "#### 5.1 代码分层",
       "#### 5.2 运行时清单",
       "#### 5.3 数据归属",
-      "#### 5.4 默认目录",
+      "#### 5.4 专辑笔记的 frontmatter 键",
+      "#### 5.5 默认目录",
       "### 6、使用手册",
       "#### 6.1 专辑墙",
       "##### 6.1.1 工具栏",
@@ -1473,8 +1490,9 @@ test('README：整版中英对照 —— 中文在上、英文在下，小节标
       "##### 6.2.2 唱机与唱臂",
       "##### 6.2.3 搓碟",
       "##### 6.2.4 唱片面",
-      "##### 6.2.5 曲目队列",
-      "##### 6.2.6 队列笔记",
+      "##### 6.2.5 歌词",
+      "##### 6.2.6 曲目队列",
+      "##### 6.2.7 队列笔记",
       "#### 6.3 导入音乐",
       "##### 6.3.1 本地音频",
       "##### 6.3.2 在线搜索与链接导入",
@@ -1496,6 +1514,7 @@ test('README：整版中英对照 —— 中文在上、英文在下，小节标
       "##### 6.7.1 五个标签页",
       "##### 6.7.2 外观",
       "##### 6.7.3 默认目录",
+      "#### 6.8 命令与快捷键",
       "### 7、安装与开始使用",
       "### 8、在线音源与数据",
       "#### 8.1 接入方式与边界",
@@ -1534,7 +1553,8 @@ test('README：整版中英对照 —— 中文在上、英文在下，小节标
       "#### 5.1 Code layers",
       "#### 5.2 At runtime",
       "#### 5.3 Where data lives",
-      "#### 5.4 Default folders",
+      "#### 5.4 Album-note frontmatter keys",
+      "#### 5.5 Default folders",
       "### 6. User guide",
       "#### 6.1 Album shelf",
       "##### 6.1.1 Toolbar",
@@ -1549,8 +1569,9 @@ test('README：整版中英对照 —— 中文在上、英文在下，小节标
       "##### 6.2.2 Turntable and tonearm",
       "##### 6.2.3 Scratch",
       "##### 6.2.4 The record crate",
-      "##### 6.2.5 Track queue",
-      "##### 6.2.6 Queue notes",
+      "##### 6.2.5 Lyrics",
+      "##### 6.2.6 Track queue",
+      "##### 6.2.7 Queue notes",
       "#### 6.3 Importing music",
       "##### 6.3.1 Local audio",
       "##### 6.3.2 Online search and link import",
@@ -1572,6 +1593,7 @@ test('README：整版中英对照 —— 中文在上、英文在下，小节标
       "##### 6.7.1 The five tabs",
       "##### 6.7.2 Appearance",
       "##### 6.7.3 Default folders",
+      "#### 6.8 Commands and hotkeys",
       "### 7. Installation and getting started",
       "### 8. Online sources and data",
       "#### 8.1 Access and limits",

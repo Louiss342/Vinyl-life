@@ -340,7 +340,7 @@ test('接线：单行工具栏 —— 标题 + 计数（手绘体）+ 四枚图�
     /text: filtered \? `\[\$\{this\.shownCount\}\/\$\{this\.entries\.length\}\]`/,
     '有筛选报「匹配/总数」'
   );
-  assert.match(VIEW, /private syncHeading\(\)[\s\S]{0,400}?this\.shownCount/, '计数与网格共用同一个数（退出选择模式后重建工具栏也回填得上）');
+  assert.match(VIEW, /private syncHeading\(\)[\s\S]{0,700}?this\.shownCount/, '计数与网格共用同一个数（退出选择模式后重建工具栏也回填得上）');
   assert.match(
     CSS,
     /\.vinyl-shelf-heading-count\s*\{[^}]*font-family:\s*'Vinyl Hand'/,
@@ -394,7 +394,7 @@ test('接线：浮层单开、点外关闭、Esc 关闭且焦点回到入口', (
   assert.match(VIEW, /private openPanel\(kind: 'display' \| 'add', anchor: HTMLElement\)[\s\S]{0,80}?this\.closePanel\(\);/, '开新浮层先收旧的（同时最多一个）');
   assert.match(VIEW, /p\.el\.contains\(target\) \|\| p\.anchor\.contains\(target\)/, '点浮层内 / 点入口本身：不关');
   assert.match(VIEW, /document\.addEventListener\('pointerdown', this\.onPanelDocPointer, true\)/, '点外关闭走 pointerdown 捕获');
-  assert.match(VIEW, /ev\.key !== 'Escape'[\s\S]{0,200}?anchorEl\?\.focus\(\)/, 'Esc 关闭后焦点还给入口');
+  assert.match(VIEW, /ev\.key === 'Escape'[\s\S]{0,200}?anchorEl\?\.focus\(\)/, 'Esc 关闭后焦点还给入口');
   assert.match(VIEW, /private placePanel[\s\S]{0,1400}?pane\.left \+ 8/, '位置夹在专辑墙窗格内');
   // 宽度：优先收在窗格里，窗格太窄时保底一个可读下限（搜索结果「封面 + 标题 + 操作」三栏挤不下）
   assert.match(VIEW, /const preferred = kind === 'add' \? 440 : 340;/, '添加浮层比陈列宽一档');
@@ -445,7 +445,11 @@ test('接线：本地导入面板与弹窗共用一份实现（弹窗只剩薄�
   assert.match(PANE, /export class LocalImportPane/, '面板本体');
   assert.match(PANE, /t\('import\.step1'\)[\s\S]{0,4000}?t\('import\.step3'\)/, '三步流程都在面板里');
   assert.match(PANE, /this\.host\.onDone\(\{ imported: res\.added\.length, album, created \}\)/, '收尾交给宿主（弹窗关窗 / 浮层描边）');
-  assert.match(PANE, /reset\(\): void \{[\s\S]{0,120}?this\.applyFiles\?\.\(\[\], ''\)/, '导完一批：清空已选，浮层接着导下一批');
+  // 「导完一批接着导下一批」的真实行为在 scripts/local-import-reset.test.cjs（驱动真面板 + 假 DOM）；
+  // 这里只锁接线，顺带钉住那个坑：别再退回给 applyFiles 喂空列表 —— 它开头 `if (!files.length) return;`，
+  // 于是 reset 变成空操作（摘要、专辑名、勾选全留着，再点开始导入会拿上一批重跑）。
+  assert.match(PANE, /reset\(\): void \{[\s\S]{0,60}?this\.resetPane\?\.\(\)/, '导完一批：清空这一批，浮层留在原地');
+  assert.doesNotMatch(PANE, /applyFiles\?\.\(\[\], ''\)/, '空列表进不了 applyFiles：清空要走自己的实现');
   assert.match(MODAL, /new LocalImportPane\(ctx, albums, presetAlbum/, '弹窗用同一个面板');
   assert.match(MODAL, /onDone: \(\{ created, album \}\)[\s\S]{0,300}?openFile\(album\.file\)[\s\S]{0,60}?this\.close\(\)/, '弹窗路径：新建的专辑开笔记再关窗');
   assert.doesNotMatch(MODAL, /createDiv\(\{ cls: 'vinyl-import-section'/, '弹窗里不再自带一套表单');
@@ -453,7 +457,13 @@ test('接线：本地导入面板与弹窗共用一份实现（弹窗只剩薄�
 
 test('接线：更多菜单 —— 选择专辑 / 刷新专辑墙（刷新保留筛选与陈列状态）', () => {
   assert.match(VIEW, /private showMoreMenu[\s\S]{0,400}?t\('more\.select'\)/, '选择专辑');
-  assert.match(VIEW, /t\('more\.refresh'\)[\s\S]{0,160}?this\.render\(\)/, '刷新专辑墙（state 不动）');
+  // 刷新 = 重新看一遍：先作废音源检测的缓存（库外目录自己变了没有事件可听，只有这条路径能捞回来），
+  // 再重扫库；state 不动，所以搜索 / 筛选 / 陈列都留着。契约在 scripts/album-source-cache.test.cjs
+  assert.match(
+    VIEW,
+    /t\('more\.refresh'\)[\s\S]{0,400}?invalidateSourceCache\(\)[\s\S]{0,80}?this\.render\(\)/,
+    '刷新专辑墙：作废缓存 + 重扫（state 不动）'
+  );
   assert.doesNotMatch(VIEW, /t\('shelf\.refresh'\)/, '旧的刷新按钮不在工具栏');
   assert.doesNotMatch(VIEW, /showSortMenu|showFilterMenu|showCustomSortMenu/, '旧的排序 / 筛选菜单已进陈列浮层');
 });

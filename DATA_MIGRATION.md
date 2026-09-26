@@ -21,6 +21,8 @@
 
 若同步工具也同步 `.obsidian/plugins/vinyl-life/data.json`，它本身包含设置和统计；手动备份仍可作为回退点。不要把插件目录中的登录凭据文件公开分享。
 
+顺带一句给用网盘的人：同步工具（iCloud / Dropbox / OneDrive / 坚果云）默认会把 `.obsidian` 一起传上去，而登录凭据就在 `.obsidian/plugins/vinyl-life/` 下（`.cookie`、`.qq-cookie`、`.kugou-cookie` 等）。`.gitignore` 挡得住 git，挡不住同步工具 —— 想让凭据只留本机，就把 `.obsidian` 加进同步排除名单（详见 README 第 8.3 节）。
+
 ## 收藏与队列
 
 专辑笔记用 `edition` 属性记录发行版本；不同音源的 ID 可共存在同一篇笔记中。在线搜索结果的「关联已有」会让用户选择目标笔记，只添加对应平台 ID，不覆盖已有文字或封面。

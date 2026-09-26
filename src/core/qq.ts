@@ -3,7 +3,7 @@
 // 客户端只做一次请求 → 拿到最终可播地址或中文限制文案。
 import { requestUrl } from 'obsidian';
 import { Track } from './track';
-import { GatewayError } from './request-error';
+import { GatewayError, withRequestTimeout } from './request-error';
 import type { SongUrlResult } from './server-client';
 import { getLanguage, t, tf } from './i18n';
 import type {
@@ -33,14 +33,16 @@ export class QqService {
   }
 
   private async request<T>(pathname: string, options?: { method?: string; body?: string }): Promise<T> {
-    const res = await requestUrl({
-      url: this.url(pathname),
-      headers: this.authHeaders(),
-      method: options?.method,
-      contentType: options?.body ? 'application/json' : undefined,
-      body: options?.body,
-      throw: false,
-    });
+    const res = await withRequestTimeout(
+      requestUrl({
+        url: this.url(pathname),
+        headers: this.authHeaders(),
+        method: options?.method,
+        contentType: options?.body ? 'application/json' : undefined,
+        body: options?.body,
+        throw: false,
+      })
+    );
     const body: unknown = res.json;
     if (res.status < 200 || res.status >= 300) {
       const error = (body as ApiErrorResponse | null)?.error;

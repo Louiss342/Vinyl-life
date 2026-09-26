@@ -65,6 +65,10 @@ export class QrLoginModal extends Modal {
   private pollTimer: number | null = null;
   private qrGeneration = 0;
   private onLogin?: (state: LoginState) => void | Promise<void>;
+  /** 插件目录（vault 相对，形如 plugins/vinyl-life）：二维码兜底要往这里写临时 PNG。
+   *  由调用方从 manifest.dir 传进来 —— 写死 'plugins/vinyl-life' 的话，用户重命名插件目录
+   *  之后这条路会指向一个不存在的目录（配置目录已经没写死，见下面拼 tmpPath 处的注释）。 */
+  private pluginDir: string;
 
   constructor(
     app: App,
@@ -72,6 +76,7 @@ export class QrLoginModal extends Modal {
     opts?: {
       provider?: QrProvider;
       onLogin?: (state: LoginState) => void | Promise<void>;
+      pluginDir?: string;
     }
   ) {
     super(app);
@@ -79,6 +84,7 @@ export class QrLoginModal extends Modal {
     this.deps = deps;
     this.provider = opts?.provider ?? neteaseQrProvider();
     this.onLogin = opts?.onLogin;
+    this.pluginDir = opts?.pluginDir || 'plugins/vinyl-life';
     this.titleEl.setText(this.provider.title);
   }
 
@@ -89,8 +95,17 @@ export class QrLoginModal extends Modal {
 
     const qrSec = c.createDiv({ cls: 'vinyl-qr-section' });
     qrSec.createEl('h4', { text: t('login.qrSection') });
-    const img = qrSec.createEl('img', { attr: { width: '220', height: '220' } });
-    const qrStatus = qrSec.createDiv({ text: t('login.generating'), cls: 'vinyl-muted' });
+    // 二维码图片本身对读屏软件没有意义，但不能留成一张无名的图：用扫码提示当替代文本
+    // （「请用 XX App 扫码」），并把状态行标成 status —— 生成中 / 已扫码 / 已过期这条链路
+    // 全靠它播报（登录只有扫码这一条路径，读屏用户至少要知道现在轮到哪一步）。
+    const img = qrSec.createEl('img', {
+      attr: { width: '220', height: '220', alt: this.provider.appHint },
+    });
+    const qrStatus = qrSec.createDiv({
+      text: t('login.generating'),
+      cls: 'vinyl-muted',
+      attr: { role: 'status' },
+    });
     const refreshBtn = qrSec.createEl('button', { text: t('login.refreshQr') });
 
     const start = async () => {
@@ -111,8 +126,9 @@ export class QrLoginModal extends Modal {
             const b64 = qrimg.replace(/^data:image\/\w+;base64,/, '');
             const buf = Buffer.from(b64, 'base64');
             const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
-            // 配置目录可被用户改名（不能写死 .obsidian），故按 Vault#configDir 拼插件目录
-            const tmpPath = `${this.app.vault.configDir}/plugins/vinyl-life/${this.provider.tempPng}`;
+            // 配置目录与插件目录都可能被用户改名：前者走 Vault#configDir，后者由调用方
+            // 从 manifest.dir 传进来（两边都不写死）
+            const tmpPath = `${this.app.vault.configDir}/${this.pluginDir}/${this.provider.tempPng}`;
             await this.app.vault.adapter.writeBinary(tmpPath, ab);
             if (generation !== this.qrGeneration) return;
             img.src = this.app.vault.adapter.getResourcePath(tmpPath);

@@ -37,7 +37,7 @@ function gateway(qrCode, qrCookies = [], valid = true, opts = {}) {
         return {
           createServer: (handler) => {
             serverHandler = handler;
-            return { listen() {} };
+            return { listen() {}, on() {} };
           },
         };
       }

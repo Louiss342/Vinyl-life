@@ -98,7 +98,11 @@ export class AlbumSearchPane {
       seg.addEventListener('click', () => this.setScope(scope));
       this.scopeButtons.set(scope, seg);
     }
-    this.statusEl = container.createDiv({ cls: 'vinyl-muted vinyl-import-status' });
+    // 状态行（搜索中 / 找到 N 张 / 失败原因）是异步替换的文本：标成 status，读屏软件才会播报
+    this.statusEl = container.createDiv({
+      cls: 'vinyl-muted vinyl-import-status',
+      attr: { role: 'status' },
+    });
     this.resultsEl = container.createDiv({ cls: 'vinyl-import-results' });
     this.moreBar = container.createDiv({ cls: 'vinyl-import-more' });
     this.moreBtn = this.moreBar.createEl('button');

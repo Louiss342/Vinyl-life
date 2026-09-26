@@ -5,7 +5,13 @@
 // 连提示都不出；「标记为仅收藏」按钮把 collectOnly 写进笔记 frontmatter（数据归笔记）。
 import { EventRef, Modal, TFile } from 'obsidian';
 import type VinylLifePlugin from '../main';
-import { AlbumInfo, detectAlbumSources, findAlbumNotes, getAlbumInfo } from '../core/album-index';
+import {
+  AlbumInfo,
+  detectAlbumSources,
+  findAlbumNotes,
+  getAlbumInfo,
+  invalidateSourceCache,
+} from '../core/album-index';
 import type { ActiveSource } from '../core/queue';
 import {
   LibraryHealthIssue,
@@ -150,7 +156,12 @@ export class LibraryHealthModal extends Modal {
     this.titleEl.setText(t('health.title'));
   }
 
-  onOpen(): void { this.render(); }
+  onOpen(): void {
+    // 「检查一遍」的语义：音源检测的缓存先作废，这次扫描看到的是此时此刻的结论
+    // （库外目录的改动没有事件可听，只有这里与专辑墙的「刷新」能把它捞回来）
+    invalidateSourceCache();
+    this.render();
+  }
 
   onClose(): void {
     // 关窗即中止试播：循环每轮开头看这个标记

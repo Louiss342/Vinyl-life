@@ -26,8 +26,10 @@ import {
   getAlbumInfo,
   detectAlbumSources,
   hasAlbumTag,
+  invalidateSourceCache,
 } from '../core/album-index';
 import { DISC_DIRECTIONS, discTransform } from '../core/disc-motion';
+import { albumSourceLinks } from '../core/source-link';
 import { queuedAlbumPaths } from '../core/queue';
 import { animateDiscLiftOff } from '../animation/handoff';
 import {
@@ -61,6 +63,7 @@ import {
   sortShelfEntries,
 } from '../core/shelf-sort';
 import { rangeInList, toggleInList } from '../core/multi-select';
+
 import { collectDroppedFiles, droppedRootName, isAudioFile, isImageFile, markVinylMenu, notice, prefersReducedMotion } from '../util';
 // 手绘笔触用 roughjs（Excalidraw 内部同款引擎）。只引 SVG 那一支：canvas 渲染器用不上，
 // 直接引包入口会把它一起打进来（实测多 2 KB）。线宽 / 虚线等公共参数见 hand-drawn.ts。
@@ -68,10 +71,18 @@ import { RoughSVG } from 'roughjs/bin/svg';
 import { roughDashed, roughSolid, roundRectPath, SVG_NS } from './hand-drawn';
 import { t, tf } from '../core/i18n';
 import { SetCoverModal } from './set-cover-modal';
+import { RatingModal } from './rating-modal';
 import { AddPanel } from './add-panel';
-import { onMarqueeOver, onMarqueeOut } from './marquee';
+import { measureMarqueesIn, onMarqueeOver, onMarqueeOut, resetMarqueesIn } from './marquee';
 
 export const SHELF_VIEW_TYPE = 'vinyl-shelf';
+
+/** 事件目标所在的那张卡片（焦点与按键处理共用；弹窗窗口里 instanceof 会失败，只鸭子类型判 closest） */
+function shelfCardOf(target: EventTarget | null): HTMLElement | null {
+  const el = target as HTMLElement | null;
+  if (!el || typeof el.closest !== 'function') return null;
+  return el.closest<HTMLElement>('.vinyl-shelf-card');
+}
 
 interface ShelfEntry {
   album: AlbumInfo;
@@ -107,6 +118,11 @@ export function shelfColumnsTemplate(cols: number | 'auto' | null | undefined): 
     `calc((100% - var(--vinyl-shelf-col-gap, 42px) * ${n - 1}) / ${n})), 1fr))`
   );
 }
+
+/** 浮层里「键盘够得到」的元素。Tab 循环陷阱用它算首尾；
+ *  offsetParent 再滤掉被 CSS 藏起来的（未选中时的动作条、收起的第二层）。 */
+const FOCUSABLE =
+  'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
 
 // 用函数而不是常量：语言在设置里切换后，菜单标题要跟着变（常量在模块加载时就定型了）
 const filterOptions = (): [SourceFilter, string][] => [
@@ -299,6 +315,16 @@ export class VinylShelfView extends ItemView {
     // 卡片文字的悬停滚动：委托挂在 contentEl 上（卡片每次刷新都重建，逐张挂监听会白挂随卡片丢弃的一堆）
     this.registerDomEvent(this.contentEl, 'pointerover', (ev) => onMarqueeOver(ev));
     this.registerDomEvent(this.contentEl, 'pointerout', (ev) => onMarqueeOut(ev));
+    // 键盘焦点落进卡片时同样要能读全长专辑名（曾经只有鼠标一条路）。
+    // 焦点在卡片上、marquee 是它的后代 —— 与指针的 closest 方向相反，所以走 *_In 那一对。
+    this.registerDomEvent(this.contentEl, 'focusin', (ev) => measureMarqueesIn(shelfCardOf(ev.target)));
+    this.registerDomEvent(this.contentEl, 'focusout', (ev) => {
+      const card = shelfCardOf(ev.target);
+      const to = ev.relatedTarget as Node | null;
+      // 卡片内部换焦点（卡片 ↔ 它的「⋯」钮）不算离开：复位会让滚动从头再来
+      if (card && to && card.contains(to)) return;
+      resetMarqueesIn(card);
+    });
     // 键盘等价操作：卡片上 Enter / 空格 = 点击
     this.registerDomEvent(this.contentEl, 'keydown', (ev) => this.onShelfKeydown(ev));
     this.unsub = this.plugin.engine.subscribe((s) => this.updatePlaying(s));
@@ -330,11 +356,11 @@ export class VinylShelfView extends ItemView {
    *  卡片内部没有输入控件，所以不用区分按在卡片里的哪个位置。 */
   private onShelfKeydown(ev: KeyboardEvent) {
     if (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Spacebar') {
-      const el = ev.target as HTMLElement | null;
-      if (!el || typeof el.closest !== 'function') return;
-      const card = el.closest<HTMLElement>('.vinyl-shelf-card');
+      const card = shelfCardOf(ev.target);
       if (!card) return;
       ev.preventDefault(); // 空格默认会滚动面板
+      // 别漏给全局快捷键：用户若把 Enter / 空格绑到了别的命令上，会在这里双触发
+      ev.stopPropagation();
       card.click();
       return;
     }
@@ -342,6 +368,7 @@ export class VinylShelfView extends ItemView {
     // 搜索框里的 Esc 只退焦点、不清条件，由输入框自己拦住（stopPropagation）。
     if (ev.key === 'Escape' && this.batch.active) {
       ev.preventDefault();
+      ev.stopPropagation();
       this.exitBatch();
     }
   }
@@ -387,6 +414,11 @@ export class VinylShelfView extends ItemView {
     const keepPanel = this.panel?.kind ?? null;
     this.loadEntries();
     const c = this.contentEl;
+    // 重建 DOM 会丢滚动位置（contentEl 自己就是滚动容器，见 styles.css）：后台刷新
+    // （导入 / 换封面 / 元数据变化）之后墙面会弹回顶部 —— 500 张的墙里等于把用户扔回起点。
+    // 先记后还，两行都要在：清空那一刻浏览器就把 scrollTop 夹成 0 了，跟 empty() 换个顺序就白记。
+    // 新内容不够高时浏览器会把值自己夹回范围内，不用管。
+    const scrollTop = c.scrollTop;
     c.empty();
     c.addClass('vinyl-shelf');
     this.applyAppearance();
@@ -408,12 +440,16 @@ export class VinylShelfView extends ItemView {
     this.renderGrid();
     this.syncBatch(); // 重建后再把选择模式的整体状态铺回去（卡片是新 DOM）
     if (keepPanel) this.reattachPanel(keepPanel);
+    c.scrollTop = scrollTop;
   }
 
   /** 卡片属性变更后的就地刷新（main.refreshShelfProps 广播给所有专辑墙视图）：
    *  重建卡片行 + 刷新打开的浮层（计数 / 已选区） */
   refreshProps() {
+    // 同一件事：卡片行 rebuild 也不能把用户从墙中间弹回顶部（改一个属性就触发，比整面墙重建还频繁）
+    const scrollTop = this.contentEl.scrollTop;
     this.renderGrid();
+    this.contentEl.scrollTop = scrollTop;
     this.refreshPanelContent();
   }
 
@@ -529,7 +565,7 @@ export class VinylShelfView extends ItemView {
     this.addBtnEl = add;
     add.addEventListener('click', () => this.toggleAddPanel(add));
     const more = mk('more-horizontal', t('toolbar.more'));
-    more.addEventListener('click', (ev) => this.showMoreMenu(ev));
+    more.addEventListener('click', () => this.showMoreMenu(more));
     this.syncDisplayButton();
   }
 
@@ -540,9 +576,12 @@ export class VinylShelfView extends ItemView {
     const filtered = !!this.state.query || this.state.sourceFilter !== 'all';
     el.empty();
     el.createSpan({ text: t('shelf.heading'), cls: 'vinyl-shelf-heading-title' });
+    // 数量是异步变的（搜索 / 筛选 / 库里增删）——标成 live 区，读屏才知道「匹配 N 张 / 共 M 张」。
+    // 组词 / 连续打字时它会连着更新几次：polite 的播报由读屏自己合并，不会一句句抢话。
     el.createSpan({
       text: filtered ? `[${this.shownCount}/${this.entries.length}]` : `[${this.entries.length}]`,
       cls: 'vinyl-shelf-heading-count',
+      attr: { role: 'status' },
     });
   }
 
@@ -660,7 +699,8 @@ export class VinylShelfView extends ItemView {
 
   /** 选择模式的工具栏（整条切换用途）：左边已选数量，右边四个动作 */
   private renderBatchToolbar(bar: HTMLElement) {
-    this.batchInfoEl = bar.createDiv({ cls: 'vinyl-shelf-batch-info' });
+    // 已选数量是异步变化的文本：标成 status，读屏软件才会在勾选/取消时播报（否则只能自己去翻）
+    this.batchInfoEl = bar.createDiv({ cls: 'vinyl-shelf-batch-info', attr: { role: 'status' } });
     const actions = bar.createDiv({ cls: 'vinyl-shelf-batch-actions' });
     const mk = (label: string, cls: string, fn: () => void) => {
       const b = actions.createEl('button', { text: label, cls: `vinyl-toolbar-textbtn ${cls}`.trim() });
@@ -1025,6 +1065,14 @@ export class VinylShelfView extends ItemView {
     if (kind === 'display') this.renderDisplayPanel(el);
     else this.renderAddPanel(el);
     this.placePanel(el, anchor);
+    // 键盘 / 读屏：浮层挂在 body 末尾（Tab 序排在整应用之后），不主动搬一次焦点，
+    // 键盘用户打开之后得从头 Tab 一整圈才进得来。容器自己接焦点（tabindex=-1），
+    // 下一次 Tab 就落进面板里的第一个控件；role=dialog 让读屏软件报出「这是什么浮层」，
+    // 名称由两个 render 各自按当前层写（陈列 / 封面下的信息 / 添加唱片）。
+    // 'add' 的搜索框另有 30ms 后的 focus（见 renderAddPanel），会把焦点收得更准。
+    el.setAttribute('tabindex', '-1');
+    el.setAttribute('role', 'dialog');
+    el.focus({ preventScroll: true });
     // 点外关闭：pointerdown 的捕获阶段（click 太晚 —— 浮层里的按钮会先响应）
     this.onPanelDocPointer = (ev: PointerEvent) => {
       const target = ev.target as Node | null;
@@ -1035,11 +1083,37 @@ export class VinylShelfView extends ItemView {
     };
     document.addEventListener('pointerdown', this.onPanelDocPointer, true);
     this.onPanelKey = (ev: KeyboardEvent) => {
-      if (ev.key !== 'Escape') return;
-      ev.preventDefault();
-      const anchorEl = this.panel?.anchor ?? null;
-      this.closePanel();
-      anchorEl?.focus(); // 键盘用户：关掉之后焦点回到入口，不用重新找
+      if (ev.key === 'Escape') {
+        ev.preventDefault();
+        const anchorEl = this.panel?.anchor ?? null;
+        this.closePanel();
+        anchorEl?.focus(); // 键盘用户：关掉之后焦点回到入口，不用重新找
+        return;
+      }
+      // Tab 循环陷阱：不设的话 Shift+Tab 从第一个控件退回工具栏、Tab 从最后一个跑到文档末尾，
+      // 键盘用户在浮层里转一圈就迷路。⚠ 这个监听挂在 document 的**捕获**阶段，所以必须先确认
+      // 焦点确实在浮层内 —— 否则会把宿主界面（编辑器、设置、命令面板）的正常 Tab 一起吃掉，
+      // 那比不修还糟。
+      if (ev.key !== 'Tab') return;
+      const panelEl = this.panel?.el ?? null;
+      if (!panelEl) return;
+      const doc = panelEl.ownerDocument ?? document;
+      const active = doc.activeElement;
+      if (!active || !panelEl.contains(active)) return;
+      const focusables = [...panelEl.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
+        (n) => n.offsetParent !== null // 被 CSS 藏起来的（未选中时的动作条等）不算可达
+      );
+      if (!focusables.length) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      // 容器自己也可能拿着焦点（刚打开时就是它）：往后走落进第一个控件，往前走到最后一个
+      if (ev.shiftKey && (active === first || active === panelEl)) {
+        ev.preventDefault();
+        last.focus();
+      } else if (!ev.shiftKey && active === last) {
+        ev.preventDefault();
+        first.focus();
+      }
     };
     document.addEventListener('keydown', this.onPanelKey, true);
   }
@@ -1128,6 +1202,7 @@ export class VinylShelfView extends ItemView {
     el.empty();
     // 标题栏（学设置页的分区块）：主层是图标芯片 + 「陈列」，第二层是「‹ 返回陈列」+ 「封面下的信息」
     const props = this.displayLayer === 'props';
+    el.setAttribute('aria-label', props ? t('display.props') : t('toolbar.display'));
     const head = el.createDiv({ cls: 'vinyl-panel-head' });
     if (props) {
       const back = head.createEl('button', { cls: 'vinyl-panel-back' });
@@ -1276,7 +1351,11 @@ export class VinylShelfView extends ItemView {
 
   // ============ 更多菜单 ============
 
-  private showMoreMenu(ev: MouseEvent) {
+  /** 菜单落点：一律从**锚元素的矩形**算，不用鼠标事件坐标。
+   *  键盘触发的 click 里 clientX/clientY 是 0，showAtMouseEvent 会把菜单弹到视口左上角；
+   *  showAtPosition 对两条路径都成立（这也是 a11y 门禁锁住的一条）。 */
+  private showMoreMenu(anchor: HTMLElement) {
+    const rect = anchor.getBoundingClientRect();
     const menu = new Menu();
     markVinylMenu(menu); // 全直角：菜单壳与悬停底一起收（见 styles.css「全直角」段）
     menu.addItem((it) =>
@@ -1290,17 +1369,23 @@ export class VinylShelfView extends ItemView {
       it
         .setTitle(t('more.refresh'))
         .setIcon('refresh-cw')
-        .onClick(() => this.render()) // 保留搜索 / 筛选 / 陈列状态（state 不动，只是重扫库）
+        .onClick(() => {
+          // 用户显式要求「重新看一遍」：音源检测的缓存也一并丢掉（库外目录自己变了没有事件可听，
+          // 只有这条路径能把它捞回来），见 album-index 的 invalidateSourceCache
+          invalidateSourceCache();
+          this.render(); // 保留搜索 / 筛选 / 陈列状态（state 不动，只是重扫库）
+        })
     );
     menu.addItem((it) =>
       it.setTitle(t('health.title')).setIcon('heart-pulse').onClick(() => this.plugin.openLibraryHealth())
     );
-    menu.showAtMouseEvent(ev);
+    menu.showAtPosition({ x: rect.left, y: rect.bottom });
   }
 
   // ============ 添加浮层 ============
 
   private renderAddPanel(el: HTMLElement): void {
+    el.setAttribute('aria-label', t('add.title'));
     // 本地导入的目标列表：库里的专辑按标题排（与「导入本地音频…」弹窗同一套口径）
     const albums = this.entries
       .map((e) => e.album)
@@ -1383,6 +1468,24 @@ export class VinylShelfView extends ItemView {
     row.setAttribute('draggable', 'true');
     // 提示走 aria-label：行里还有「改显示名 / 移除」两个按钮，用 title 会把气泡叠到它们身上
     row.setAttribute('aria-label', tf('props.frontmatterKey', { key }));
+    // 键盘等价（拖拽之外的另一条路）：Tab 落到行上，Alt+↑/↓ 与拖拽等价地调序。
+    // 落点换算与拖拽共用 reorderShelfProp（同一个写入口，两条路不会分叉）。
+    row.tabIndex = 0;
+    row.setAttribute('role', 'button');
+    row.addEventListener('keydown', (ev) => {
+      if (!ev.altKey || (ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown')) return;
+      ev.preventDefault();
+      ev.stopPropagation(); // 别漏给全局快捷键（与卡片上的按键同一口径）
+      const cur = this.plugin.settings.shelfProps;
+      const i = cur.indexOf(key);
+      if (i < 0) return;
+      const to = i + (ev.key === 'ArrowUp' ? -1 : 1);
+      if (to < 0 || to >= cur.length) return;
+      void this.applyShelfProps(reorderShelfProp(cur, key, to)).then(() => {
+        // 重排后整块重绘：焦点跟着这一行挪到新位置（否则焦点掉回 body，连着调几次要重新 Tab 进来）
+        window.setTimeout(() => this.propsHost?.querySelector<HTMLElement>(`[data-prop-key="${key}"]`)?.focus(), 0);
+      });
+    });
     row.addEventListener('dragstart', (ev) => {
       this.dragKey = key;
       this.dropAt = null;
@@ -1600,6 +1703,21 @@ export class VinylShelfView extends ItemView {
     const mark = card.createDiv({ cls: 'vinyl-shelf-card-check' });
     setIcon(mark, 'check');
 
+    // 卡片自己的菜单入口（「⋯」）：右键菜单此前是「设置封面」「在源站打开」的**唯一**入口，
+    // 键盘与触控板用户完全够不着。与右键共用 showMenu，落点按这枚按钮的矩形算。
+    // 常态视觉隐藏（见 styles.css），悬停或键盘聚焦时显形 —— 但始终留在 Tab 序里：
+    // display:none 会让它从键盘路径上消失，那就等于没做。
+    const menuBtn = card.createEl('button', { cls: 'clickable-icon vinyl-shelf-card-menu' });
+    setIcon(menuBtn, 'more-horizontal');
+    // 切语言时专辑墙整块重绘（见 main 的 refreshLanguage），所以这里不必登记重放
+    menuBtn.setAttribute('aria-label', tf('menu.cardMenu', { name: album.title }));
+    menuBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation(); // 别冒泡给卡片（那会直接换碟）
+      if (this.batch.active) return; // 与右键一致：选择模式里不弹菜单
+      const r = menuBtn.getBoundingClientRect();
+      this.showMenu(e, { x: r.left, y: r.bottom });
+    });
+
     card.addEventListener('click', (ev) => {
       if (this.batch.active) {
         this.pickForBatch(album.path, ev);
@@ -1610,7 +1728,7 @@ export class VinylShelfView extends ItemView {
     card.addEventListener('contextmenu', (ev) => {
       ev.preventDefault();
       if (this.batch.active) return; // 选择模式里不弹菜单：右键留给「别的用途」，别把播放 / 删除搅进来
-      this.showMenu(e, ev);
+      this.showMenu(e, { x: ev.clientX, y: ev.clientY });
     });
     // 拖拽音频到卡片 = 导入到该专辑（落库模式取设置）
     card.addEventListener('dragover', (ev) => {
@@ -1668,18 +1786,14 @@ export class VinylShelfView extends ItemView {
     await this.plugin.handoff.handoff(album, cardEl);
   }
 
-  private showMenu(e: ShelfEntry, ev: MouseEvent) {
+  /** 卡片菜单。落点由调用方给（右键给鼠标位置、卡片上的「⋯」按钮给自己的矩形）——
+   *  菜单本身不区分是谁打开的，键盘与鼠标两条路径因此落到同一个位置。 */
+  private showMenu(e: ShelfEntry, pos: { x: number; y: number }) {
     const { album } = e;
     const menu = new Menu();
     markVinylMenu(menu); // 全直角：菜单壳与悬停底一起收（见 styles.css「全直角」段）
-    if (e.local || e.netease || e.qq || e.kugou) {
-      menu.addItem((it) =>
-        it
-          .setTitle(t('menu.play'))
-          .setIcon('play')
-          .onClick(() => this.playAlbum(e))
-      );
-    }
+    // 这里没有「播放」：左键点卡片就是播放（用户 2026-09-26 定稿）。
+    // 菜单里再放一条只会和左键重复 —— 打开菜单要的是「左键做不到的那些事」。
     menu.addItem((it) =>
       it
         .setTitle(t('menu.openNote'))
@@ -1705,36 +1819,26 @@ export class VinylShelfView extends ItemView {
         .setIcon('image')
         .onClick(() => new SetCoverModal(this.plugin.app, this.plugin, album).open())
     );
+    // 评分：此前只能手写 frontmatter（审计点名的缺口）。模态框里 5 档 + 清除，
+    // 与「设置专辑版本」同一形态（见 views/rating-modal）
+    menu.addItem((it) =>
+      it
+        .setTitle(t('menu.rating'))
+        .setIcon('star')
+        .onClick(() => new RatingModal(this.plugin.app, album, () => this.render()).open())
+    );
     menu.addItem((it) => it.setTitle(t('edition.set')).setIcon('tag')
       .onClick(() => new AlbumEditionModal(this.plugin.app, album, () => this.render()).open()));
-    if (album.neteaseId) {
+    // 源站入口：地址规则统一在 core/source-link（命令「在源站打开当前专辑」吃同一份），
+    // 这里只负责把菜单项摆出来。
+    // 别再为 neteaseId / qqId 各写一段 —— 那两段与这份是同一套 URL，摆在一起就是两条
+    // 一模一样的「在网易云打开」（2026-09-26 用户报的重复项，就是这么来的）。
+    for (const link of albumSourceLinks(album)) {
       menu.addItem((it) =>
         it
-          .setTitle(t('menu.openNetease'))
+          .setTitle(t(link.labelKey))
           .setIcon('external-link')
-          .onClick(() => {
-            window.open(`https://music.163.com/#/album?id=${album.neteaseId}`);
-          })
-      );
-    }
-    if (album.qqId) {
-      menu.addItem((it) =>
-        it
-          .setTitle(t('menu.openQq'))
-          .setIcon('external-link')
-          .onClick(() => {
-            window.open(`https://y.qq.com/n/ryqq/albumDetail/${album.qqId}`);
-          })
-      );
-    }
-    if (album.kugouId) {
-      menu.addItem((it) =>
-        it
-          .setTitle(t('menu.openKugou'))
-          .setIcon('external-link')
-          .onClick(() => {
-            window.open(`https://www.kugou.com/yy/album/single/${album.kugouId}.html`);
-          })
+          .onClick(() => window.open(link.url))
       );
     }
     menu.addSeparator();
@@ -1758,7 +1862,7 @@ export class VinylShelfView extends ItemView {
         .setIcon('trash')
         .onClick(() => this.plugin.openDeleteAlbum(album))
     );
-    menu.showAtMouseEvent(ev);
+    menu.showAtPosition(pos);
   }
 
   // ============ 播放状态 ============

@@ -2,8 +2,9 @@
 import { requestUrl } from 'obsidian';
 import { Track } from './track';
 import { restrictionText } from '../util';
-import { GatewayError } from './request-error';
+import { GatewayError, PING_TIMEOUT_MS, withRequestTimeout } from './request-error';
 import { getLanguage, t, tf } from './i18n';
+import { paceUpstream } from './probe-pacing';
 import type {
   ApiErrorResponse,
   LoginResponse,
@@ -11,6 +12,7 @@ import type {
   NeteaseSong,
   QrKeyResponse,
   NeteaseSearchResponse,
+  NeteaseLyricResponse,
   SearchPage,
   SongUrlResponse,
 } from './api-types';
@@ -44,14 +46,15 @@ export class ServerClient {
   }
 
   private async request<T>(pathname: string, options?: { method?: string; body?: string }): Promise<T> {
-    const res = await requestUrl({
+    await paceUpstream(); // 试播期间才生效（见 core/probe-pacing）
+    const res = await withRequestTimeout(requestUrl({
       url: this.url(pathname),
       headers: this.authHeaders(),
       method: options?.method,
       contentType: options?.body ? 'application/json' : undefined,
       body: options?.body,
       throw: false,
-    });
+    }));
     const body: unknown = res.json;
     if (res.status < 200 || res.status >= 300) {
       const error = (body as ApiErrorResponse | null)?.error;
@@ -69,11 +72,10 @@ export class ServerClient {
 
   async ping(): Promise<boolean> {
     try {
-      const r = await requestUrl({
-        url: this.url('/api/ping'),
-        headers: this.authHeaders(),
-        throw: false,
-      });
+      const r = await withRequestTimeout(
+        requestUrl({ url: this.url('/api/ping'), headers: this.authHeaders(), throw: false }),
+        PING_TIMEOUT_MS
+      );
       return r.status >= 200 && r.status < 300;
     } catch {
       return false;
@@ -110,6 +112,11 @@ export class ServerClient {
   // —— 曲库 ——
   async album(id: number): Promise<NeteaseAlbumResponse> {
     return this.getJson<NeteaseAlbumResponse>('/api/album', { id: String(id) });
+  }
+
+  // 歌词：网易云的歌词接口不挑登录态，匿名也能取（能取到多少另外说）
+  async lyric(id: number): Promise<NeteaseLyricResponse> {
+    return this.getJson<NeteaseLyricResponse>('/api/lyric', { id: String(id) });
   }
 
   // 音源地址：请求指定音质；url 为空且无限制码时逐级降档（lossless 需 VIP）
@@ -153,11 +160,9 @@ export class ServerClient {
   // 封面代理下载（避开浏览器 CORS）。失败时透传网关给的原因（图床超时 / 404 / 被拦等），
   // 而不是只留一个 HTTP 500 —— 导入提示与控制台要靠它分流病因。
   async fetchCover(url: string): Promise<ArrayBuffer> {
-    const res = await requestUrl({
-      url: this.url('/api/cover', { url }),
-      headers: this.authHeaders(),
-      throw: false,
-    });
+    const res = await withRequestTimeout(
+      requestUrl({ url: this.url('/api/cover', { url }), headers: this.authHeaders(), throw: false })
+    );
     if (res.status < 200 || res.status >= 300) {
       const error = (res.json as ApiErrorResponse | null)?.error;
       throw new Error(error || tf('auth.coverDownloadHttp', { status: res.status }));

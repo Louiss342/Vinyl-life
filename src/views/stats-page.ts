@@ -5,7 +5,7 @@ import { Modal, Setting, TFile, setIcon } from 'obsidian';
 import type VinylLifePlugin from '../main';
 import { findAlbumNotes, getAlbumInfo } from '../core/album-index';
 import {
-  AlbumPlayStat,
+  albumTitleOf,
   calendarColumns,
   calendarMonthLabels,
   localDayKey,
@@ -16,11 +16,6 @@ import { propLabel } from '../core/shelf-props';
 import { SettingsSection, settingsSection } from './settings-section';
 import { markVinylModal, notice } from '../util';
 import { t, tf } from '../core/i18n';
-
-function albumTitle(path: string, stat: AlbumPlayStat): string {
-  const title = stat.snapshot?.title || path.split('/').pop()?.replace(/\.md$/, '') || path;
-  return stat.snapshot?.edition ? `${title} · ${stat.snapshot.edition}` : title;
-}
 
 function fmtDay(key: string): string {
   const [year, month, day] = key.split('-').map(Number);
@@ -82,7 +77,11 @@ class RestoreDataModal extends Modal {
     this.contentEl.createEl('p', { text: t('backup.restoreHint') });
     const input = this.contentEl.createEl('input', { attr: { type: 'file', accept: '.json,application/json' } });
     input.addEventListener('change', () => { this.selected = input.files?.[0] ?? null; });
-    const status = this.contentEl.createEl('p', { cls: 'vinyl-muted' });
+    // 状态行：恢复备份的每一步（选文件 / 恢复中 / 失败原因）都写在这里，标成 status 让读屏软件播报
+    const status = this.contentEl.createEl('p', {
+      cls: 'vinyl-muted vinyl-restore-status',
+      attr: { role: 'status' },
+    });
     const actions = this.contentEl.createDiv({ cls: 'modal-button-container' });
     actions.createEl('button', { text: t('common.cancel') }).onclick = () => this.close();
     const restore = actions.createEl('button', { text: t('backup.restore'), cls: 'mod-warning' });
@@ -135,7 +134,13 @@ export class ClearStatsModal extends Modal {
 
 export class StatsPage {
   private selectedDay = '';
+  /** 热力图的 roving 停靠点（哪个日期键上的格子 tabIndex=0）——重绘后据此复位（见 wireHeatmap） */
+  private heatmapCursor = '';
+  /** 点/回车选中某一天之后，把焦点接回那一格（重绘会把 DOM 换掉） */
+  private focusDay = '';
   private selectedProp = '';
+  /** 专辑侧属性键的签名缓存（见 albumPropKeys） */
+  private propKeyCache: { sig: string; keys: string[] } | null = null;
 
   constructor(
     private plugin: VinylLifePlugin,
@@ -254,6 +259,7 @@ export class StatsPage {
       weekdays.createSpan({ text: label })
     );
     const grid = chartRow.createDiv({ cls: 'vinyl-stats-heatmap' });
+    const cells: HTMLElement[] = [];
     // 列优先铺（grid-auto-flow: column，每列 7 格 = 日→六），列序 = 时间倒序
     for (const column of columns) {
       for (const date of column.days) {
@@ -271,14 +277,96 @@ export class StatsPage {
         });
         cell.onclick = () => {
           this.selectedDay = key;
+          this.heatmapCursor = key; // 重绘之后焦点要回到这一格（见 wireHeatmap 的 focusDay）
+          this.focusDay = key;
           this.rerender();
         };
+        cells.push(cell);
       }
     }
+    this.wireHeatmap(grid, cells, columns.flatMap((c) => c.days.map((d) => localDayKey(d.getTime()))));
     const legend = parent.createDiv({ cls: 'vinyl-stats-legend' });
     legend.createSpan({ text: t('stats.less') });
     for (let i = 0; i <= 4; i++) legend.createSpan({ cls: `vinyl-stats-legend-cell is-level-${i}` });
     legend.createSpan({ text: t('stats.more') });
+  }
+
+  /** 专辑侧的属性键集合：全库扫一遍 frontmatter。
+   *  带签名缓存（路径 + mtime）—— 这一步要为每张专辑解析一次 frontmatter 与封面，
+   *  而它每次重绘都要跑（改一下属性下拉、点一下日历格都算重绘），大库上就是白扫几百遍。
+   *  mtime 变了（改了笔记 / 增删了专辑）才重扫；统计快照那一半很便宜，不进缓存。 */
+  private albumPropKeys(): string[] {
+    const files = findAlbumNotes(this.plugin.app);
+    const sig = files.map((f) => `${f.path}:${f.stat?.mtime ?? 0}`).join('|');
+    if (this.propKeyCache?.sig === sig) return this.propKeyCache.keys;
+    const keys = new Set<string>();
+    for (const file of files) {
+      const album = getAlbumInfo(this.plugin.app, file, { coverFolder: this.plugin.settings.coverFolder });
+      Object.keys(album?.displayProps ?? {}).forEach((key) => keys.add(key));
+    }
+    const list = Array.from(keys);
+    this.propKeyCache = { sig, keys: list };
+    return list;
+  }
+
+  /** 热力图的键盘导航：整张图只留**一个** Tab 停靠点（roving tabindex），方向键在格间走。
+   *
+   *  为什么：53 周 × 7 天 = 371 个格子，每格都是 <button> 就是 371 个停靠点 ——
+   *  键盘用户要按几百下才走得出这张图（审计点名）。改成 ARIA 网格的常规做法：
+   *  只有「游标」那一格 tabIndex=0，其余 -1；焦点落在哪一格，游标就跟到哪一格。
+   *  左右 = ±7 天（一周），上下 = ±1 天，Home / End 到首尾；未来格是 disabled，
+   *  不能聚焦，往那个方向走时跳过它们（不改变「一周 = 7 格」的映射）。
+   *
+   *  keys 与 cells 一一对应（列优先：列 = 周、行 = 星期），用来把焦点换算回日期键 ——
+   *  重绘之后按 heatmapCursor 把停靠点放回原处，点格子触发重绘时再由 focusDay 把焦点接回去。 */
+  private wireHeatmap(grid: HTMLElement, cells: HTMLElement[], keys: string[]): void {
+    const total = cells.length;
+    if (!total) return;
+    const disabled = (i: number) => (cells[i] as HTMLButtonElement).disabled;
+    const cursorAt = () => {
+      const at = this.heatmapCursor ? keys.indexOf(this.heatmapCursor) : -1;
+      if (at >= 0) return at;
+      const selected = this.selectedDay ? keys.indexOf(this.selectedDay) : -1;
+      return selected >= 0 ? selected : 0;
+    };
+    const paint = (i: number, focus: boolean) => {
+      const at = Math.max(0, Math.min(total - 1, i));
+      cells.forEach((el, n) => (el.tabIndex = n === at ? 0 : -1));
+      this.heatmapCursor = keys[at] ?? '';
+      if (focus) cells[at]?.focus();
+    };
+    // 落在 disabled 格上就沿同一方向找最近的可用格（走到边界就原地不动）
+    const step = (from: number, delta: number) => {
+      let i = from;
+      while (i >= 0 && i < total && disabled(i)) i += delta;
+      return i >= 0 && i < total ? i : from;
+    };
+    paint(cursorAt(), false);
+    if (this.focusDay) {
+      const i = keys.indexOf(this.focusDay);
+      this.focusDay = '';
+      if (i >= 0) paint(i, true);
+    }
+    grid.addEventListener('keydown', (ev) => {
+      const delta =
+        ev.key === 'ArrowLeft' ? -7 : ev.key === 'ArrowRight' ? 7 : ev.key === 'ArrowUp' ? -1 : ev.key === 'ArrowDown' ? 1 : 0;
+      if (delta) {
+        ev.preventDefault();
+        // 不让方向键漏给全局快捷键（与专辑墙 / 队列的键盘处理同一条纪律）
+        ev.stopPropagation();
+        paint(step(cursorAt() + delta, delta > 0 ? 1 : -1), true);
+        return;
+      }
+      if (ev.key === 'Home' || ev.key === 'End') {
+        ev.preventDefault();
+        ev.stopPropagation();
+        paint(step(ev.key === 'Home' ? 0 : total - 1, ev.key === 'Home' ? 1 : -1), true);
+      }
+    });
+    grid.addEventListener('focusin', (ev) => {
+      const i = cells.indexOf(ev.target as HTMLElement);
+      if (i >= 0) paint(i, false);
+    });
   }
 
   private renderSelectedDay(parent: HTMLElement): void {
@@ -307,7 +395,7 @@ export class StatsPage {
     const album = exists
       ? getAlbumInfo(this.plugin.app, current, { coverFolder: this.plugin.settings.coverFolder })
       : null;
-    const name = album?.title || albumTitle(albumPath, stat);
+    const name = album?.title || albumTitleOf(albumPath, stat);
     const coverSrc = album?.cover || this.plugin.statsCoverSrc(stat.snapshot);
     // 悬停提示走 aria-label（宿主会画成样式化气泡）：用 title 会和它叠成两个
     const label = exists ? name : tf('stats.removedBadgeTitle', { title: name });
@@ -358,7 +446,7 @@ export class StatsPage {
       const row = list.createDiv({ cls: 'vinyl-stats-ranking-row' });
       this.renderAlbumCover(row, path, true);
       const text = row.createDiv({ cls: 'vinyl-stats-ranking-copy' });
-      text.createDiv({ cls: 'vinyl-stats-ranking-name', text: albumTitle(path, stat) });
+      text.createDiv({ cls: 'vinyl-stats-ranking-name', text: albumTitleOf(path, stat) });
       text.createDiv({
         cls: 'vinyl-muted',
         text:
@@ -371,11 +459,7 @@ export class StatsPage {
 
   private renderCustom(parent: HTMLElement): void {
     const card = this.card(parent, t('stats.custom'), 'stats-custom', 'chart-pie');
-    const keys = new Set<string>();
-    for (const file of findAlbumNotes(this.plugin.app)) {
-      const album = getAlbumInfo(this.plugin.app, file, { coverFolder: this.plugin.settings.coverFolder });
-      Object.keys(album?.displayProps ?? {}).forEach((key) => keys.add(key));
-    }
+    const keys = new Set<string>(this.albumPropKeys());
     for (const stat of Object.values(this.plugin.settings.stats.albums)) {
       Object.keys(stat.snapshot?.displayProps ?? {}).forEach((key) => keys.add(key));
     }

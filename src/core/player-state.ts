@@ -1,7 +1,7 @@
 // 播放引擎：统一面向 Track 解析可播放地址、推进队列、状态快照事件。
 // 交接动效与黑胶转盘视觉接在此状态之上（IDLE → HANDOFF → PLAYING）。
 import { App } from 'obsidian';
-import { Track, trackKey, trackSourceLabel, reorderTracks } from './track';
+import { Track, trackKey, trackSourceLabel, reorderTracks, isTrialTrack } from './track';
 import { AlbumInfo } from './album-index';
 import { LocalSource } from './local-source';
 import { NeteaseService } from './netease';
@@ -14,8 +14,17 @@ import {
   SCRATCH_LIVE_RESUME_RATE,
   SCRATCH_MAX_RATE,
 } from './scratch';
+import {
+  MotorPhase,
+  MOTOR_MAX_MS,
+  MOTOR_MIN_RATE,
+  MOTOR_TICK_MS,
+  motorDone,
+  motorGain,
+  motorRate,
+} from './motor';
 import type { VinylSettings } from '../settings';
-import { notice } from '../util';
+import { notice, prefersReducedMotion, scalarText } from '../util';
 import { t, tf } from './i18n';
 
 export type PlayerStatus = 'idle' | 'loading' | 'playing' | 'paused' | 'error';
@@ -55,6 +64,14 @@ export interface PlayerSnapshot {
   /** 当前曲目实际拿到的音质档（standard/higher/exhigh/lossless；本地音轨为空） */
   quality?: string;
   error?: string;
+  /** 元素在等数据（waiting / stalled）：界面据此报「缓冲中」。
+   *  只看 status 是不够的 —— 网速跟不上时状态仍是 playing，唱机看着像死了。 */
+  buffering: boolean;
+  /** 转盘马达的当前状态（缺省 = 稳速）。暂停是**断电滑停**：状态按用户的指令立刻翻成暂停，
+   *  但盘面还要滑零点几秒、声音还要淡出 —— 那一段的下文在这里，视图据此接管盘面旋转
+   *  （曲线见 core/motor：两边共用同一份纯函数，画面与声音才是同一条时间轴）。
+   *  rate = 这一段起点（这次快照那一刻）的转速：斜坡是「差多少补多少」的，从当前值接着走即正确。 */
+  motor?: { phase: MotorPhase; rate: number };
 }
 
 export interface EngineDeps {
@@ -76,6 +93,15 @@ export interface EngineDeps {
   onAlbumLoadFailed?: (album: AlbumInfo, policy: SourcePolicy, reason: string) => void;
 }
 
+/** 从抛出来的东西里取一句人话：Error 取 message（跨 realm 的 Error instanceof 会失败 ——
+ *  vm / 弹窗窗口里抛出来的就是这种，所以按鸭子类型读 message），标量直接用，
+ *  其余（对象）回空串 —— String(对象) 会得到 "[object Object]"，看着像文案、其实没人看得懂。 */
+function errorText(e: unknown): string {
+  const msg = (e as { message?: unknown } | null | undefined)?.message;
+  if (typeof msg === 'string' && msg) return msg;
+  return scalarText(e);
+}
+
 export class PlaybackEngine {
   private audio = new Audio();
   private queue: Track[] = [];
@@ -90,6 +116,22 @@ export class PlaybackEngine {
   /** 专辑路径 → 标题：追加多张专辑后，界面要按段显示各自的名字（曲目上只有路径） */
   private albumTitles = new Map<string, string>();
   private quality = '';
+  /** 音量分两层：userVolume = 用户设的那一档（快照 / 落盘 / 电平表读的都是它），
+   *  motorGain = 马达斜坡的淡入淡出系数。元素实际音量 = 两者相乘 ——
+   *  滑停 / 起转期间电平表不该跟着抖（抖的是唱片转速，不是用户的音量）。 */
+  private userVolume = 0.8;
+  private motorGain = 1;
+  /** 转盘马达：暂停 = 断电滑停、复播 = 马达起转（曲线见 core/motor）。null = 稳速（1 倍转速）。
+   *  rate = 当前转速，from / startedAt = 这一段的起点转速与起点时刻。
+   *  timer = 推进的步进表，watch = 后台节流时的兜底（见 motorBegin）。 */
+  private motor: {
+    phase: MotorPhase;
+    from: number;
+    startedAt: number;
+    rate: number;
+    timer: number;
+    watch: number;
+  } | null = null;
   private listeners = new Set<(s: PlayerSnapshot) => void>();
   // 在线源 URL 缓存：按 trackKey 区分来源（netease id 为数字、qq id 为 mid 字符串，
   // 无法共用裸 id 键，否则跨源会命中错误缓存）。
@@ -98,6 +140,13 @@ export class PlaybackEngine {
   private levelCache = new Map<string, string>();
   private vaultBlobRetried = new Set<string>();
   private urlRefetched = new Set<string>();
+  /** 元素是否在等数据（waiting / stalled）——对外报 buffering，见 snapshot 与构造函数里的监听 */
+  private buffering = false;
+  /** 已经自动跳过的曲目（trackKey）：一次播放回合里同一首只跳一次。
+   *  没有这条记账的话，整条队列都取不到流时会一首接一首地打转（每首都失败 → 每首都跳）。 */
+  private autoSkipped = new Set<string>();
+  /** 已经提示过「这是试听片段」的曲目（trackKey）：同一首只提示一次（换队列作废） */
+  private trialNoticed = new Set<string>();
   private lastTimeEmit = 0;
   // 加载代次：快速连点两张专辑时，先发起的在线队列构建可能后返回，须丢弃以免覆盖新选择
   private loadSeq = 0;
@@ -114,7 +163,7 @@ export class PlaybackEngine {
   constructor(private deps: EngineDeps) {
     this.playMode = deps.playMode?.() || 'once';
     this.audio.preload = 'auto';
-    this.audio.volume = 0.8;
+    this.applyVolume();
     this.audio.addEventListener('loadedmetadata', () => this.emit());
     this.audio.addEventListener('timeupdate', () => this.emitThrottled());
     this.audio.addEventListener('ended', () => this.onEnded());
@@ -137,6 +186,20 @@ export class PlaybackEngine {
     this.audio.addEventListener('error', () => {
       void this.onAudioError();
     });
+    // 缓冲：元素要等字节（waiting）时亮起，能接着放（playing / canplay）就收掉。
+    // waiting 与 canplay 是成对的（Chromium 在卡住 / 恢复时各发一次），playing 再兜一遍底 ——
+    // 缺了兜底，一次漏掉的 canplay 会让「缓冲中」一直挂在那里。
+    this.audio.addEventListener('waiting', () => this.setBuffering(true));
+    this.audio.addEventListener('stalled', () => this.setBuffering(true));
+    this.audio.addEventListener('playing', () => this.setBuffering(false));
+    this.audio.addEventListener('canplay', () => this.setBuffering(false));
+  }
+
+  /** 缓冲态只有真的翻转时才广播：waiting / canplay 会成串来（一次卡顿可能发好几条） */
+  private setBuffering(on: boolean) {
+    if (this.buffering === on) return;
+    this.buffering = on;
+    this.emit();
   }
 
   // —— 订阅 ——
@@ -152,12 +215,17 @@ export class PlaybackEngine {
     return {
       // 搓碟期间对外报「起手前的姿态」：手在盘上不该让播放键熄灭、系统面板翻成暂停
       status: this.scratch ? (this.scratch.resumePlaying ? 'playing' : 'paused') : this.status,
+      // 只在真的在播时报缓冲：暂停时元素也在等数据（还没取够下一段），那不是用户眼里的卡顿
+      buffering: this.buffering && (this.scratch ? this.scratch.resumePlaying : this.status === 'playing'),
       queue: this.queue,
       index: this.index,
       current: this.index >= 0 ? this.queue[this.index] : undefined,
       currentTime: this.scratch ? this.scratch.time : this.audio.currentTime || 0,
       duration: this.audioDuration(),
-      volume: this.audio.volume,
+      // 报用户设的那一档，不是元素此刻的实际音量：滑停 / 起转期间元素在淡出，
+      // 那是唱片的事 —— 电平表跟着抖、还把抖出来的值落盘就说不通了
+      volume: this.userVolume,
+      motor: this.motor ? { phase: this.motor.phase, rate: this.motor.rate } : undefined,
       // 专辑信息按「当前曲目」推：多专辑队列里播放会跨段，用最后一次 loadAlbum 的那张会串
       albumNotePath: this.albumOfCurrent().path,
       albumTitle: this.albumOfCurrent().title,
@@ -274,6 +342,10 @@ export class PlaybackEngine {
     this.levelCache.clear();
     this.vaultBlobRetried.clear();
     this.urlRefetched.clear();
+    // 换了队列：自动跳过的记账跟着作废（同一首歌在另一张专辑里值得重新试一次）
+    this.autoSkipped.clear();
+    this.trialNoticed.clear();
+    this.buffering = false;
     this.emit();
   }
 
@@ -297,6 +369,12 @@ export class PlaybackEngine {
     await this.appendAlbum(res.tracks, album.path, album.title, source);
     return res;
   }
+
+  /** 进随机之前的那份队列顺序（退出随机时还原，见 restoreShuffledOrder）。
+   *  设计稿删掉了「恢复发行顺序」按键，所以还原挂在**模式切换**上：
+   *  随机是一次可逆的试听，而不是把用户排好的队列永久打乱 —— 打乱之后连专辑分段都没了，
+   *  「移除整段」也跟着够不着。手动拖拽过就以用户的顺序为准（见 moveTrack）。 */
+  private orderBeforeShuffle: Track[] | null = null;
 
   /** 专辑队列模式：把一张专辑的队列追加到队尾（不动当前播放，允许同一张专辑重复排入）。
    *  队列原本是空的 → 按普通换碟处理（否则用户点了专辑却什么都不发生，比排队更奇怪）。 */
@@ -402,6 +480,9 @@ export class PlaybackEngine {
       if (i < 0 && currentKey) i = this.queue.findIndex((tr) => trackKey(tr) === currentKey);
       if (i >= 0) this.index = i;
     }
+    // 手动拖过 = 用户自己认下了这个顺序：进随机前存的那份不再算数
+    //（否则退出随机时会把他的调整吃掉）
+    this.orderBeforeShuffle = null;
     // 音频不动（同一首歌继续播），只广播新队列 → 视图重建行并重贴 is-current。
     // 拖动只改「这一次会话」的排列：不落盘、也不在下次播这张专辑时复现（设计稿要求）
     this.emit();
@@ -410,6 +491,7 @@ export class PlaybackEngine {
   // 卸载当前音源（换专辑 / 复位共用；removeAttribute + load 是 Chromium 释放媒体的标准姿势）
   private unloadAudio() {
     this.abortScratch(); // 换碟 / 移除整段时手还按在盘上的话：这次搓碟作废（视图下次快照会收尾）
+    this.motorAbort(); // 滑停 / 起转中的那一首同理：盘子要换了，斜坡没有下文
     this.audio.pause();
     this.audio.removeAttribute('src');
     try {
@@ -436,31 +518,60 @@ export class PlaybackEngine {
     this.levelCache.clear();
     this.vaultBlobRetried.clear();
     this.urlRefetched.clear();
+    this.autoSkipped.clear();
+    this.trialNoticed.clear();
+    this.buffering = false;
     this.emit();
   }
 
   // —— 控制 ——
   async playIndex(i: number, opts?: { retry?: boolean }) {
     if (i < 0 || i >= this.queue.length) return;
-    if (this.index === i && this.status === 'playing') return;
+    // 已在播的这一首不重起（点队列里正在放的那一行不该从头开始）。
+    // retry 例外：兜底链要重新取址、重新起播 —— 元素出错时引擎不一定收过 pause 事件，
+    // 状态还停在 playing，按这条守卫会让「重取一次」变成空操作（旧写法就是这样：出错后
+    // 界面还在转、却没有声音，也没有任何下文）。
+    if (!opts?.retry && this.index === i && this.status === 'playing') return;
     this.abortScratch(); // 点队列切歌 / 媒体键下一首：手里的那张碟换掉了
+    // 马达同理：换曲不做斜坡（真实唱机上换曲时转盘一直在转，只有「开始 / 停止」才动马达），
+    // 但上一条留下的斜坡必须收干净 —— 否则旧曲线会接着写新曲子的倍速与音量
+    this.motorAbort();
     this.index = i;
     this.status = 'loading';
     this.errorMsg = '';
+    // 新的一首从头开始等：上一首留下的缓冲态不能跟过来（它会一直亮到这一首出声）
+    this.buffering = false;
     this.emit();
     const track = this.queue[i];
     // 「还在等这一首吗」按下标判定会在拖拽重排后误判（下标变了、曲子没变）→ 卡在 loading。
     // 判据用「当前曲目还是不是这一首」：切走 / 换专辑照样丢弃，重排不打断加载。
     const stillCurrent = () => this.queue[this.index] === track;
+    // 取址失败是**语义**问题（会员 / 未绑定音源 / 平台拒绝）：如实报错就停在这儿 ——
+    // 一张会员专辑不该一首首跳过去刷一屏提示，用户要看到的是「为什么放不了」。
+    let url: string;
     try {
-      const url = await this.resolveUrl(track);
+      url = await this.resolveUrl(track);
+    } catch (e) {
       if (!stillCurrent()) return; // 期间用户已切走
-      // 实际音质档（网易云可能已逐级降档；本地音轨无此项）
-      this.quality = this.levelCache.get(trackKey(track)) || '';
+      this.failTrack(track, e);
+      return;
+    }
+    if (!stillCurrent()) return;
+    // 实际音质档（网易云可能已逐级降档；本地音轨无此项）
+    this.quality = this.levelCache.get(trackKey(track)) || '';
+    // 播放失败是**技术**问题（解码 / 格式 / 链接过期）：地址都拿到了却放不出来，
+    // 能跳就跳到下一首（见 skipBrokenTrack），跳不动才落 error。
+    try {
       this.audio.src = url;
       await this.audio.play();
       this.status = 'playing';
       this.emit();
+      // 试听片段（会员曲目匿名取流只给一段）：说一次，别让用户以为「放到一半断了」。
+      // 一首只提示一次：单曲循环 / 来回切不会刷屏（角标是常驻的那份，见 player-view 的队列行）
+      if (isTrialTrack(track) && !this.trialNoticed.has(trackKey(track))) {
+        this.trialNoticed.add(trackKey(track));
+        notice(t('player.trialNotice'));
+      }
       if (!opts?.retry) {
         // 归属按曲目自己的专辑算：多专辑队列里，这一段可能不是最后 loadAlbum 的那张
         const album = this.albumOfCurrent();
@@ -468,11 +579,17 @@ export class PlaybackEngine {
       }
     } catch (e) {
       if (!stillCurrent()) return;
-      this.status = 'error';
-      this.errorMsg = String((e as Error).message || e);
-      this.emit();
-      notice(tf('player.cannotPlay', { title: track.title, msg: this.errorMsg }));
+      if (this.skipBrokenTrack(track)) return;
+      this.failTrack(track, e);
     }
+  }
+
+  /** 这一首彻底失败：落 error 状态、写明原因，并报给用户（取址失败与播放失败共用一份文案口径） */
+  private failTrack(track: Track, e: unknown) {
+    this.status = 'error';
+    this.errorMsg = errorText(e);
+    this.emit();
+    notice(tf('player.cannotPlay', { title: track.title, msg: this.errorMsg }));
   }
 
   /** 恢复队列位置（不播放）：加载曲目地址并停在 positionSec 处，等用户自己按播放。
@@ -515,12 +632,12 @@ export class PlaybackEngine {
 
   /** 系统媒体键「暂停」 */
   pause() {
-    if (this.status === 'playing') this.audio.pause();
+    if (this.status === 'playing' || this.motor?.phase === 'starting') this.pauseWithMotor();
   }
 
   async toggle() {
     if (this.status === 'playing') {
-      this.audio.pause();
+      this.pauseWithMotor();
       return;
     }
     if (this.queue.length === 0) {
@@ -532,17 +649,148 @@ export class PlaybackEngine {
       return;
     }
     try {
-      await this.audio.play();
+      await this.resumeWithMotor();
     } catch {
       // play() 拒绝（多为格式/解码问题）→ 交给统一的错误兜底链路
       void this.onAudioError();
     }
   }
 
-  async next() {
-    if (this.queue.length && this.index + 1 < this.queue.length) {
-      await this.playIndex(this.index + 1);
+  // —— 马达（暂停的断电滑停 / 复播的起转）——
+  // 真值在 core/motor：引擎与视图按同一条曲线各自推进（这边写元素的倍速与音量，视图写盘面角度）。
+  // 状态在**按下的这一刻**就翻（那是用户的指令：播放键该灭就灭、系统面板该翻就翻），
+  // 马达那一段是「还在滑、还在响」的下文 —— 对外由快照的 motor 字段交代。
+  // 斜坡中再按一次就是换个方向接着走（曲线只与此刻的转速有关，见 core/motor 的模型说明）。
+
+  /** 暂停：断电滑停。元素那边的收尾（停声、归位）都在 motorEnd ——
+   *  这里先把状态翻掉，再让转速滑下去。 */
+  private pauseWithMotor() {
+    // 减少动态效果：不做斜坡（与旧行为一致，盘面本来就不转）；手在盘上时也不插手，交给手势收尾
+    const ramp = !this.scratch && !prefersReducedMotion() && this.index >= 0 && !!this.queue[this.index];
+    this.status = 'paused';
+    if (ramp) this.motorBegin('stopping', this.motor ? this.motor.rate : 1);
+    else {
+      this.audio.pause();
+      this.emit();
     }
+  }
+
+  /** 复播：马达起转。先把元素压到地板转速、音量归零，再让它出声 —— 转速与音量一起升起来，
+   *  听到的是「转盘转起来、声音跟着出来」，而不是原速起步再被拽一下。
+   *  滑停到一半按播放：从当时的转速接着升（不是从 0 重来）。 */
+  private async resumeWithMotor() {
+    const ramp = !this.scratch && !prefersReducedMotion();
+    // 状态先翻（与暂停对称）：盘面这就开始转起来，元素那边出声可能要等缓冲几毫秒到几秒
+    this.status = 'playing';
+    if (ramp) this.motorBegin('starting', this.motor ? this.motor.rate : MOTOR_MIN_RATE);
+    try {
+      await this.audio.play();
+    } catch (e) {
+      if (ramp) this.motorAbort();
+      throw e;
+    }
+  }
+
+  /** 起一段斜坡：元素按曲线走倍速、音量随转速淡入淡出、音高跟着转速（唱片那一套）。
+   *  两个执行者共用 core/motor 的同一条曲线；这里只写元素，盘面角度归视图（见快照的 motor）。 */
+  private motorBegin(phase: MotorPhase, from: number) {
+    this.motorStopTimers();
+    const rate = Math.min(1, Math.max(MOTOR_MIN_RATE, from));
+    this.motor = { phase, from: rate, startedAt: Date.now(), rate, timer: 0, watch: 0 };
+    this.motorGain = motorGain(rate);
+    this.setPitchFollow(true);
+    this.applyVolume();
+    this.writeRate(rate);
+    const m = this.motor;
+    m.timer = window.setInterval(() => this.motorTick(), MOTOR_TICK_MS);
+    // 兜底：后台的定时器会被节流（隐藏窗口里 setInterval 最慢 1 秒一次），到点必须收 ——
+    // 否则声音卡在半速上一直响。间隙里的每一次 tick 都会按「起点 + 已走时长」重算，
+    // 所以迟到的 tick 自己就落在终点上（曲线是闭式的，不靠帧率积分）。
+    m.watch = window.setTimeout(() => this.motorEnd(), MOTOR_MAX_MS + 100);
+    this.emit();
+  }
+
+  private motorTick() {
+    const m = this.motor;
+    if (!m) return;
+    const elapsed = Date.now() - m.startedAt;
+    m.rate = motorRate(m.from, elapsed, m.phase);
+    this.writeRate(m.rate);
+    this.motorGain = motorGain(m.rate);
+    this.applyVolume();
+    if (motorDone(m.phase, m.rate, elapsed)) this.motorEnd();
+  }
+
+  /** 斜坡收尾：转速、音量、音高都还回原位。滑停的那一段到这里才真正暂停元素 ——
+   *  在此之前声音是一路淡下去的（状态早已翻成暂停，不必再翻）。 */
+  private motorEnd() {
+    const m = this.motor;
+    if (!m) return;
+    this.motorStopTimers(); // 先撤表（它读的就是 this.motor），再清状态
+    this.motor = null;
+    this.motorGain = 1;
+    this.setPitchFollow(false);
+    this.writeRate(1);
+    this.applyVolume();
+    if (m.phase === 'stopping' && !this.audio.paused) this.audio.pause();
+    this.emit();
+  }
+
+  /** 收掉斜坡（换曲 / 清队列 / 搓碟起手 / 关视图）：元素归位，位置与状态一概不动 ——
+   *  调用方自己决定这一首接下来怎么走。 */
+  private motorAbort() {
+    if (!this.motor) return;
+    this.motorStopTimers();
+    this.motor = null;
+    this.motorGain = 1;
+    this.setPitchFollow(false);
+    this.writeRate(1);
+    this.applyVolume();
+  }
+
+  private motorStopTimers() {
+    const m = this.motor;
+    if (!m) return;
+    if (m.timer) window.clearInterval(m.timer);
+    if (m.watch) window.clearTimeout(m.watch);
+    m.timer = 0;
+    m.watch = 0;
+  }
+
+  /** 元素倍速（钳在 [地板, 1]）：地板以下内核会自己钳到 0.0625 并打一条控制台警告，
+   *  而那一档的音量已经是 0（见 motorGain），写下去没有任何听感收益。 */
+  private writeRate(rate: number) {
+    try {
+      this.audio.playbackRate = Math.min(1, Math.max(MOTOR_MIN_RATE, rate));
+    } catch {
+      /* 元素对倍速挑剔：忽略，位置与画面照常 */
+    }
+  }
+
+  /** 队尾有没有去处（循环 / 随机有，单次没有）——只判断，不带副作用 */
+  private tailHasTarget(): boolean {
+    return this.queue.length > 0 && this.playMode !== 'once';
+  }
+
+  /** 队尾的去处：循环 → 回队首；随机 → 重洗一遍再从头放（随机的语义是一直放下去）。
+   *  没有去处时什么都不做并返回 false —— 由调用方决定是「停下」（一首放完了）
+   *  还是「什么都不做」（用户手动点下一首，队列已经到底）。三处共用这一份，
+   *  队尾语义才不会一边「回队首」、另一边「静默无效」。 */
+  private wrapAtTail(): boolean {
+    if (!this.tailHasTarget()) return false;
+    if (this.playMode === 'shuffle') this.shuffleQueue();
+    void this.playIndex(0);
+    return true;
+  }
+
+  async next() {
+    if (this.index + 1 < this.queue.length) {
+      await this.playIndex(this.index + 1);
+      return;
+    }
+    // 队尾：循环 / 随机按各自的语义有去处（旧写法在这里无声返回 —— 按了下一首什么都没发生）；
+    // 单次模式整条队列已经放完，没有下一首，保持不动
+    this.wrapAtTail();
   }
 
   async prev() {
@@ -562,6 +810,23 @@ export class PlaybackEngine {
     if (d > 0) this.audio.currentTime = ratio * d;
   }
 
+  /** 跳到指定秒（歌词行点击这类「按时间点定位」）：越界一律夹在曲目范围内。
+   *  与 seek(ratio) 的区别只是喂进来的是秒不是百分比 —— 两者共用同一条守卫（搓碟期间不接手）。 */
+  seekTo(seconds: number) {
+    if (this.scratch) return;
+    const d = this.audioDuration();
+    if (!(d > 0) || !Number.isFinite(seconds)) return;
+    this.audio.currentTime = Math.min(Math.max(0, seconds), Math.max(0, d - 1));
+    this.emit();
+  }
+
+  /** 播放位置的实时读数（秒）：歌词滚动这类逐帧动画要的精度比 snapshot 的 400ms 节流高得多。
+   *  读的就是元素当前值 —— 与进度条同源（搓碟期间位置由视图喂进来，这里读到的也是它）。 */
+  liveSeconds(): number {
+    const t = this.audio.currentTime;
+    return Number.isFinite(t) ? t : 0;
+  }
+
   // —— 搓碟（视图的手势通道）——
   // 分工：视图负责手势、视觉与（完整音效的）解码搓碟台；引擎只负责元素的起停与状态口径。
   // 位置的主人始终是视图 —— 快照里的 currentTime 在搓碟期间读的就是视图喂进来的值。
@@ -575,9 +840,14 @@ export class PlaybackEngine {
     if (this.status !== 'playing' && this.status !== 'paused') return null;
     const time = this.audio.currentTime || 0;
     const playing = this.status === 'playing';
+    // 手按上盘：正在走的马达斜坡（滑停 / 起转）到此为止，元素先归位（倍速 / 音量 / 音高都还回去），
+    // 后面那三件套才是在干净的底子上做的
+    this.motorAbort();
     // 先立会话再暂停：pause 事件（异步）回来时看到 scratch 已经存在，就不会把状态写成暂停
     this.scratch = { live: opts.live, resumePlaying: playing, time, pitchFollow: false };
-    if (playing) this.audio.pause();
+    // 元素还在出声就得停（含滑停未完的情形 —— 那会儿对外已经是暂停，声音却还响着）：
+    // 手指一按下去，声音就归手势
+    if (!this.audio.paused) this.audio.pause();
     if (opts.live) this.applyPitchFollow(true); // 声音要走元素：音高跟着转速（见 setPitchFollow）
     return { time, playing };
   }
@@ -602,13 +872,10 @@ export class PlaybackEngine {
   }
 
   /** 元素的「保音高」开关：preservesPitch 默认是 true —— 那是给变速不变调用途的时间拉伸，
-   *  0.5 倍速听上去是「慢放」而不是黑胶。搓碟要的是唱片那一套：转速变多少、音高就变多少
-   *  （搓碟的灵魂之一正是这个「跟着手变调」）。只在轻量路（元素真的出声）用得上，
-   *  松手 / 换路 / 收会话都要还回去 —— 正常播放不受影响。 */
-  private applyPitchFollow(on: boolean) {
-    const s = this.scratch;
-    if (!s || s.pitchFollow === on) return;
-    s.pitchFollow = on;
+   *  0.5 倍速听上去是「慢放」而不是黑胶。唱片的转速变多少、音高就该变多少
+   *  （搓碟与马达斜坡要的都是这一套：一个跟着手变调，一个跟着停下来的转盘降调）。
+   *  只在元素真的出声时用得上，松手 / 换路 / 收会话 / 斜坡收尾都要还回去。 */
+  private setPitchFollow(on: boolean) {
     const a = this.audio as HTMLAudioElement & { webkitPreservesPitch?: boolean };
     try {
       a.preservesPitch = !on;
@@ -616,6 +883,15 @@ export class PlaybackEngine {
     } catch {
       /* 元素不支持 / 替身对象：倍速照旧，只是音高不变 */
     }
+  }
+
+  /** 搓碟会话自己的音高开关（带会话记账：只在自己开过的那一侧才动手）。
+   *  与马达互斥 —— 起手时先把斜坡收掉（见 beginScratch），不会两边各写一次。 */
+  private applyPitchFollow(on: boolean) {
+    const s = this.scratch;
+    if (!s || s.pitchFollow === on) return;
+    s.pitchFollow = on;
+    this.setPitchFollow(on);
   }
 
   /** 搓碟期间的位置（秒）：视图逐帧喂进来；快照 / 系统媒体面板 / 上次播放位置都跟着走 */
@@ -701,8 +977,14 @@ export class PlaybackEngine {
   }
 
   setVolume(v: number) {
-    this.audio.volume = Math.min(1, Math.max(0, v));
+    this.userVolume = Math.min(1, Math.max(0, v));
+    this.applyVolume();
     this.emit();
+  }
+
+  /** 元素的实际音量 = 用户那一档 × 马达斜坡的系数（见 userVolume 的说明） */
+  private applyVolume() {
+    this.audio.volume = Math.min(1, Math.max(0, this.userVolume * this.motorGain));
   }
 
   // —— 地址解析（本地 / 网易云 / QQ 三路）——
@@ -711,7 +993,8 @@ export class PlaybackEngine {
       case 'local-vault':
         return this.deps.local.resolveVaultUrl(track.file);
       case 'local-external':
-        return this.deps.local.resolveExternalUrl(track.path);
+        // 优先网关按 Range 供流（整轨不进内存），起不来网关才退回整文件 Blob
+        return this.deps.local.resolveExternalPlayableUrl(track.path);
       case 'netease': {
         const key = trackKey(track);
         const hit = this.urlCache.get(key);
@@ -767,27 +1050,22 @@ export class PlaybackEngine {
       void this.playIndex(this.index + 1);
       return;
     }
-    // 队尾：单次 → 停；循环 → 回队首；随机 → 重洗一次再从头放（随机的语义是一直放下去）
-    if (this.playMode === 'loop') {
-      void this.playIndex(0);
-      return;
-    }
-    if (this.playMode === 'shuffle') {
-      this.shuffleQueue();
-      void this.playIndex(0);
-      return;
-    }
+    // 队尾：循环 → 回队首；随机 → 重洗一次再从头放；单次 → 停在这里
+    if (this.wrapAtTail()) return;
     this.status = 'paused';
     this.emit();
   }
 
   /** 单次 → 循环 → 随机 循环切换（播放器顶部那个模式按钮）。切到随机时立刻打乱一次；
-   *  打乱的对象是「队列里的曲目」—— 队列模式下即整条列表的曲目。 */
+   *  打乱的对象是「队列里的曲目」—— 队列模式下即整条列表的曲目。
+   *  离开随机时把进随机之前的顺序还回去（随机可逆，见 orderBeforeShuffle）。 */
   cyclePlayMode(): PlayMode {
     const order: PlayMode[] = ['once', 'loop', 'shuffle'];
-    const next = order[(order.indexOf(this.playMode) + 1) % order.length];
+    const prev = this.playMode;
+    const next = order[(order.indexOf(prev) + 1) % order.length];
     this.playMode = next;
     if (next === 'shuffle') this.shuffleQueue();
+    else if (prev === 'shuffle') this.restoreShuffledOrder();
     this.emit();
     return next;
   }
@@ -796,6 +1074,8 @@ export class PlaybackEngine {
    *  各专辑的曲子会混在一起）。当前播放的那首仍是当前曲目 —— 下标跟着它走，不打断播放。 */
   shuffleQueue() {
     if (this.queue.length < 2) return;
+    // 只在第一次打乱时记原序：连点两次「随机」不该把打乱后的顺序当成原序存下来
+    if (!this.orderBeforeShuffle) this.orderBeforeShuffle = [...this.queue];
     const currentKey = this.index >= 0 ? trackKey(this.queue[this.index]) : '';
     this.queue = this.shuffle(this.queue);
     if (currentKey) {
@@ -803,6 +1083,24 @@ export class PlaybackEngine {
       if (i >= 0) this.index = i;
     }
     this.emit();
+  }
+
+  /** 还原进随机之前的顺序（当前曲目跟着走，不打断播放）。
+   *  期间队列被增删过（排入专辑 / 移除过曲目）就放弃还原：那份顺序已经对不上现在的曲目集合了，
+   *  硬套回去会丢歌或出现重影 —— 静默放弃比错位好。 */
+  private restoreShuffledOrder(): void {
+    const saved = this.orderBeforeShuffle;
+    this.orderBeforeShuffle = null;
+    if (!saved || saved.length !== this.queue.length || !saved.every((t) => this.queue.includes(t))) {
+      return;
+    }
+    const current = this.index >= 0 ? this.queue[this.index] : undefined;
+    this.queue = saved;
+    if (current) {
+      let i = this.queue.indexOf(current);
+      if (i < 0) i = this.queue.findIndex((tr) => trackKey(tr) === trackKey(current));
+      if (i >= 0) this.index = i;
+    }
   }
 
   /** Fisher–Yates（洗牌源可注入，测试里给固定序列） */
@@ -855,15 +1153,37 @@ export class PlaybackEngine {
       }
     }
     if (!stillCurrent()) return;
+    // 两轮兜底都没救回来：能跳就跳到下一首 —— 网络抖一下、单个文件坏了都不该让唱片停在那儿
+    // 等用户手动点（旧写法是落 status='error' 就完事，一张专辑里坏一首就卡在那儿）。
+    if (this.skipBrokenTrack(track)) return;
     this.status = 'error';
     this.errorMsg = tf('player.playFailed', { title: track.title });
     this.emit();
     notice(this.errorMsg);
   }
 
+  /** 一首彻底放不出来之后的处置（地址拿到了却放不出来：解码失败 / 格式不支持 / 链接过期，
+   *  两轮兜底也救不回来）：能去别处就跳过去，返回 true。
+   *  去处有两处：后面的下一首；队尾则由循环 / 随机接走（见 wrapAtTail），单次模式没有去处。
+   *  同一首在一次播放回合里只自动跳一次（autoSkipped）：整条队列都失效时，
+   *  这条记账把过程收在「跳满一圈」而不是来回打转；用户手动点回来仍然可以再试。
+   *  跳之前先说一声 —— 自动换歌不解释的话，用户看到的是「播放器自己乱跳」。 */
+  private skipBrokenTrack(track: Track): boolean {
+    const key = trackKey(track);
+    if (this.autoSkipped.has(key)) return false;
+    const hasNext = this.index + 1 < this.queue.length;
+    if (!hasNext && !this.tailHasTarget()) return false;
+    this.autoSkipped.add(key);
+    notice(tf('player.skipFailed', { title: track.title }));
+    if (hasNext) void this.playIndex(this.index + 1);
+    else this.wrapAtTail();
+    return true;
+  }
+
   dispose() {
     this.listeners.clear();
     this.abortScratch();
+    this.motorAbort();
     this.audio.pause();
     this.audio.removeAttribute('src');
     try {

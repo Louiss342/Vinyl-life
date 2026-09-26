@@ -4,12 +4,13 @@
 // 与 QQ 的唯一结构差异：取流要带 hash + 专辑 id + mixsongid（album_audio_id）三件套。
 import { requestUrl } from 'obsidian';
 import { Track } from './track';
-import { GatewayError } from './request-error';
+import { GatewayError, withRequestTimeout } from './request-error';
 import type { SongUrlResult } from './server-client';
 import { getLanguage, t, tf } from './i18n';
 import type {
   ApiErrorResponse,
   KugouAlbumResponse,
+  KugouLyricResponse,
   KugouSearchResponse,
   KugouSong,
   LoginResponse,
@@ -29,14 +30,16 @@ export class KugouService {
   }
 
   private async request<T>(pathname: string, options?: { method?: string; body?: string }): Promise<T> {
-    const res = await requestUrl({
-      url: `${this.base()}${pathname}`,
-      headers: this.authHeaders(),
-      method: options?.method,
-      contentType: options?.body ? 'application/json' : undefined,
-      body: options?.body,
-      throw: false,
-    });
+    const res = await withRequestTimeout(
+      requestUrl({
+        url: `${this.base()}${pathname}`,
+        headers: this.authHeaders(),
+        method: options?.method,
+        contentType: options?.body ? 'application/json' : undefined,
+        body: options?.body,
+        throw: false,
+      })
+    );
     const body: unknown = res.json;
     if (res.status < 200 || res.status >= 300) {
       const error = (body as ApiErrorResponse | null)?.error;
@@ -83,6 +86,20 @@ export class KugouService {
       keywords,
       page: String(page),
     });
+  }
+
+  /** 歌词：网关按「关键词 + hash + 时长」去上游挑候选再下载，客户端只给三样线索。
+   *  酷狗没有翻译轨（trans 恒为空）；取不到就是没有 —— 视图按「空」显示，不算错误。 */
+  async lyric(
+    hash: string,
+    opts: { title?: string; artist?: string; duration?: number; albumAudioId?: string } = {}
+  ): Promise<KugouLyricResponse> {
+    const params: Record<string, string> = { id: hash };
+    if (opts.title) params.title = opts.title;
+    if (opts.artist) params.artist = opts.artist;
+    if (opts.duration) params.duration = String(opts.duration);
+    if (opts.albumAudioId) params.albumAudioId = opts.albumAudioId;
+    return this.getJson<KugouLyricResponse>('/api/kugou/lyric', params);
   }
 
   async songUrl(

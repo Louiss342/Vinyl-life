@@ -18,8 +18,8 @@ const {
   calendarMonthLabels,
   ensureStats,
   localDayKey,
+  albumTitleOf,
   playsByDay,
-  recentAlbums,
   recordTrackPlay,
   retainPlayEvents,
   TRIM_TARGET_EVENTS,
@@ -128,14 +128,20 @@ test('快照渐进更新：新元数据覆盖旧值，未重新采集的缓存�
   });
 });
 
-test('最近专辑优先使用快照标题，便于删除笔记后仍显示原名', () => {
+test('榜单显示名优先用快照标题（笔记删了也还显示原名），并缀上版本', () => {
   const stats = ensureStats({
     totalPlays: 1,
     albums: { 'old/path.md': { plays: 1, lastPlayedAt: 10, snapshot: { title: '原专辑名' } } },
     tracks: {},
     events: [],
   });
-  assert.deepEqual(plain(recentAlbums(stats, 1)), [{ path: 'old/path.md', title: '原专辑名' }]);
+  assert.equal(albumTitleOf('old/path.md', stats.albums['old/path.md']), '原专辑名');
+  assert.equal(albumTitleOf('x/no-snapshot.md', { plays: 1, lastPlayedAt: 1 }), 'no-snapshot', '快照缺失时退回文件名');
+  assert.equal(
+    albumTitleOf('old/path.md', { plays: 1, lastPlayedAt: 1, snapshot: { title: '原专辑名', edition: 'Remaster' } }),
+    '原专辑名 · Remaster',
+    '版本缀在后面（与卡片同一口径）'
+  );
 });
 
 // ============ 日历热力图：列序（时间倒序）============

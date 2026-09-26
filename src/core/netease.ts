@@ -2,7 +2,12 @@
 // 对外方法与 ServerClient 同构，queue / engine / import 无需感知路由细节。
 import { ServerClient, SongUrlResult } from './server-client';
 import { WebClient } from './web-client';
-import type { NeteaseAlbumResponse, NeteaseSearchResponse, SearchPage } from './api-types';
+import type {
+  NeteaseAlbumResponse,
+  NeteaseLyricResponse,
+  NeteaseSearchResponse,
+  SearchPage,
+} from './api-types';
 import { t } from './i18n';
 
 export class NeteaseService {
@@ -28,6 +33,12 @@ export class NeteaseService {
     }
     await this.ensureGatewayReady();
     return this.gateway.album(id);
+  }
+
+  /** 歌词：只走网关（网页直连那条没有歌词端点）。取不到就是没有 —— 视图按「空」显示，不算错误。 */
+  async lyric(id: number): Promise<NeteaseLyricResponse> {
+    await this.ensureGatewayReady();
+    return this.gateway.lyric(id);
   }
 
   async songUrl(id: number, level: string): Promise<SongUrlResult> {

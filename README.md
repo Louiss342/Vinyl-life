@@ -31,7 +31,8 @@
   - 5.1 代码分层
   - 5.2 运行时清单
   - 5.3 数据归属
-  - 5.4 默认目录
+  - 5.4 专辑笔记的 frontmatter 键
+  - 5.5 默认目录
 - 6、使用手册
   - 6.1 专辑墙
     - 6.1.1 工具栏
@@ -46,8 +47,9 @@
     - 6.2.2 唱机与唱臂
     - 6.2.3 搓碟
     - 6.2.4 唱片面
-    - 6.2.5 曲目队列
-    - 6.2.6 队列笔记
+    - 6.2.5 歌词
+    - 6.2.6 曲目队列
+    - 6.2.7 队列笔记
   - 6.3 导入音乐
     - 6.3.1 本地音频
     - 6.3.2 在线搜索与链接导入
@@ -69,6 +71,7 @@
     - 6.7.1 五个标签页
     - 6.7.2 外观
     - 6.7.3 默认目录
+  - 6.8 命令与快捷键
 - 7、安装与开始使用
 - 8、在线音源与数据
   - 8.1 接入方式与边界
@@ -96,7 +99,7 @@ Vinyl Life 是 Obsidian 的桌面插件，本质上来说只实现两件事：�
 
 **笔记是真源。** 专辑资料、评分、听歌记录都写在 Markdown 笔记里，插件不另建一份收藏数据库。删掉插件，笔记还在；换台电脑，收藏跟着笔记库走。
 
-**本地优先。** 只听本地文件时，插件不联网、不登录、不启动任何后台进程。在线音源是可选加成，不是使用前提。
+**本地优先。** 只听库内音频时，插件不联网、不登录、不启动任何后台进程。库外音频（引用 vault 之外的绝对路径）已经改走本机网关按 HTTP Range 供流，免得整轨被读进内存（见 6.3.1）。在线音源是可选加成，不是使用前提。
 
 **不越权。** 不绕过付费和会员限制，不收集遥测，不上传播放统计。需要联网时，只连你自己选定的那个平台。
 
@@ -108,7 +111,7 @@ Vinyl Life 是 Obsidian 的桌面插件，本质上来说只实现两件事：�
 | 平台 | 仅桌面端 |
 | 界面语言 | 中文、English |
 | 安装 | 三个文件（`main.js`、`manifest.json`、`styles.css`）放进插件目录即可，不用另外装 Node.js，也没有需要常驻的服务 |
-| 本地音频 | 独立可用，不需要账号、网络或后台进程 |
+| 本地音频 | 独立可用，不需要账号或网络；库内音频不起后台进程，库外音频用网关按 Range 供流 |
 | 在线音源 | 网易云音乐、QQ 音乐、酷狗音乐，依赖各平台接口与账号权限，可用性由平台决定 |
 
 ### 2、核心概念
@@ -141,7 +144,7 @@ Vinyl Life 是 Obsidian 的桌面插件，本质上来说只实现两件事：�
 | --- | --- | --- |
 | **A. 专辑墙** | 识别专辑笔记；用封面卡片浏览收藏；按专辑、艺人等检索；打开笔记；从墙上选择专辑播放。 | 来源筛选、排序和卡片属性陈列；封面更换；多选及批量删除；唱片交接动画和布局定制。 |
 | **B. 音乐导入** | 导入本地音频或在线专辑；创建或补充专辑笔记；解析音源并形成曲目。 | 本地文件/文件夹批量导入、库内复制或库外引用；在线聚合搜索、链接导入、连续添加和重复识别；扫码登录、音质选择。 |
-| **C. 播放器** | 专辑与曲目播放、暂停、切歌、进度、音量；队列与播放模式；播放器和唱片墙状态同步。 | 模拟唱臂与唱片动效、搓碟、系统媒体键、会话内曲目重排、上次播放状态恢复、独立窗口或侧栏摆放。 |
+| **C. 播放器** | 专辑与曲目播放、暂停、切歌、进度、音量；队列与播放模式；播放器和唱片墙状态同步。 | 模拟唱臂与唱片动效、搓碟、歌词（逐句高亮、跟随与跳转）、系统媒体键、会话内曲目重排、上次播放状态恢复、独立窗口或侧栏摆放。 |
 | **D. 笔记** | 一张专辑对应一篇可自由编辑的 Markdown 笔记；在专辑笔记中追加带时间的听歌记录；向当前笔记插入正在听的内容。 | 本地导入笔记模板、自定义属性、双链与封面约定、无音源收藏、播放位置回跳链接。 |
 | **E. 历史** | 自动记录播放事件；查看最近播放、播放最多和日历热力图。 | 按专辑属性分组统计、删除后保留统计快照、导出 Markdown 统计笔记、备份与恢复、清除统计。 |
 | **F. 设置与运行支持** | 管理目录、音源、自动播放、账号及语言；确保本地和在线接入正常运行。 | 外观主题、工具栏位置、唱片颜色与动效、收藏健康检查、故障提示、样式兜底。 |
@@ -182,7 +185,7 @@ Vinyl Life
 
 播放器可以放在三个地方：右侧栏、主区标签页，或者单独开一个窗口。
 
-页面自上而下三张卡片：按键卡、唱机、唱放。顶部「选取专辑」会把唱机与唱放这对卡片翻到背面，那一面是三行唱片架，可以翻碟、多选，再一次性加入队列。
+页面自上而下三张卡片：按键卡、唱机、唱放。顶部四枚按键里有两位「翻面键」分居两侧，转的是同一块翻转区：一侧是逐句跟着唱的歌词，另一侧是三行唱片架，可以翻碟、多选，再一次性加入队列。
 
 #### 4.4 设置面板
 
@@ -206,7 +209,7 @@ Vinyl Life
 | 项 | 数量 | 说明 |
 | --- | --- | --- |
 | 视图 | 2 | 专辑墙、黑胶播放器；另有 1 枚 ribbon 图标。 |
-| 命令 | 10 | 打开两个视图、两种导入、插入正在听、存/载队列、三条播放控制。 |
+| 命令 | 16 | 打开两个视图、两种导入、插入正在听、存/载队列、三条播放控制、写听歌记录、换封面、在源站打开、给当前专辑导入音频、队列整段上下移。 |
 | 设置页 | 5 | 通用、历史、外观、源、关于。 |
 | 协议 | 1 | `obsidian://vinyl-life`，供笔记里的播放位置回跳。 |
 | 界面语言 | 2 | 中文、English。 |
@@ -222,7 +225,43 @@ Vinyl Life
 
 自动统计不写进专辑笔记。只有你主动点「听歌记录」或执行插入命令时，插件才会改笔记正文。
 
-#### 5.4 默认目录
+#### 5.4 专辑笔记的 frontmatter 键
+
+插件只认下面这些键（一篇笔记被当作专辑，唯一条件是 `tags` 里有 `album`）。**其余键都是你的**：任何自定义属性都能进卡片「封面下的信息」，也能当排序依据 —— 插件不写、不改、不删它们。
+
+| 键 | 谁写 | 取值 | 说明 |
+| --- | --- | --- | --- |
+| `tags` | 你（导入时也帮你加） | 列表，含 `album` | 专辑墙识别一篇笔记的唯一依据 |
+| `cover` | 导入 / 设置封面 | vault 路径、`[[wikilink]]` 或图片 URL | 卡片封面；没写时按约定在 `cover` / `folder` / `front` 命名里找 |
+| `audioFolder` | 本地导入（复制进库） | vault 内文件夹路径 | 整张专辑的音频目录（`CD1` / `CD2` 子目录也扫） |
+| `audio` | 本地导入（库外引用）/ 单曲导入 | 列表：vault 路径或绝对路径 | 零散音轨；绝对路径 = 文件留在原地，只记引用 |
+| `source` | 你（可选） | `auto` / `local` / `netease` / `qq` / `kugou` | 这张专辑优先用哪个音源；不写就按设置里的顺序 |
+| `edition` | 设置专辑版本 / 导入 | 文本 | 同名作品的一次发行形态，卡片上显示成「专辑名 · 版本」 |
+| `neteaseId` / `qqId` / `kugouId` | 导入 / 关联已有 | 数字或平台 id（酷狗是 hash） | 平台侧身份；裸数字默认按网易云 id 解析 |
+| `collectOnly` | 收藏健康检查「标记为仅收藏」 | `true` | 明确「这张只收藏，不打算播」——健康检查不再提示它缺音源 |
+| `artist` `year` `genre` `label` `country` `version` `catalog` `rating` | 你 | 文本 / 数值 | 插件认识这几个名字（有别名与图标），显示在卡片上并可作为排序依据 |
+| 其它任意键 | 你 | 文本 / 数值 / 列表 / 日期 | 同上：能显示、能排序，插件不解释它的含义 |
+
+数值的读法比写法宽：`year: 1997`、`year: "1997年"`、`year: 2003-05` 都读得出年份；`rating: 4`、`rating: "4/5"`、`rating: 4.5` 都读得出评分（卡片菜单「评分」打开一个小弹窗，自己填一个数字：填什么存什么、留空就是清除这个键 —— 不会改写你手写的格式）。
+
+**查询示例**（Dataview；Bases 里用 `tags.contains("album")` 过滤，属性名与上表一致）：
+
+```dataview
+TABLE artist AS 艺人, year AS 年份, rating AS 评分, file.mtime AS 更新
+FROM #album
+WHERE rating >= 4
+SORT year DESC, artist ASC
+```
+
+```dataview
+LIST
+FROM #album
+WHERE !audioFolder AND !audio AND !neteaseId AND !qqId AND !kugouId
+```
+
+第二条查出的是「只收藏、还没接任何音源」的专辑 —— 与健康检查同一套判据；想让它闭嘴，给这些笔记加 `collectOnly: true`。
+
+#### 5.5 默认目录
 
 ```text
 Vinyl Life/
@@ -311,7 +350,7 @@ Vinyl Life/
 
 ##### 6.2.1 页面结构
 
-整页自上而下三张卡片：顶部三枚按键（「选取专辑」占一半，队列模式与播放模式各占四分之一）、唱机、唱放。
+整页自上而下三张卡片：顶部四枚按键（歌词、选取专辑、队列模式、播放模式各占四分之一）、唱机、唱放。两侧那两枚是「翻面键」，转的是同一块翻转区：左边那枚（歌词）翻出歌词面，右边那枚（选取专辑）翻出唱片区；再点一下回到唱机。
 
 播放与暂停是唱机左下角的一枚长方形按键：黑色键面、边缘两道浅线，贴死在面板左下角，键面是手写体的「Vinyl Life」。播放中它点亮，键面也亮一档；暂停时暗下来。
 
@@ -321,7 +360,11 @@ Vinyl Life/
 
 唱片会转，唱臂有两个姿态。
 
+按暂停是断电滑停：转盘在零点几秒里减速停下，转速掉多少音高就掉多少（真唱机断电就是这个声音），声音同时淡出 —— 两个效果走的是同一条曲线，一起到终点。唱片停在停下的那个角度上，不摆正、也不归零；再按播放是马达起转：从同一个角度转起来、声音淡入，同样是零点几秒。滑停到一半再按播放就在半路接上，不会从头重来。
+
 不播放或暂停时，唱针归位到支架上。播放时唱针落在唱片上，此时唱针到唱片圆心的距离，就是这张专辑播到了哪里。
+
+换曲不走这两段斜坡：真唱机上换曲时转盘一直在转，只有「开始 / 停止」才动马达。开着「减少动态效果」时两段斜坡都不做（那种模式下盘面本来就不转），暂停是直停。
 
 ##### 6.2.3 搓碟
 
@@ -339,13 +382,32 @@ Vinyl Life/
 
 ##### 6.2.4 唱片面
 
-顶部的「选取专辑」会让「唱机 + 唱放」这对卡片像立方体一样左转到背面。那一面是三行唱片架，按键卡和下面的队列都不动。
+顶部的「选取专辑」会让「唱机 + 唱放」这对卡片像立方体一样转到背面。那一面是三行唱片架，按键卡和下面的队列都不动。
 
 横着划过时，三行会错开一点，形成视差。指针停在哪张，哪张就从侧脊放倒、摊开成整张封面。
 
 点一张即换碟；在专辑队列模式下点一张是排到队尾。按住 Ctrl（macOS 是 ⌘）点可以多选，Shift 点连选一段，选好后一次「加入队列」。
 
-##### 6.2.5 曲目队列
+##### 6.2.5 歌词
+
+顶部的「歌词」把翻转区翻过去，那一面是这首歌的歌词。翻过去才开始取词：在线音源同一首只在本次会话里取一次（来回翻面不会重复打网），本地音轨每次都重读一遍文件。
+
+取词按当前曲目的音源走：
+
+- **网易云**：官方歌词与翻译（`tlyric`），译文跟在正文下面一行。
+- **QQ 音乐**：官方歌词与翻译（`trans`）。
+- **酷狗音乐**：按「歌手 + 曲名 + 时长」去酷狗搜词再下载。上游一次回几十条候选，插件按曲名、歌手与时长挑最对得上的一条 —— 直接取第一条常会拿到别人上传的词（那边的排序按歌词热度，不是匹配度）。酷狗只有一条歌词轨，没有翻译。
+- **本地音频**：认与音频同目录、同名的 `.lrc` 旁挂文件，`song.lrc` 与 `song.flac.lrc` 两种写法都行，UTF-8 与 GBK 两种编码都解得开。**不读音频内嵌的歌词**（ID3 / Vorbis）—— 解音频容器要多背一个依赖，为一句歌词不划算，旁挂 `.lrc` 就是本地歌词的完整入口。
+
+**跟着唱**：正在唱的那一句有底色，随这一句的推进从左往右刷过去。画面连续跟着走 —— 不是等到换行才跳，是两行之间的全部时间都在滚，唱到哪画面就到哪。没有文字的时间戳（间奏）画成一枚音符。
+
+**翻着看**：滚轮或按住拖动，高亮就跟着手走，滚到哪哪一句亮，正在唱的那句同时留着底色。停手 4 秒后画面平滑滑回正在唱的那一句（开了「减少动效」就直接到位）。
+
+**跳到某一句**：点歌词行即跳到那一刻，并立刻恢复跟随。每行都是按钮，键盘 Enter / 空格同样可用。歌词里若带 `[offset:+500]` 这类全局时间补偿也认（正值 = 整篇提前），本地 .lrc 常靠它对齐不同版本。
+
+歌词只在播放器里显示：不写进专辑笔记，也不进统计；在线歌词的缓存只在本次会话内，退出即散。
+
+##### 6.2.6 曲目队列
 
 曲目列表可以直接点歌，也可以拖动改变播放顺序。改的顺序只影响这一次会话，不会记住，下次打开仍是发行顺序。
 
@@ -353,7 +415,7 @@ Vinyl Life/
 
 载入专辑后是否自动播放，可以在设置里调整。
 
-##### 6.2.6 队列笔记
+##### 6.2.7 队列笔记
 
 「Vinyl order」旁的保存按钮可以把当前跨专辑队列写成 Markdown 清单，默认落在「队列笔记目录」（设置 → 通用 → 路径）。
 
@@ -378,7 +440,9 @@ Vinyl Life/
 
 也可以直接拖到专辑墙上：放在已有卡片上就是给这张专辑添加音频，放在空白处就是新建专辑。
 
-可导入的扩展名包括 `mp3`、`flac`、`m4a`、`m4b`、`mp4`、`wav`、`ogg`、`oga`、`opus`、`aac`、`webm` 和 `weba`。实际能不能播放，取决于文件编码和 Obsidian 内置的解码器，其他格式会跳过并提示。本地曲目以文件名作标题，暂时不读取 ID3 等音频标签。
+可导入的扩展名包括 `mp3`、`flac`、`m4a`、`m4b`、`mp4`、`wav`、`ogg`、`oga`、`opus`、`aac`、`webm` 和 `weba`。实际能不能播放，取决于文件编码和 Obsidian 内置的解码器，其他格式会跳过并提示。**本地曲目会读内嵌标签**（ID3v2 / Vorbis comment / MP4 ilst）：曲名与艺人取自标签，读不到才回退文件名与笔记里的艺人；标签里的音轨号用来排曲目顺序（`01 …` / `10 …` 这类文件名排序在 10 之后会乱）。专辑名始终以笔记为准 —— 笔记是真源。标签只读文件头 128 KB，不把整轨读进内存；内嵌**封面**与内嵌**歌词**都不读（封面走笔记的 `cover` 与封面文件名约定，歌词走同目录同名的 `.lrc`）。不支持的容器（如 WAV / WMA）安静回退文件名。
+
+**两种存放方式的开销不一样**，挑的时候值得知道：库内音频走 Obsidian 的资源路径，是流式读取，几乎不占内存，也不会启动任何后台进程；库外音频（引用原文件）由插件里现成的本机网关按 **HTTP Range** 供流（`/api/local/stream`，只认绝对路径下的音频文件，且带会话 token 鉴权），播放器只取需要的区间，**整轨不进内存**。代价是这类音频会用到网关进程 —— 首次播放库外音频时把它启动起来，随插件卸载或 Obsidian 退出回收；起不来网关（环境不支持）就自动退回旧的整文件读法，功能不变，只是那一份会进内存，并按字节预算回收最久没用过的那份（正在播的那份始终保留）。
 
 ##### 6.3.2 在线搜索与链接导入
 
@@ -416,7 +480,7 @@ Vinyl Life/
 
 登录决定的是播放。没登录时导入的笔记一样完整，到播放那一步才需要账号。酷狗未登录也能播放免费曲目，登录后解锁会员音质与付费曲目。
 
-在线音源不需要安装 Node.js：首次使用时，插件用 Obsidian 自带的 Node 在应用内启动本机网关。只听本地文件则完全不会启动网关。
+在线音源不需要安装 Node.js：首次使用时，插件用 Obsidian 自带的 Node 在应用内启动本机网关。**只用库内音频不会启动网关**；库外音频会用到它按 Range 供流（见 6.3.1），起不来时自动退回整文件读取。
 
 #### 6.4 专辑笔记与听歌记录
 
@@ -544,6 +608,27 @@ Vinyl Life/
 └── Backups/       备份与裁剪归档（点「备份设置与统计」/ 首次裁剪时才有）
 ```
 
+#### 6.8 命令与快捷键
+
+界面上每个动作都能从命令面板触达（`Ctrl/Cmd + P` 之后输入名字）。
+
+**插件不预设任何快捷键**：Obsidian 的插件规范建议不要设默认键（可能撞上你已经绑好的键，或宿主自带的键）。想让播放控制顺手，在「设置 → 快捷键」里搜一次 `Vinyl Life` 绑上就行 —— 下表是一套够用的推荐，不绑也完全能用。
+
+| 想做的事 | 命令名 | 推荐键（自己绑） |
+| --- | --- | --- |
+| 播放 / 暂停 | 播放 / 暂停 | `Ctrl/Cmd + Shift + P` |
+| 下一首、上一首 | 下一首、上一首 | `Ctrl/Cmd + Shift + →`、`←` |
+| 插入此刻正在听 | 插入此刻正在听的曲目 | `Ctrl/Cmd + Shift + I` |
+| 写听歌记录 | 写听歌记录到当前专辑笔记 | — |
+| 换封面 | 给当前专辑设置封面 | — |
+| 在源站打开 | 在源站打开当前专辑 | — |
+| 给当前专辑导入音频 | 给当前专辑导入本地音频 | — |
+| 队列里整段上下移 | 队列：当前专辑整段上移 / 下移 | `Alt + Shift + ↑`、`↓` |
+
+其余命令（打开专辑墙 / 播放器、导入专辑 / 本地音频、保存 / 载入队列笔记）按需要自己绑。
+
+播放器内部另有一批**不用绑**的键盘操作，Tab 到相应元素上直接按：队列行 `Enter` 切歌、`Alt + ↑/↓` 调序、`Delete` 移除；专辑段头 `Alt + ↑/↓` 整段上下移（与拖拽等价）；歌词行 `Enter` / 空格跳到那一句；搜索框 `Esc` 只退焦点不清条件；唱片区与歌词页 `Esc` 回唱机。卡片属性行的 `Alt + ↑/↓` 调序、「⋯」按钮开卡片菜单，也是同一套「拖拽 / 右键的键盘等价」。
+
 ### 7、安装与开始使用
 
 1. 在obsidian的第三方插件市场中搜索Vinyl Life，或从 [GitHub Releases](https://github.com/Louiss342/Vinyl-life/releases) 下载 `main.js`、`manifest.json` 和 `styles.css`。放进笔记库的 `.obsidian/plugins/vinyl-life/` 文件夹。
@@ -574,6 +659,8 @@ Vinyl Life/
 
 网易云的请求有两条通道：插件界面直连和本地网关，其中一条不可用时自动切到另一条。QQ 音乐与酷狗音乐只有网关通道。酷狗首次取流前会先注册一次本机设备指纹，之后一直沿用。
 
+歌词走的是同一批通道：网易云、QQ 音乐与酷狗音乐的歌词都从对应平台取（酷狗还要先搜词再下载，见 6.2.5）。本地音频的歌词只读你自己放在音频旁边的 `.lrc` 文件，不联网。
+
 搜索带节流保护：同一个关键词短时间内复用上次的结果，连续搜索之间保持最小间隔。平台明确限流时（网易云会回「操作频繁」），暂停该来源十几秒，并在结果上方写明原因，而不是拿「网络失败」搪塞过去。
 
 #### 8.3 登录凭据
@@ -582,13 +669,15 @@ Vinyl Life/
 
 分享插件文件时，不要附带自己的 Cookie 和登录数据。
 
+**用网盘同步笔记库的用户请注意**：iCloud Drive、Dropbox、OneDrive、坚果云这类工具默认会把 `.obsidian` 一起同步，而插件的凭据文件就放在 `.obsidian/plugins/vinyl-life/` 下 —— `.cookie`（网易云）、`.qq-cookie` 与 `.qq-guid`（QQ 音乐）、`.kugou-cookie` 与 `.kugou-device`（酷狗）、`.anon-token` 与 `.device-id`（匿名标识）。这些文件在仓库的 `.gitignore` 里，但**同步工具不看 `.gitignore`**：想让凭据只留在本机，就把 `.obsidian`（至少把这个插件目录）加进同步工具的排除名单。凭据泄露的风险由账号承担：退出登录会清掉对应文件，`设置 → 源` 里的「退出」就是干这个的。
+
 ### 9、权限说明
 
 社区插件审核会列出插件用到的系统能力，这里逐条说明用途。插件只在你的机器上运行，这些能力都只服务于上面写的功能。
 
 - **本地文件读写（Node `fs`）**：按你填写的绝对路径读取库外的音频目录（外链模式）；在插件目录保存登录凭据、设备标识与播放统计；检查插件目录里的 `styles.css` 是否在位、是否与当前版本一致，手工安装漏了文件或升级时只覆盖了 `main.js`，都会挂出内置副本，避免界面裸奔；把内联的网关源码落到系统临时目录后再启动（用 Electron 自带的 Node 在应用内运行）。库内笔记、封面和复制进库的音频一律走 Obsidian 的 vault 接口，不直接读写文件系统。
-- **应用内网关进程**：在线音源需要本机网关去对接网易云 / QQ 音乐 / 酷狗音乐的接口。插件用 Electron 自带的 Node（utility process）在应用内把它启动起来，监听 `127.0.0.1` 上的随机空闲端口；纯本地音源不会启动任何网关。网关随插件卸载或 Obsidian 退出一起回收。启动时还会清理一次旧版本（1.0.8 及更早）用系统 Node 起的遗留进程，这一步会读一次进程命令行，确认目标确实是本插件启动的，以免误杀别的程序。
-- **网关鉴权**：网关虽然只监听 `127.0.0.1`，但本机上任何程序、浏览器里的任何页面都能扫到这个端口。所以每次启动网关都会生成一个随机 token 交给它，插件发出的每个请求都必须带上；没有 token 的请求一律拒绝，网关也不发任何 CORS 头。封面的网络代理另有护栏：只允许 http(s)、目标地址不能是本机或内网、只接收图片，并限时 10 秒、限 12 MB。
+- **应用内网关进程**：在线音源需要本机网关去对接网易云 / QQ 音乐 / 酷狗音乐的接口；库外音频也用它按 HTTP Range 供流（见 6.3.1）。插件用 Electron 自带的 Node（utility process）在应用内把它启动起来，监听 `127.0.0.1` 上的随机空闲端口；只用库内音频不会启动它。网关随插件卸载或 Obsidian 退出一起回收。启动时还会清理一次旧版本（1.0.8 及更早）用系统 Node 起的遗留进程，这一步会读一次进程命令行，确认目标确实是本插件启动的，以免误杀别的程序。
+- **网关鉴权**：网关虽然只监听 `127.0.0.1`，但本机上任何程序、浏览器里的任何页面都能扫到这个端口。所以每次启动网关都会生成一个随机 token 交给它，插件发出的每个请求都必须带上；没有 token 的请求一律拒绝，网关也不发任何 CORS 头。封面的网络代理另有护栏：只允许 http(s)、目标地址不能是本机或内网、只接收图片，并限时 10 秒、限 12 MB。库外音频的供流路由（`/api/local/stream`）同样要 token，且**只认绝对路径下的音频文件**（扩展名不对 / 不是常规文件一律拒绝），不是通用文件读取口。
 - **列举库内文件**：专辑墙要找出所有带 `tags: [album]` 的笔记，因此会枚举库内 Markdown 笔记与图片的路径（封面选择器）。除此之外不读取笔记内容。
 
 ### 10、开发与构建
@@ -679,7 +768,8 @@ Music and notes may have a natural affinity for each other.
   - 5.1 Code layers
   - 5.2 At runtime
   - 5.3 Where data lives
-  - 5.4 Default folders
+  - 5.4 Album-note frontmatter keys
+  - 5.5 Default folders
 - 6. User guide
   - 6.1 Album shelf
     - 6.1.1 Toolbar
@@ -694,8 +784,9 @@ Music and notes may have a natural affinity for each other.
     - 6.2.2 Turntable and tonearm
     - 6.2.3 Scratch
     - 6.2.4 The record crate
-    - 6.2.5 Track queue
-    - 6.2.6 Queue notes
+    - 6.2.5 Lyrics
+    - 6.2.6 Track queue
+    - 6.2.7 Queue notes
   - 6.3 Importing music
     - 6.3.1 Local audio
     - 6.3.2 Online search and link import
@@ -717,6 +808,7 @@ Music and notes may have a natural affinity for each other.
     - 6.7.1 The five tabs
     - 6.7.2 Appearance
     - 6.7.3 Default folders
+  - 6.8 Commands and hotkeys
 - 7. Installation and getting started
 - 8. Online sources and data
   - 8.1 Access and limits
@@ -744,7 +836,7 @@ Once the plugin is on, here is what you can do: import an album and it becomes a
 
 **The note is the source of truth.** Album data, ratings, and listening entries all live in the Markdown note. The plugin keeps no second collection database. Uninstall it and your notes are still there; move to another computer and your collection travels with the vault.
 
-**Local first.** If you only listen to local files, the plugin does not go online, does not ask you to sign in, and does not start any background process. Online sources are an optional addition, never a prerequisite.
+**Local first.** If you only listen to audio kept inside the vault, the plugin does not go online, does not ask you to sign in, and does not start any background process. Audio that lives outside the vault (an absolute path) is streamed through the in-app gateway over HTTP Range so that a whole track never sits in memory (see 6.3.1). Online sources are an optional addition, never a prerequisite.
 
 **No overreach.** Paid and membership limits are not bypassed, no telemetry is collected, and no playback statistics are uploaded. When the plugin does go online, it only talks to the platform you chose.
 
@@ -756,7 +848,7 @@ Once the plugin is on, here is what you can do: import an album and it becomes a
 | Platform | Desktop only |
 | Interface language | Chinese and English |
 | Installation | Three files (`main.js`, `manifest.json`, `styles.css`) into the plugin folder — no Node.js install, and no service left running |
-| Local audio | Works on its own — no account, no network, no background process |
+| Local audio | Works on its own — no account, no network; audio inside the vault starts no background process, audio outside it is streamed by the gateway with Range |
 | Online sources | NetEase Cloud Music, QQ Music, Kugou Music; subject to each platform's APIs and your account permissions |
 
 ### 2. Core concepts
@@ -791,7 +883,7 @@ Remove a **primary** feature and the chain of collecting, playing, or writing so
 | --- | --- | --- |
 | **A. Collection and album shelf** | Recognising album notes; browsing the collection as cover cards; searching by album, artist and more; opening notes; picking an album to play from the shelf. | Source filters, sorting, and which properties cards show; changing covers; multi-select and batch delete; the record handoff animation and layout options. |
 | **B. Music access and import** | Importing local audio or an online album; creating or extending album notes; resolving sources into tracks. | Bulk file/folder import, copying into the vault or referencing outside it; aggregated online search, link import, importing several in a row, duplicate detection; QR sign-in, quality selection. |
-| **C. Vinyl playback** | Playing, pausing, skipping, seek and volume; queues and play modes; keeping the player and the shelf in sync. | Tonearm and record motion, scratching, system media keys, reordering tracks within a session, restoring the last playback, sidebar or separate window placement. |
+| **C. Vinyl playback** | Playing, pausing, skipping, seek and volume; queues and play modes; keeping the player and the shelf in sync. | Tonearm and record motion, scratching, lyrics (line highlight, follow and jump), system media keys, reordering tracks within a session, restoring the last playback, sidebar or separate window placement. |
 | **D. Notes and listening log** | One freely editable Markdown note per album; appending a timestamped listening entry to an album note; inserting what is playing now into the current note. | Import templates, custom properties, wikilinks and cover conventions, collection-only albums, and the position link that jumps back into the music. |
 | **E. Review and statistics** | Recording play events automatically; recent plays, most played, and a calendar heatmap. | Grouping by album properties, keeping a snapshot after deletion, exporting a Markdown statistics note, backup and restore, clearing statistics. |
 | **F. Settings and runtime support** | Managing folders, sources, autoplay, accounts, and language; keeping local and online access working. | Appearance, toolbar position, record colour and motion, the library health check, failure notices, and the stylesheet fallback. |
@@ -832,7 +924,7 @@ On the wall an album is one cover card, and hovering slides the record out of it
 
 The player can live in the right sidebar, as a tab in the main area, or in a window of its own.
 
-The page is three cards, top to bottom: the button card, the turntable, and the phono stage. “Pick an album” at the top turns the turntable and phono stage over to their other face — a three-row record crate where you can flip through records, select several, and add them to the queue in one go.
+The page is three cards, top to bottom: the button card, the turntable, and the phono stage. Two of the four buttons at the top are “turn it over” keys, one on each side, and both turn the same area: the lyrics face on one side, and on the other a three-row record crate where you can flip through records, select several, and add them to the queue in one go.
 
 #### 4.4 Settings panel
 
@@ -856,7 +948,7 @@ The five tabs are drawn by the plugin itself; clicking a tab swaps the content i
 | Item | Count | Notes |
 | --- | --- | --- |
 | Views | 2 | Album shelf and vinyl player, plus one ribbon icon. |
-| Commands | 10 | Open the two views, two imports, insert now playing, save/load queue, three transport controls. |
+| Commands | 16 | Open the two views, two imports, insert now playing, save/load the queue note, three transport controls, write a listening note, set a cover, open in source, import audio into the current album, move a queue segment up/down. |
 | Settings tabs | 5 | General, History, Appearance, Sources, About. |
 | Protocol | 1 | `obsidian://vinyl-life`, used by the position links in notes. |
 | Interface languages | 2 | Chinese and English. |
@@ -872,7 +964,43 @@ The five tabs are drawn by the plugin itself; clicking a tab swaps the content i
 
 Automatic statistics are never written into album notes. The plugin only touches a note body when you deliberately hit the listening-entry button or run the insert command.
 
-#### 5.4 Default folders
+#### 5.4 Album-note frontmatter keys
+
+The plugin recognises only the keys below (the one condition for a note to count as an album is `album` in `tags`). **Everything else is yours**: any custom property can be shown under the cover and used as a sort basis — the plugin never writes, changes or deletes it.
+
+| Key | Written by | Value | Meaning |
+| --- | --- | --- | --- |
+| `tags` | You (import adds it too) | A list containing `album` | The only thing that makes the shelf treat a note as an album |
+| `cover` | Import / Set cover | A vault path, `[[wikilink]]` or image URL | The card cover; without it the plugin looks for the `cover` / `folder` / `front` naming convention |
+| `audioFolder` | Local import (copied into the vault) | A folder path inside the vault | The album's audio folder (`CD1` / `CD2` subfolders are scanned too) |
+| `audio` | Local import (reference) / single-track import | A list of vault or absolute paths | Loose tracks; an absolute path means the file stays where it is and only a reference is recorded |
+| `source` | You (optional) | `auto` / `local` / `netease` / `qq` / `kugou` | Which source this album prefers; without it the order in Settings applies |
+| `edition` | Set album edition / import | Text | One release of the same work, shown as “Title · Edition” on the card |
+| `neteaseId` / `qqId` / `kugouId` | Import / Link existing | A number or platform id (a hash for Kugou) | The platform-side identity; a bare number is read as a NetEase id |
+| `collectOnly` | Library health → “Mark as collection only” | `true` | Says “this one is a collection, I do not mean to play it” — health checks stop asking it for a source |
+| `artist` `year` `genre` `label` `country` `version` `catalog` `rating` | You | Text / number | Names the plugin knows (they get a label and an icon); shown on the card and offered as sort bases |
+| Any other key | You | Text / number / list / date | Same as above: shown and sortable, with no interpretation attached |
+
+Values are read more loosely than they are written: `year: 1997`, `year: "1997年"` and `year: 2003-05` all yield a year; `rating: 4`, `rating: "4/5"` and `rating: 4.5` all yield a rating (the card menu opens a small box where you type a number: whatever you type is what gets stored, and leaving it empty deletes the key — your own format is never rewritten).
+
+**Query examples** (Dataview; in Bases, filter with `tags.contains("album")` and use the same property names):
+
+```dataview
+TABLE artist, year, rating, file.mtime AS updated
+FROM #album
+WHERE rating >= 4
+SORT year DESC, artist ASC
+```
+
+```dataview
+LIST
+FROM #album
+WHERE !audioFolder AND !audio AND !neteaseId AND !qqId AND !kugouId
+```
+
+The second query lists albums that are collections only, with no source attached — the same test the library health check uses. Add `collectOnly: true` to those notes to have it stop asking.
+
+#### 5.5 Default folders
 
 All seven folders use title case:
 
@@ -969,7 +1097,7 @@ Clicking a card switches to that record: its vinyl slides off the wall and into 
 
 ##### 6.2.1 Page structure
 
-Three cards, top to bottom: a row of three buttons (“Pick an album” takes half, queue mode and play mode a quarter each), the turntable, and the phono stage.
+Three cards, top to bottom: a row of four buttons (lyrics, pick an album, queue mode and play mode, a quarter each), the turntable, and the phono stage. The two outer ones are “turn it over” keys for the same area: the left one reveals the lyrics face, the right one the record crate; click again to come back to the turntable.
 
 Play/pause is a rectangular button in the turntable's lower-left corner: black face, two light rules along the edges, its bottom edge level with the bottom of the record, and “Vinyl Life” in the handwriting face on the button itself. While playing it lights up and breathes slowly, the way powered equipment does, and the face brightens a step; paused, it dims and the breathing stops.
 
@@ -979,7 +1107,11 @@ The phono-stage card holds the track progress bar and the volume meter.
 
 The record spins, and the tonearm has two postures.
 
+Pressing pause cuts the motor: the platter coasts down to a stop over a fraction of a second, and the music drops in pitch exactly as the platter slows — the sound of a turntable losing power — while fading out along the same curve, so the two reach the end together. The record comes to rest at whatever angle it stopped at: it is not squared up, and not reset. Pressing play starts the motor again from that same angle, spinning back up (and fading in) over the same fraction of a second. Press play halfway through the coast-down and it picks up from the speed it had reached, rather than starting over.
+
 Off the record and resting on its cradle when nothing is playing or playback is paused (posture 1, the arm pointing straight down). Down on the record while an album plays (posture 2), where the distance between the stylus and the centre of the record is exactly how far into the album you are.
+
+Changing tracks does not run either ramp: on a real turntable the platter keeps spinning between tracks, and only start/stop touches the motor. With “reduced motion” on neither ramp runs (the platter never spins in that mode), and pause stops straight away.
 
 ##### 6.2.3 Scratch
 
@@ -997,13 +1129,32 @@ There are two sound paths, but what you hear is always the song at the needle.
 
 ##### 6.2.4 The record crate
 
-“Pick an album” at the top turns the “turntable + phono stage” pair like a cube to its other face. That side is a three-row record crate; the button card and the queue below it stay put.
+“Pick an album” at the top turns the “turntable + phono stage” pair like a cube to its other face. That side is a three-row record crate; the button card and the queue below it stay put. The same area's other face holds the lyrics (see 6.2.5).
 
 The rows drift slightly out of step as you move across them, giving a parallax effect. The album under the pointer tips over from its spine into a full cover.
 
 Click one to switch to it; in album queue mode a click queues it instead. Ctrl-click (⌘ on macOS) selects several albums, Shift-click extends a run, and “Add to queue” takes them all at once.
 
-##### 6.2.5 Track queue
+##### 6.2.5 Lyrics
+
+The “Lyrics” button at the top turns the flip area over; that face holds the lyrics of the current track. Nothing is fetched until you turn to it: for online sources each track is fetched once per session (flipping back and forth does not hit the network again), while local tracks re-read the file every time.
+
+Where the words come from follows the track's source:
+
+- **NetEase**: the official lyrics and translation (`tlyric`), the translation sitting under each line.
+- **QQ Music**: the official lyrics and translation (`trans`).
+- **Kugou Music**: the plugin searches Kugou by “artist + title + duration” and downloads the result. The upstream returns dozens of candidates and the plugin picks the one that matches title, artist and duration best — taking the first one often lands on somebody else's upload, because that list is ranked by lyric popularity rather than by how well it fits this track. Kugou has a single lyric track, with no translation.
+- **Local audio**: a `.lrc` file next to the audio file with the same name, in either the `song.lrc` or the `song.flac.lrc` style, in UTF-8 or GBK. Lyrics embedded in the audio file (ID3 / Vorbis) are **not** read — decoding an audio container would mean carrying another dependency for a single line, so the sidecar `.lrc` is the complete entry point for local lyrics.
+
+**Sing along**: the line being sung carries a highlight that fills left to right as that line progresses. The view scrolls continuously — not a jump at each line change but movement through the whole span between two lines, so the page travels with the singing. A timestamp with no words (an interlude) is drawn as a single note.
+
+**Browsing**: scroll or drag and the highlight follows your hand — whichever line is centred lights up, while the line actually being sung keeps its fill. Four seconds after you stop, the view eases back to that line (instantly, if “reduced motion” is on).
+
+**Jumping**: click a line to jump to that moment, which also resumes following. Every line is a button, so Enter / Space work too. A global `[offset:+500]` in the lyrics is honoured as well (a positive value moves the whole lyric earlier) — local `.lrc` files often rely on it to line up different releases.
+
+Lyrics stay in the player: they are not written into album notes and not counted in your statistics; cached online lyrics live only for the session and are gone when you quit.
+
+##### 6.2.6 Track queue
 
 The track list lets you click a song to play it, or drag to change the playing order. The order is for this session only — nothing is remembered, so an album always opens in release order.
 
@@ -1011,7 +1162,7 @@ Every album's name row ends with a small button that appends a timestamped liste
 
 Whether playback starts automatically after an album loads can be changed in the settings.
 
-##### 6.2.6 Queue notes
+##### 6.2.7 Queue notes
 
 The save button beside “Vinyl order” writes the current cross-album queue to a Markdown note, by default in the queue note folder (Settings → General → Paths).
 
@@ -1036,7 +1187,9 @@ Importing a whole album carries over the folder name and preserves subdirectorie
 
 You can also drag files straight onto the album shelf: drop them on an existing card to add audio to that album, or on empty space to create a new album.
 
-The file extensions you can import are `mp3`, `flac`, `m4a`, `m4b`, `mp4`, `wav`, `ogg`, `oga`, `opus`, `aac`, `webm`, and `weba`. Whether a file actually plays depends on its encoding and on Obsidian's built-in decoders; other formats are skipped with a notice. Local tracks use the file name as their title — audio tags such as ID3 are not read yet.
+The file extensions you can import are `mp3`, `flac`, `m4a`, `m4b`, `mp4`, `wav`, `ogg`, `oga`, `opus`, `aac`, `webm`, and `weba`. Whether a file actually plays depends on its encoding and on Obsidian's built-in decoders; other formats are skipped with a notice. **Local tracks read their embedded tags** (ID3v2 / Vorbis comment / MP4 ilst): title and artist come from the tags, falling back to the file name and the note's artist when there are none, and the tag's track number orders the tracks (`01 …` / `10 …` file names sort 10 before 2). The album name always comes from the note — the note is the source of truth. Only the first 128 KB of each file is read, so a whole track never enters memory; embedded **covers** and embedded **lyrics** are still not read (covers come from the note's `cover` or the file-name convention, lyrics from a sidecar `.lrc`). Containers without tag support (WAV, WMA) quietly fall back to the file name.
+
+**The two methods cost different things**, which is worth knowing when you choose. Audio inside the vault is streamed through Obsidian's resource path, takes almost no memory, and starts no background process. Audio outside it is streamed by the plugin's existing in-app gateway over **HTTP Range** (`/api/local/stream` — absolute paths and audio files only, behind the same session token), so the player pulls just the ranges it needs and **a whole track never enters memory**. The trade-off is that this kind of audio uses the gateway process: it starts on the first out-of-vault track and is reclaimed when the plugin unloads or Obsidian exits. If the gateway cannot start (unsupported environment), playback falls back to the old whole-file read — same features, except that copy does enter memory, kept in check by the byte budget that evicts the least recently used entry (the track in use is always kept).
 
 ##### 6.3.2 Online search and link import
 
@@ -1074,7 +1227,7 @@ Searching and importing albums need no account. All three platforms can be searc
 
 What signing in unlocks is playback. Notes imported without an account are complete, and the account is only needed when you press play. Kugou also plays free tracks while signed out, and signing in unlocks member quality and paid tracks.
 
-Online sources do not require Node.js: on first use the plugin starts a local gateway in-app, on the Node bundled with Obsidian. If you only listen to local files, no gateway is started at all.
+Online sources do not require Node.js: on first use the plugin starts a local gateway in-app, on the Node bundled with Obsidian. **Audio inside the vault never starts it**; audio outside the vault uses it for Range streaming (see 6.3.1), falling back to a whole-file read when the gateway cannot start.
 
 #### 6.4 Album notes and listening log
 
@@ -1204,6 +1357,27 @@ Vinyl Life/
 └── Backups/       backups and trim archives (created on backup / first trim)
 ```
 
+#### 6.8 Commands and hotkeys
+
+Everything the interface can do is reachable from the command palette (`Ctrl/Cmd + P`, then type the name).
+
+**The plugin ships no default hotkeys.** Obsidian's plugin guidelines advise against them — they can collide with keys you have already bound, or with the app's own. To make playback comfortable, search for `Vinyl Life` once in Settings → Hotkeys and bind what you want; the table below is a set that works well, and nothing breaks if you skip it.
+
+| What you want | Command | Suggested key (you bind it) |
+| --- | --- | --- |
+| Play / pause | Play / pause | `Ctrl/Cmd + Shift + P` |
+| Next, previous | Next track, Previous track | `Ctrl/Cmd + Shift + →`, `←` |
+| Insert what is playing | Insert the currently playing track | `Ctrl/Cmd + Shift + I` |
+| Write a listening entry | Append a listening entry to the playing album | — |
+| Change the cover | Set the cover of the playing album | — |
+| Open on the source site | Open the playing album on its source site | — |
+| Add local audio to it | Import local audio into the playing album | — |
+| Move a whole album in the queue | Queue: move the playing album up / down | `Alt + Shift + ↑`, `↓` |
+
+The remaining commands (open the shelf / player, import an album or local audio, save / load a queue note) are there to bind as you see fit.
+
+Inside the player there is a second set of keys that need no binding — Tab to the element and press: on a queue row `Enter` plays it, `Alt + ↑/↓` reorders it, `Delete` removes it; on an album's segment header `Alt + ↑/↓` moves the whole album, exactly like dragging; on a lyric line `Enter` / Space jumps to that moment; `Esc` leaves the record crate or the lyrics face. Card property rows reorder with `Alt + ↑/↓` too, and the card's “⋯” button opens the same menu as right-clicking.
+
 ### 7. Installation and getting started
 
 1. Download `main.js`, `manifest.json`, and `styles.css` from [GitHub Releases](https://github.com/Louiss342/Vinyl-life/releases).
@@ -1235,6 +1409,8 @@ When a note uses a remote cover, the corresponding image URL is fetched as well.
 
 NetEase requests have two channels — a direct connection from the plugin window and the local gateway — and switch to the other automatically when one is unavailable. QQ Music and Kugou Music go through the gateway only. Kugou registers a local device fingerprint once before its first stream request and reuses it afterwards.
 
+Lyrics travel the same channels: NetEase, QQ Music and Kugou lyrics all come from the matching platform (Kugou needs a search before the download, see 6.2.5). For local audio the lyrics are read from the `.lrc` file you keep next to the audio — nothing is fetched.
+
 Search is throttled: the same keyword reuses its recent result, and consecutive searches keep a minimum interval. When a platform explicitly rate-limits a request (NetEase answers “too frequent”), that source is paused for a short while and the reason is shown above the results instead of being passed off as a network failure.
 
 #### 8.3 Login credentials
@@ -1243,13 +1419,15 @@ Login credentials, settings, and playback statistics are stored in the plugin fo
 
 When you share plugin files, do not include your own cookies and login data.
 
+**If you sync your vault through a cloud drive, read this.** iCloud Drive, Dropbox, OneDrive and similar tools sync `.obsidian` by default, and that is exactly where the plugin keeps its credential files: `.cookie` (NetEase), `.qq-cookie` and `.qq-guid` (QQ Music), `.kugou-cookie` and `.kugou-device` (Kugou), `.anon-token` and `.device-id` (anonymous identifiers). They are listed in the repository's `.gitignore`, but **sync tools do not read `.gitignore`**: to keep the credentials on this machine only, add `.obsidian` — or at least this plugin's folder — to the sync tool's exclusion list. Signing out (Settings → Sources → Sign out) clears the matching file.
+
 ### 9. Permissions
 
 Community plugin reviews list the system capabilities a plugin uses; here is what each one is for. The plugin runs only on your own machine, and every capability below serves the features described above.
 
 - **Local file access (Node `fs`)**: reading audio folders outside the vault that you reference by absolute path (linked mode); keeping login credentials, the device identifier, and playback statistics in the plugin folder; checking whether `styles.css` is present in the plugin folder and matches the installed version — if it is missing, or was left behind by a partial update that only replaced `main.js`, a built-in copy is applied so the UI stays styled; and writing the inlined gateway source to the system temp folder before launching it (it runs in-app on Electron's bundled Node). Notes, covers, and audio copied into the vault all go through Obsidian's vault API instead.
-- **In-app gateway process**: online sources need a local gateway to talk to the NetEase Cloud Music, QQ Music, and Kugou Music APIs. The plugin launches it in-app with Electron's bundled Node (utility process), listening on a random free port on `127.0.0.1`; local audio starts no gateway at all. The gateway is reclaimed when the plugin unloads or Obsidian exits. On startup the plugin also cleans up the gateway process left behind by older versions (1.0.8 and earlier) that ran on system Node.js — that step reads the process command line once to confirm the target really is a gateway this plugin started, so it never kills an unrelated program.
-- **Gateway authentication**: the gateway listens on `127.0.0.1` only, but any process on the machine — including a web page in a browser — can scan for that port. So every launch generates a random token for the gateway, and each request the plugin sends carries it; requests without the token are rejected, and the gateway sends no CORS headers at all. The cover proxy has its own guard rails: http(s) only, the target must not resolve to the local machine or a private network, only images are accepted, and it is capped at 10 seconds and 12 MB.
+- **In-app gateway process**: online sources need a local gateway to talk to the NetEase Cloud Music, QQ Music, and Kugou Music APIs, and out-of-vault audio uses the same gateway for HTTP Range streaming (see 6.3.1). The plugin launches it in-app with Electron's bundled Node (utility process), listening on a random free port on `127.0.0.1`; audio inside the vault never starts it. The gateway is reclaimed when the plugin unloads or Obsidian exits. On startup the plugin also cleans up the gateway process left behind by older versions (1.0.8 and earlier) that ran on system Node.js — that step reads the process command line once to confirm the target really is a gateway this plugin started, so it never kills an unrelated program.
+- **Gateway authentication**: the gateway listens on `127.0.0.1` only, but any process on the machine — including a web page in a browser — can scan for that port. So every launch generates a random token for the gateway, and each request the plugin sends carries it; requests without the token are rejected, and the gateway sends no CORS headers at all. The cover proxy has its own guard rails: http(s) only, the target must not resolve to the local machine or a private network, only images are accepted, and it is capped at 10 seconds and 12 MB. The out-of-vault audio route (`/api/local/stream`) needs the token too and **only serves audio files at absolute paths** (a wrong extension, or anything that is not a regular file, is refused) — it is not a general file-reading endpoint.
 - **Scanning vault files**: the album shelf needs to find every note tagged `tags: [album]`, so it enumerates the paths of Markdown notes in the vault, and the cover picker lists images in the vault. Nothing else is read from your notes.
 
 ### 10. Development

@@ -48,6 +48,8 @@ export class LocalImportPane {
   private cleanups: Array<() => void> = [];
   /** 收下文件的实现（mount 时建好：分析文件夹、刷新摘要与目标区） */
   private applyFiles: ((files: File[], rootName: string) => void) | null = null;
+  /** 清空这一批的实现（mount 时建好：见 reset） */
+  private resetPane: (() => void) | null = null;
 
   constructor(
     private ctx: ImportContext,
@@ -119,7 +121,8 @@ export class LocalImportPane {
     modeSel.value = this.ctx.settings().importMode;
 
     // —— 操作区 ——
-    const status = c.createDiv({ cls: 'vinyl-muted vinyl-import-status' });
+    // 状态行：导入进度（逐张专辑的名字与序号）与失败原因都写在这里 —— 标成 status 让读屏软件播报
+    const status = c.createDiv({ cls: 'vinyl-muted vinyl-import-status', attr: { role: 'status' } });
     const btnRow = c.createDiv({ cls: 'vinyl-import-actions' });
     const btn = btnRow.createEl('button', { text: t('import.start'), cls: 'mod-cta' });
 
@@ -210,6 +213,31 @@ export class LocalImportPane {
       status.setText('');
       refreshFiles();
       (newRadio.checked ? nameInput : btn).focus();
+    };
+
+    /** 清空这一批文件、回到「这批还没选」的状态。
+     *  不复用 applyFiles —— 那个入口见到空列表就 return（拖放 / 选择器都靠它挡掉空手放下的情况），
+     *  于是给 reset() 传空列表等于什么都没做：导完一批后摘要、专辑名、勾选状态全留着，
+     *  再点「开始导入」会拿上一批的旧列表重跑。
+     *  目标（新建 / 已有）与落库方式刻意不动：接着导的可能是同一张专辑的另一批。
+     *  两个 file input 的 value 也要清 —— 不然再选同一个文件不会触发 change。 */
+    this.resetPane = () => {
+      this.picked = [];
+      this.rootName = '';
+      this.scan = null;
+      this.nameTouched = false;
+      this.batchRows = [];
+      fileInput.value = '';
+      dirInput.value = '';
+      fileSummary.setText('');
+      fileSummary.setAttr('title', '');
+      nameInput.value = '';
+      batchHost.empty();
+      // 上一批可能是音乐库根目录（目标区被整块藏起来、按钮写着「导入 N 张专辑」）：铺回单选与按钮文案
+      for (const el of targetFormEls) el.toggleClass('vinyl-hidden', false);
+      btn.setText(t('import.start'));
+      status.setText('');
+      window.setTimeout(() => pickBtn.focus(), 50); // 光标落回「选择文件」：接着导下一批
     };
 
     pickBtn.addEventListener('click', () => fileInput.click());
@@ -378,9 +406,9 @@ export class LocalImportPane {
     this.applyFiles?.(files, rootName);
   }
 
-  /** 导完一批：清空已选文件与目标区（浮层留在原地，接着导下一批） */
+  /** 导完一批：清空这一批文件（浮层留在原地，接着导下一批） */
   reset(): void {
-    this.applyFiles?.([], '');
+    this.resetPane?.();
   }
 
   destroy(): void {

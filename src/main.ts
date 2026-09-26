@@ -22,9 +22,10 @@ import { QqService } from './core/qq';
 import { QqAuth } from './core/qq-auth';
 import { KugouService } from './core/kugou';
 import { KugouAuth } from './core/kugou-auth';
-import { LocalSource } from './core/local-source';
+import { LocalSource, BLOB_BUDGET_BYTES } from './core/local-source';
 import { PlaybackEngine } from './core/player-state';
 import type { PlayerSnapshot } from './core/player-state';
+import { setUpstreamPacing } from './core/probe-pacing';
 import { syncMediaSession } from './core/media-session';
 import { VinylPlayerView, PLAYER_VIEW_TYPE } from './views/player-view';
 import { VinylShelfView, SHELF_VIEW_TYPE } from './views/shelf-view';
@@ -37,6 +38,7 @@ import {
   setAlbumTemplatePath,
   stripWikilink,
   detectAlbumSources,
+  invalidateSourceCache,
 } from './core/album-index';
 import { normalizeShelfProps, normalizeShelfPropLabels, propLabel } from './core/shelf-props';
 import { DISC_DIRECTIONS, SPIN_SPEEDS } from './core/disc-motion';
@@ -82,8 +84,13 @@ import {
   trimPlayEvents,
 } from './core/stats';
 import { normalizeProbeScope } from './core/library-health';
-import { Track, trackKey } from './core/track';
+import { Track, trackKey, isLocalTrack } from './core/track';
+import { LyricLine, parseLrc } from './core/lyrics';
 import { buildAlbumQueue } from './core/queue';
+import { segmentMoveBy } from './core/queue-move';
+import { albumSourceLinks } from './core/source-link';
+import { COMMANDS, CommandHost } from './core/commands';
+import { SetCoverModal } from './views/set-cover-modal';
 import { parseQueueEntries, pickTrackByTitle, queueNoteLines } from './core/queue-note';
 import type { ActiveSource } from './core/queue';
 import { LibraryHealthModal, SourceSwitchModal } from './views/library-health';
@@ -110,6 +117,20 @@ function albumWikiLink(path: string | undefined, title: string): string {
 /** 自动备份：文件名前缀（清理旧份数时只认这个前缀，手动备份 / 裁剪归档不碰）与间隔（一周） */
 const AUTO_BACKUP_PREFIX = 'Vinyl Life auto backup';
 const AUTO_BACKUP_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** 音量 / 播放位置 / 播放明细的落盘节奏：平时 5 秒防抖；连续播放时防抖会被一直推后，
+ *  所以另加一条 30 秒的最长等待（见 scheduleStatsSave）。 */
+const STATS_SAVE_DEBOUNCE_MS = 5000;
+const STATS_SAVE_MAX_WAIT_MS = 30 * 1000;
+
+/** 健康检查的试播节奏：取流固定按最低档（只问「拿不拿得到地址」，不跟用户的音质设置走 ——
+ *  取流是逐级降档的，按无损试会把四档全走一遍，QQ 还要 ×2 个 mid），
+ *  并且每次上游请求之间留一个最小间隔（试播是唯一会成串打平台的路径，见 core/probe-pacing）。 */
+const PROBE_QUALITY = 'standard';
+const PROBE_REQUEST_GAP_MS = 250;
+
+/** 歌词缓存上限（首）：满了先丢最早的一半。一首歌词几十 KB，长会话里别无限涨 */
+const LYRICS_CACHE_MAX = 60;
 
 /** 解码失败就原样返回：链接可能是用户手打的，半个 % 会让 decodeURIComponent 抛异常 */
 function safeDecode(value: string): string {
@@ -151,6 +172,10 @@ export default class VinylLifePlugin extends Plugin {
   private archiveFailedThisSession = false;
   /** 本轮会话里自动备份失败过（同上：每小时检查一次，失败别反复弹） */
   private autoBackupFailedThisSession = false;
+  /** 歌词缓存（trackKey → 行；null = 这首歌确实没有歌词）。一首几十 KB，见 rememberLyrics 的上限 */
+  private lyricsCache = new Map<string, LyricLine[] | null>();
+  /** 在途的取歌词：同一首并发问两次只打一次网（来回翻面很容易撞上） */
+  private lyricsInflight = new Map<string, Promise<LyricLine[] | null>>();
 
   async onload() {
     // 样式兜底：styles.css 缺失、或与插件版本不一致（只覆盖了 main.js / 同步到一半）时，
@@ -163,6 +188,15 @@ export default class VinylLifePlugin extends Plugin {
     if (disposeStyleFallback) this.register(disposeStyleFallback);
 
     await this.loadSettings();
+
+    // 音源检测的缓存作废（为什么有缓存、口径是什么，见 album-index 的 invalidateSourceCache）：
+    // 专辑墙开着时它自己那次刷新就够，但播放器、健康检查、失败提示这些入口在墙关着的时候
+    // 也会读这份结论 —— 所以在插件层再兜一道。这条监听不做任何 I/O，代价是一次计数器自增；
+    // 「库外目录自己变了」听不到（没有事件源），用户显式点刷新 / 打开健康检查时会再作废一次。
+    const onVaultStructureChanged = () => invalidateSourceCache();
+    this.registerEvent(this.app.vault.on('create', onVaultStructureChanged));
+    this.registerEvent(this.app.vault.on('delete', onVaultStructureChanged));
+    this.registerEvent(this.app.vault.on('rename', onVaultStructureChanged));
 
     // 首次运行自动搭好目录结构（默认 Vinyl Life/{Vinyl Note, covers, audio, Stats}）：
     // 新装用户装完即用；已有目录不动，失败不阻塞加载（导入流程里还会再兜一次）
@@ -193,7 +227,8 @@ export default class VinylLifePlugin extends Plugin {
       () => this.server.token
     );
     this.kugouAuth = new KugouAuth(this, this.server, this.kugou);
-    this.local = new LocalSource(this.app);
+    // 第三个参数是网关：库外音频按 HTTP Range 供流（整轨不进内存），起不来时 LocalSource 自行退回 Blob
+    this.local = new LocalSource(this.app, BLOB_BUDGET_BYTES, this.server);
 
     // 播放引擎
     this.engine = new PlaybackEngine({
@@ -247,60 +282,20 @@ export default class VinylLifePlugin extends Plugin {
     this.registerView(SHELF_VIEW_TYPE, (leaf) => new VinylShelfView(leaf, this));
     // 图标与播放器视图一致（disc-3），方便一眼认出是 Vinyl Life
     this.addRibbonIcon('disc-3', t('cmd.ribbonShelf'), () => this.openShelf());
-    // 命令面板：视图、导入、笔记、队列与三条播放控制，共 10 条常驻命令。
+    // 命令面板：命令表在 core/commands.ts（宿主中立，独立壳将来直接吃同一份），
+    // 这里只做 Obsidian 这一侧的接线 —— 名字与回调两样机械映射。
     // 登录 / 退出统一从「设置 → 源」操作，不再额外占用命令面板。
-    // 命令 id 不得改动（改了会让已绑定的快捷键失效）
-    this.addCommand({
-      id: 'open-shelf',
-      name: t('cmd.openShelf'),
-      callback: () => this.openShelf(),
-    });
-    this.addCommand({
-      id: 'open-player',
-      name: t('cmd.openPlayer'),
-      callback: () => this.openPlayer(),
-    });
-    this.addCommand({
-      id: 'import-netease',
-      name: t('cmd.importAlbum'),
-      callback: () => this.openAlbumImport(),
-    });
-    this.addCommand({
-      id: 'import-local',
-      name: t('cmd.importLocal'),
-      callback: () => this.openLocalImport(),
-    });
-    this.addCommand({
-      id: 'insert-now-playing',
-      name: t('cmd.insertNowPlaying'),
-      callback: () => this.insertNowPlaying(),
-    });
-    this.addCommand({
-      id: 'save-queue-note',
-      name: t('queueNote.save'),
-      callback: () => void this.saveQueueNote(),
-    });
-    this.addCommand({
-      id: 'load-queue-note',
-      name: t('queueNote.load'),
-      callback: () => void this.loadQueueFromActiveNote(),
-    });
-    // 播放控制：给快捷键与命令面板用（媒体键另走 MediaSession，见引擎订阅）
-    this.addCommand({
-      id: 'player-toggle',
-      name: t('player.playPause'),
-      callback: () => void this.engine.toggle(),
-    });
-    this.addCommand({
-      id: 'player-next',
-      name: t('player.next'),
-      callback: () => void this.engine.next(),
-    });
-    this.addCommand({
-      id: 'player-prev',
-      name: t('player.prev'),
-      callback: () => void this.engine.prev(),
-    });
+    // 命令 id 不得改动（改了会让已绑定的快捷键失效）。
+    // 也**不给默认快捷键**：插件规范建议别设（可能撞上用户自己的键），想用键的去
+    // 「设置 → 快捷键」绑一次，README 的「命令与快捷键」列了推荐键位。
+    const commandHost = this.commandHost();
+    for (const cmd of COMMANDS) {
+      this.addCommand({
+        id: cmd.id,
+        name: t(cmd.titleKey),
+        callback: () => void cmd.run(commandHost),
+      });
+    }
     // 笔记里的播放位置 → 跳回音乐（写感想时把位置写成 obsidian:// 链接，见 appendListeningNote）。
     // 这是「听到这里 → 记下 → 日后重听」闭环里最后那一跳。
     this.registerObsidianProtocolHandler('vinyl-life', (params) => void this.resumeFromNote(params));
@@ -591,6 +586,83 @@ export default class VinylLifePlugin extends Plugin {
 
   openAlbumImport() {
     new AlbumImportModal(this.app, this.importCtx()).open();
+  }
+
+  // —— 命令层（core/commands.ts 的 CommandHost 实现）——
+  // 命令表只声明「做什么」，具体怎么做留在这里：命令因此能在纯 Node 的测试里跑（交一个假宿主），
+  // 也能在独立壳里换一套动作实现，而命令 id 与默认键只有一份。
+
+  /** 正在播放的那张专辑：命令层的统一目标（与写感想同一条口径，见 appendListeningNote）。
+   *  没在播、笔记被删或被改名时返回 null —— 调用方如实报错，别静默什么都不做。 */
+  private currentAlbum(): AlbumInfo | null {
+    const path = this.engine.snapshot().albumNotePath;
+    if (!path) return null;
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) return null;
+    return getAlbumInfo(this.app, file, { coverFolder: this.settings.coverFolder });
+  }
+
+  /** 设置封面（命令）：此前唯一入口是卡片右键菜单，键盘够不着 */
+  private setCurrentAlbumCover(): void {
+    const album = this.currentAlbum();
+    if (!album) {
+      notice(t('notice.noAlbumNote'));
+      return;
+    }
+    new SetCoverModal(this.app, this, album).open();
+  }
+
+  /** 在源站打开（命令）：按 网易云 → QQ → 酷狗 取第一个有关联的；一个都没有如实说 */
+  private openCurrentAlbumInSource(): void {
+    const album = this.currentAlbum();
+    const links = album ? albumSourceLinks(album) : [];
+    if (!links.length) {
+      notice(t('notice.noOnlineSource'));
+      return;
+    }
+    window.open(links[0].url);
+  }
+
+  /** 给当前专辑导入本地音频（命令）。
+   *  与「导入本地音频」那条的差别：这条**要求**有当前专辑 —— 否则打开的是一个没有目标的导入面板，
+   *  用户以为导给了这张专辑，实际落到了别处（拖到卡片上的动作在键盘上要有个说得清的等价物）。 */
+  private importLocalToCurrent(): void {
+    const album = this.currentAlbum();
+    if (!album) {
+      notice(t('notice.noAlbumNote'));
+      return;
+    }
+    this.openLocalImport(album);
+  }
+
+  /** 整段（整张专辑）上下移：命令队列与播放器段头的 Alt+Shift+↑/↓ 共用这一条 */
+  private moveCurrentSegment(delta: -1 | 1): void {
+    const snap = this.engine.snapshot();
+    const move = segmentMoveBy(snap.segments, snap.index, delta);
+    if (!move) return; // 已经是第一段 / 最后一段：没有可去的地方，静默不动
+    this.engine.moveRange(move.start, move.count, move.to);
+  }
+
+  private commandHost(): CommandHost {
+    return {
+      // 视图打开是异步的（等 leaf），但命令层不关心结果：不 await，也不把 Promise 传出去
+      openShelf: () => void this.openShelf(),
+      openPlayer: () => void this.openPlayer(),
+      importAlbum: () => this.openAlbumImport(),
+      importLocal: () => this.openLocalImport(),
+      importLocalToCurrent: () => this.importLocalToCurrent(),
+      insertNowPlaying: () => void this.insertNowPlaying(),
+      saveQueueNote: async () => void (await this.saveQueueNote()),
+      loadQueueNote: async () => void (await this.loadQueueFromActiveNote()),
+      // 播放控制：给快捷键与命令面板用（媒体键另走 MediaSession，见引擎订阅）
+      playerToggle: () => void this.engine.toggle(),
+      playerNext: () => void this.engine.next(),
+      playerPrev: () => void this.engine.prev(),
+      appendListeningNote: () => this.appendListeningNote(),
+      setAlbumCover: () => this.setCurrentAlbumCover(),
+      openAlbumInSource: () => this.openCurrentAlbumInSource(),
+      moveSegment: (delta) => this.moveCurrentSegment(delta),
+    };
   }
 
   openLocalImport(presetAlbum?: AlbumInfo) {
@@ -1022,6 +1094,10 @@ export default class VinylLifePlugin extends Plugin {
 
   /** 用户主动发起的在线检查：只取少量曲目的播放地址，不启动播放。 */
   async checkOnlineSource(album: AlbumInfo, source: Exclude<ActiveSource, 'local'>): Promise<string | null> {
+    // 取流按 PROBE_QUALITY（最低档）而不是用户设置的音质：这里只问「拿不拿得到地址」，
+    // 而取流是逐级降档的 —— 按无损试，一个没会员的账号会把四档全走一遍，QQ 还要再 ×2 个 mid。
+    // 整段过程另给上游请求加最小间隔（试播是唯一成串打平台的路径，见 core/probe-pacing）。
+    setUpstreamPacing(PROBE_REQUEST_GAP_MS);
     try {
       const result = await buildAlbumQueue({ ...album, sourcePref: source }, {
         local: this.local, netease: this.netease, qq: this.qq, kugou: this.kugou,
@@ -1032,11 +1108,11 @@ export default class VinylLifePlugin extends Plugin {
       for (const track of result.tracks.slice(0, 3)) {
         try {
           const response = track.source === 'netease'
-            ? await this.netease.songUrl(track.id, this.settings.quality)
+            ? await this.netease.songUrl(track.id, PROBE_QUALITY)
             : track.source === 'qq'
-              ? await this.qq.songUrl(track.id, this.settings.quality, track.mediaMid)
+              ? await this.qq.songUrl(track.id, PROBE_QUALITY, track.mediaMid)
               : track.source === 'kugou'
-                ? await this.kugou.songUrl(track.id, this.settings.quality, track.albumId, track.albumAudioId)
+                ? await this.kugou.songUrl(track.id, PROBE_QUALITY, track.albumId, track.albumAudioId)
                 : null;
           if (response?.url) return null;
           error = response?.restriction || t('auth.sourceUnavailable');
@@ -1044,7 +1120,76 @@ export default class VinylLifePlugin extends Plugin {
         catch (e) { error = (e as Error).message; }
       }
       return error || t('player.noPlayableTrack');
-    } catch (e) { return (e as Error).message; }
+    } catch (e) {
+      return (e as Error).message;
+    } finally {
+      setUpstreamPacing(0); // 关掉：播放、搜索、导入照旧不受节流（异常 / 提前 return 也要关）
+    }
+  }
+
+  /** 歌词：同一首只取一次（来回翻面、切回来都不重复打网）。
+   *  返回 null = 这首歌没有歌词（上游没收录）或这次没取到：对在线源是稳定结论，照样进缓存；
+   *  网络 / 上游故障也返回 null 但**不进缓存** —— 下次翻回歌词页还能再试一次。
+   *  本地音轨两侧都不进缓存：歌词是与音频同目录的旁挂文件，用户随时可能补一个或改一个，
+   *  而读它只是一次目录扫描 + 一次文件读，不值得为省这点开销让新歌词要重启才认。
+   *  （在途去重照旧：同一首并发问两次仍只读一次文件。） */
+  async loadLyrics(track: Track): Promise<LyricLine[] | null> {
+    const key = trackKey(track);
+    const local = isLocalTrack(track);
+    if (!local && this.lyricsCache.has(key)) return this.lyricsCache.get(key) ?? null;
+    const inflight = this.lyricsInflight.get(key);
+    if (inflight !== undefined) return inflight; // 显式比 undefined：Promise 不进真值判断（lint 要求）
+    const job = (async (): Promise<LyricLine[] | null> => {
+      try {
+        const lines = await this.fetchLyrics(track);
+        if (!local) this.rememberLyrics(key, lines);
+        return lines;
+      } catch (e) {
+        console.warn('[vinyl] 歌词获取失败：' + ((e as Error).message || String(e)));
+        return null;
+      } finally {
+        this.lyricsInflight.delete(key);
+      }
+    })();
+    this.lyricsInflight.set(key, job);
+    return job;
+  }
+
+  private async fetchLyrics(track: Track): Promise<LyricLine[] | null> {
+    let lines: LyricLine[] = [];
+    if (track.source === 'netease') {
+      const body = await this.netease.lyric(track.id);
+      lines = parseLrc(body?.lrc?.lyric ?? '', body?.tlyric?.lyric ?? '');
+    } else if (track.source === 'qq') {
+      const body = await this.qq.lyric(String(track.id));
+      lines = parseLrc(body?.lyric ?? '', body?.trans ?? '');
+    } else if (track.source === 'kugou') {
+      // 关键词与时长由网关用来挑候选（酷狗的歌词是「按歌搜词」而不是「按 id 取词」）
+      const body = await this.kugou.lyric(track.id, {
+        title: track.title,
+        artist: track.artist,
+        duration: track.duration,
+        albumAudioId: track.albumAudioId,
+      });
+      lines = parseLrc(body?.lyric ?? '', body?.trans ?? '');
+    } else if (isLocalTrack(track)) {
+      // 本地：与音频同目录的旁挂 .lrc；没有就是没有（不读内嵌歌词，见 local-source 的取舍）
+      const lrc = await this.local.readSidecarLyrics(track);
+      lines = lrc ? parseLrc(lrc) : [];
+    }
+    return lines.length ? lines : null;
+  }
+
+  private rememberLyrics(key: string, lines: LyricLine[] | null): void {
+    if (this.lyricsCache.size >= LYRICS_CACHE_MAX) {
+      const drop = Math.ceil(LYRICS_CACHE_MAX / 2);
+      let i = 0;
+      for (const k of this.lyricsCache.keys()) {
+        this.lyricsCache.delete(k);
+        if (++i >= drop) break;
+      }
+    }
+    this.lyricsCache.set(key, lines);
   }
 
   private albumStatSnapshot(album: AlbumInfo): AlbumStatSnapshot {
@@ -1300,12 +1445,26 @@ export default class VinylLifePlugin extends Plugin {
   /** 播放明细的保留流程：**先归档成功，才认裁剪结果**。
    *  归档写不出去（磁盘满 / 权限 / 同步冲突）就把完整明细留在内存里，并提示用户 ——
    *  之后的保存会把它们原样写回，绝不会出现「没归档、明细还被裁掉」。
-   *  启动时与播放中（到达明细上限 / 有超期明细）共用这一条流程。 */
+   *  启动时与播放中（到达明细上限 / 有超期明细）共用这一条流程。
+   *  归档要写文件、是异步的，而播放还在继续：这段时间 recordPlay 会往**同一个** events 数组里
+   *  接着 push（stats.recordTrackPlay 是原地 push，不是换数组）。所以裁完不能拿发起归档前算好的
+   *  kept 整段替换 —— 那会把期间新记的明细一起丢掉（既不在归档文件里、也不在内存里）。
+   *  收口时按「归档前那一段里留下哪些」+「归档之后新来的全部」重新拼一次。 */
   private async retainEventsOrKeepAll(allEvents: PlayEvent[], kept: PlayEvent[]): Promise<void> {
     const dropped = allEvents.length - kept.length;
     if (dropped <= 0) return;
+    const before = allEvents.length;
     const archived = await this.archivePrunedEvents(allEvents, dropped);
-    this.settings.stats = { ...this.settings.stats, events: archived ? kept : allEvents };
+    if (!archived) {
+      this.settings.stats = { ...this.settings.stats, events: allEvents };
+      return;
+    }
+    // 数组整体被换掉过（恢复备份一类的路径）就没有「尾部新增」可言，按原口径收口
+    const survivors =
+      this.settings.stats.events === allEvents
+        ? kept.concat(allEvents.slice(before))
+        : kept;
+    this.settings.stats = { ...this.settings.stats, events: survivors };
   }
 
   /** 播放中检查一次：达到明细上限或有超期明细就走上面对那条流程（归档失败只提示一次，
@@ -1545,12 +1704,21 @@ export default class VinylLifePlugin extends Plugin {
   }
 
   private statsSaveTimer: number | null = null;
+  /** 这批待落盘改动是从什么时候开始攒的（0 = 没有攒着的改动）。
+   *  为什么需要它：播放中 timeupdate 每 400ms 就调一次 scheduleStatsSave，
+   *  纯防抖永远等不到那 5 秒空闲 —— 崩溃或强杀会丢掉整场明细、音量与播放位置。
+   *  所以从第一次改动起算满 STATS_SAVE_MAX_WAIT_MS 就强制写一次，写完重新起算。 */
+  private statsSaveSince = 0;
   private scheduleStatsSave() {
+    const now = Date.now();
+    if (!this.statsSaveSince) this.statsSaveSince = now;
     if (this.statsSaveTimer) window.clearTimeout(this.statsSaveTimer);
+    const remaining = this.statsSaveSince + STATS_SAVE_MAX_WAIT_MS - now;
     this.statsSaveTimer = window.setTimeout(() => {
       this.statsSaveTimer = null;
+      this.statsSaveSince = 0;
       void this.saveSettings();
-    }, 5000);
+    }, Math.max(0, Math.min(STATS_SAVE_DEBOUNCE_MS, remaining)));
   }
 
   // —— 专辑墙落位（主区：命令 / ribbon 都开在主区标签页）——

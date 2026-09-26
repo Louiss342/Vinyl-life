@@ -7,6 +7,7 @@
 
 import { t } from './i18n';
 import { propLabel } from './shelf-props';
+import { parseLeadingNumber } from './rating';
 
 export type SortBasis = 'title' | 'artist' | 'year' | 'plays' | 'rating' | 'recent' | 'custom';
 export type SortDir = 'asc' | 'desc';
@@ -100,13 +101,13 @@ export interface ShelfSortStats {
 
 const text = (v: string | undefined): string => (v ?? '').trim();
 
-/** 数值化：空串 / 非数值串（「待定」这类）都算缺失（undefined），由调用方排到最后 */
+/** 数值化：先从「人写的」值里读第一个数（见 core/rating 的口径）——
+ *  '1997年' / '2003-05' 读得出年份，'4/5' 读得出评分；读不出来（'待定' 这类）才算缺失，
+ *  由调用方排到最后。空串与 null 同样是缺失。 */
 function numOf(v: string | number | undefined): number | undefined {
   if (v == null) return undefined;
-  const s = String(v).trim();
-  if (s === '') return undefined;
-  const n = Number(s);
-  return Number.isFinite(n) ? n : undefined;
+  const n = parseLeadingNumber(v);
+  return n === null ? undefined : n;
 }
 
 /** 这一张按当前依据有没有可排的属性：没有的一律排最后（空歌手 / 空年份 / 没播过 / 空属性…） */

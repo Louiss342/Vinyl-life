@@ -283,10 +283,8 @@ const settingsMod = loadModule('src/settings.ts');
 const { normalizeLastPlayback, normalizeVolume, DEFAULT_SETTINGS } = settingsMod;
 
 test('resolveSegmentDropIndex：整段拖拽落点（块先摘掉，下标按摘后算）', () => {
-  const { resolveSegmentDropIndex } = loadModule('src/views/player-view.ts', {
-    document: { createElement: () => ({ style: {}, classList: { add() {}, remove() {} }, setAttribute() {} }) },
-    Notice: class {},
-  });
+  // 落点数学已从 player-view 抽到 core/queue-move：拖拽、键盘、命令层共用一份
+  const { resolveSegmentDropIndex } = loadModule('src/core/queue-move.ts');
   // A(0,2) B(2,1) C(3,1)：把 A 拖到 C 之后 → 摘掉 A 后是 [B,C]，插到 C 后 = 2
   assert.equal(resolveSegmentDropIndex(0, 2, 3, 1, true), 2);
   // 把 A 拖到 B 之前 → 摘掉 A 后是 [B,C]，插到 B 前 = 0
@@ -295,6 +293,29 @@ test('resolveSegmentDropIndex：整段拖拽落点（块先摘掉，下标按摘
   assert.equal(resolveSegmentDropIndex(3, 1, 0, 2, false), 0);
   // 把 B 拖到 A 之后 → 摘掉 B 后是 [A,C]，插到 A 后 = 2
   assert.equal(resolveSegmentDropIndex(2, 1, 0, 2, true), 2);
+});
+
+test('segmentMoveBy：整段上下移一格（键盘路径，与拖拽同一份落点数学）', () => {
+  const { segmentMoveBy } = loadModule('src/core/queue-move.ts');
+  // A(0,2) B(2,3) C(5,1)：当前曲目在 B 段里（下标 3）
+  const segs = [
+    { start: 0, count: 2 },
+    { start: 2, count: 3 },
+    { start: 5, count: 1 },
+  ];
+  // B 下移（与 C 换位）：摘掉 B 后是 [A1,A2,C1]，插到 C 之后 = 3
+  assert.deepEqual({ ...segmentMoveBy(segs, 3, 1) }, { start: 2, count: 3, to: 3 });
+  // B 上移（与 A 换位）：摘掉 B 后是 [A1,A2,C1]，插到 A 之前 = 0
+  assert.deepEqual({ ...segmentMoveBy(segs, 3, -1) }, { start: 2, count: 3, to: 0 });
+  // 首段上移 / 末段下移：没有可去的地方 → null（别夹到边界再发一次等价移动，界面会白闪一下）
+  assert.equal(segmentMoveBy(segs, 0, -1), null);
+  assert.equal(segmentMoveBy(segs, 5, 1), null);
+  // 移的是「当前曲目所在的那一段」：同一段里换一首，结果相同
+  assert.deepEqual({ ...segmentMoveBy(segs, 2, 1) }, { ...segmentMoveBy(segs, 4, 1) });
+  // 边界：空队列 / 下标不在任何段内 / delta 非法
+  assert.equal(segmentMoveBy([], 0, 1), null);
+  assert.equal(segmentMoveBy(segs, 99, 1), null);
+  assert.equal(segmentMoveBy(segs, 3, 0), null);
 });
 
 test('专辑队列模式接线：顶部开关 / 分段渲染 / 整段操作都在（清空与恢复已删）', () => {
@@ -501,10 +522,16 @@ test('player-state.ts：不再有「清空后面的专辑」与「恢复发行�
   assert.equal(/keepCurrentAlbum|restoreOriginalOrder|originalOrder/.test(src), false, '两个功能与它们的字段一并删除');
 });
 
-test('player-view.ts：Vinyl order 行只剩标题 + 专辑名（三个按键都删了）', () => {
+test('player-view.ts：Vinyl order 行 = 标题 + 两枚图标钮（专辑名与三个旧按键都不在这行）', () => {
   const src = fs.readFileSync(path.join(__dirname, '../src/views/player-view.ts'), 'utf8');
   const block = src.slice(src.indexOf('const orderRow = '), src.indexOf('const queueBox = '));
-  assert.match(block, /vinyl-order-album/, '行末尾放当前专辑名（设计稿的「(专辑名)」）');
+  assert.match(block, /vinyl-queue-save/, '保存队列');
+  assert.match(block, /vinyl-queue-locate/, '定位到正在播的那首');
+  assert.equal(
+    /vinyl-order-album/.test(block),
+    false,
+    '专辑名不在这行（用户 2026-09-25 定稿）：那一行宽度留给按钮，标题也不再被挤到换行'
+  );
   assert.equal(/clearQueueBtn|restoreBtn|noteBtn/.test(block), false, '清空 / 恢复 / 写点什么 三个按键都不在这一行');
   assert.equal(/queueClearOthers|restoreOriginal/.test(src), false, '对应文案也不再引用');
 });

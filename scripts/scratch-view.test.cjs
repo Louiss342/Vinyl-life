@@ -44,8 +44,10 @@ test('接线：交还用负 animation-delay 续上角度，转盘不跳', () => 
   const src = read('src/views/player-view.ts');
   assert.match(src, /style\.setProperty\('animation-delay', `-\$\{Math\.round\(frac \* spinMs\)\}ms`\)/);
   assert.match(src, /private currentSpinAngle[\s\S]{0,500}?getAnimations\(\)/, '接手时读当前动画角度对齐');
-  // 从暂停转回播放时动画会重建：那时清掉残留的负延迟
-  assert.match(src, /if \(spinning && !this\.lastSpinning\) \{[\s\S]{0,200}?removeProperty\('animation-delay'\)/);
+  // 负延迟要一并算进相位：交还旋转时相位就存在那里（只读 currentTime 会漏掉它，接手时跳回 0°）
+  assert.match(src, /private currentSpinAngle[\s\S]{0,800}?timing\?\.delay/, '相位 = currentTime − delay');
+  // 交还与定住是两条路：起手前在播 → 续上相位接着转；起手前是暂停 → 就地定住
+  assert.match(src, /if \(st\.playing\) this\.releaseSpin\(st\.angle\);[\s\S]{0,80}?else this\.holdSpin\(st\.angle\)/);
 });
 
 test('接线：可搓时才给抓取光标（唱机面 + 有曲目 + 不在换曲间隙）', () => {
@@ -62,7 +64,11 @@ test('接线：换曲 / 关门都要收干净（作废手势、释放缓冲）',
     src,
     /if \(this\.scratch && \(!s\.current \|\| trackKey\(s\.current\) !== this\.scratch\.key\)\) this\.scratchAbort\(\)/
   );
-  assert.match(src, /async onClose\(\)[\s\S]{0,300}?this\.scratchAbort\(\)[\s\S]{0,120}?this\.disposeScratchDeck\(\)/);
+  assert.match(
+    src,
+    /async onClose\(\)[\s\S]{0,300}?this\.scratchAbort\(\)[\s\S]{0,200}?this\.spinCancel\(\)[\s\S]{0,120}?this\.disposeScratchDeck\(\)/,
+    '关门：作废手势 → 撤马达斜坡 → 释放解码台'
+  );
   assert.match(src, /applyAppearance\(\)[\s\S]{0,800}?disposeScratchDeck\(\)/, '切到轻量档 / 关掉搓碟要还内存');
 });
 
@@ -91,7 +97,7 @@ test('接线：挂表 / 撤表的时机（曲目、播放状态、翻面、关�
   );
   assert.match(src, /if \(face === 'player' && this\.lastSnapshot\) this\.armScratchPreload\(this\.lastSnapshot\)/);
   assert.match(src, /else this\.disarmScratchPreload\(\)/, '翻到唱片区要撤表');
-  assert.match(src, /async onClose\(\)[\s\S]{0,300}?this\.disarmScratchPreload\(\)/);
+  assert.match(src, /async onClose\(\)[\s\S]{0,420}?this\.disarmScratchPreload\(\)/);
   assert.match(src, /applyAppearance\(\)[\s\S]{0,900}?disarmScratchPreload\(\)/, '切到轻量档 / 关掉搓碟要撤表');
 });
 
@@ -114,7 +120,8 @@ test('接线：就绪状态说了算 —— 起手接不下就走轻量、中途
 test('接线：取料分三路 + 时长自探测（本地未播过的曲子也能提前备）', () => {
   const src = read('src/views/player-view.ts');
   assert.match(src, /resolveVaultUrl\(track\.file\)/);
-  assert.match(src, /resolveExternalUrl\(track\.path\)/);
+  // 库外音频走 Range 那条（起不来网关时由 LocalSource 自己退回 Blob，调用点不用管）
+  assert.match(src, /resolveExternalPlayableUrl\(track\.path\)/);
   assert.match(src, /this\.plugin\.local\.readTrackBytes\(track\)/, '本地读字节');
   assert.match(src, /requestUrl\(\{ url \}\)\.then/, '在线走 requestUrl（主进程，无 CORS 限制）');
   assert.match(src, /probeMediaDuration\(url\)/, '时长未知（本地没播过的曲子）时探一次元数据');
@@ -132,8 +139,9 @@ test('搓碟台：缓存按 LRU 留几份，超内存丢最久没用过的（正
 
 test('样式：拖拽期间接管旋转、装饰层让开指针事件、光标只在可搓时出现', () => {
   const css = read('styles.css');
-  assert.match(css, /\.vinyl-turntable-vinyl\.is-scratching \{[^}]*animation: none;/);
-  assert.match(css, /\.vinyl-turntable-vinyl\.is-scratching \{[^}]*transform: rotate\(var\(--vinyl-scratch-angle/);
+  // 搓碟与马达（滑停 / 起转 / 停住）共用同一条接管规则：动画让位，角度走 --vinyl-spin-angle
+  assert.match(css, /\.vinyl-turntable-vinyl\.is-scratching,\s*\.vinyl-turntable-vinyl\.is-spin-held \{[^}]*animation: none;/);
+  assert.match(css, /\.vinyl-turntable-vinyl\.is-scratching,\s*\.vinyl-turntable-vinyl\.is-spin-held \{[^}]*transform: rotate\(var\(--vinyl-spin-angle/);
   assert.match(
     css,
     /\.vinyl-turntable-clip,\s*\.vinyl-arm-rest,\s*\.vinyl-turntable-spindle \{\s*pointer-events: none;/,

@@ -212,7 +212,7 @@ function gateway(opts = {}) {
           },
           appendFileSync() {},
         };
-      if (name === 'http') return { createServer: () => ({ listen() {} }) };
+      if (name === 'http') return { createServer: () => ({ listen() {}, on() {} }) };
       return requireFromGateway(name);
     },
     process: {

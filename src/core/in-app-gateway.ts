@@ -9,6 +9,10 @@ export interface UtilityProcessLike {
   pid?: number;
   kill(): boolean;
   on?(event: 'exit', listener: (code?: number) => void): unknown;
+  /** stdio: 'pipe' 时的标准输出。网关把「真实监听端口」写在这一路上（见 gateway.js 末尾），
+   *  父进程据此得知端口 —— 先探测端口再交给网关会留下一段被别人抢走的窗口（TOCTOU）。
+   *  拿不到（旧 Electron / remote 通道不给流）就退回探测端口那条老路，见 ServerManager。 */
+  stdout?: { on(event: 'data', listener: (chunk: { toString(): string }) => void): unknown } | null;
 }
 
 export interface UtilityProcessModuleLike {

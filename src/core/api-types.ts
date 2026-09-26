@@ -54,6 +54,13 @@ export interface SongUrlData {
   msg?: string;
 }
 
+/** /api/lyric：lrc = 正文（LRC 文本），tlyric = 翻译（同一套时间戳） */
+export interface NeteaseLyricResponse {
+  code?: number | string;
+  lrc?: { lyric?: string };
+  tlyric?: { lyric?: string };
+}
+
 export interface SongUrlResponse {
   data?: SongUrlData[];
 }
@@ -198,4 +205,11 @@ export interface KugouAlbumResponse {
 
 export interface ApiErrorResponse {
   error?: string;
+}
+
+/** /api/kugou/lyric：lyric = 正文（LRC 文本）。酷狗没有翻译轨，trans 恒为空字符串。 */
+export interface KugouLyricResponse {
+  code?: number | string;
+  lyric?: string;
+  trans?: string;
 }

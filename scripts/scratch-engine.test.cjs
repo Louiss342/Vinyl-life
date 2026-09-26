@@ -90,6 +90,9 @@ function setup(overrides = {}) {
     console,
     Buffer,
     Audio: FakeAudio,
+    // 马达斜坡（暂停的滑停）在 window 上排定时器：这里的用例不考斜坡本身，
+    // 给一组「排了但不响」的替身即可 —— 搓碟起手会先把斜坡收掉（motorAbort），断言与它无关
+    window: { setInterval: () => 0, clearInterval: () => {}, setTimeout: () => 0, clearTimeout: () => {} },
   });
   const mod = module.exports;
   const deps = {

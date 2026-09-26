@@ -13,6 +13,9 @@ export interface TrackMeta {
   cover?: string;
   /** 来源专辑笔记路径（统计/感想联动用） */
   albumNotePath?: string;
+  /** 音轨号：本地音频从内嵌标签读（见 core/audio-tags），只用于**本地曲目的排序**；
+   *  在线源的曲目顺序由平台给的列表决定，这里不映射 */
+  track?: number;
 }
 
 export type Track =
@@ -41,6 +44,12 @@ export type Track =
       pay?: number;
       trial?: boolean;
     });
+
+/** 试听片段？（会员曲目匿名取流只给一段）：只有 QQ / 酷狗会带回这个标记。
+ *  消费方（队列角标、开播提示）不必各自 `'trial' in track` —— 来源多了只改这一处。 */
+export function isTrialTrack(t: Track): boolean {
+  return t.source === 'qq' || t.source === 'kugou' ? !!t.trial : false;
+}
 
 export function trackKey(t: Track): string {
   switch (t.source) {

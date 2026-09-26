@@ -96,19 +96,27 @@ test('loadUtilityProcess：两条路都拿不到 → null（调用方报明确�
 
 // ---- 2) ServerManager 内嵌分支端到端 ----
 
-function makeUtilityProcessStub({ failFork = false } = {}) {
-  const calls = { env: null, serviceName: '' };
+function makeUtilityProcessStub({ failFork = false, withStdout = true } = {}) {
+  const calls = { env: null, serviceName: '', stdio: null, forks: 0 };
   return {
     calls,
     fork(modulePath, _args, options) {
       if (failFork) throw new Error('fork boom');
+      calls.forks++;
       calls.env = (options && options.env) || null;
       calls.serviceName = (options && options.serviceName) || '';
-      // 测试环境没有 Electron：用真 Node 起同一个网关文件，模拟 utility fork 的进程语义
-      const child = spawn(process.execPath, [modulePath], { env: options && options.env, stdio: 'ignore' });
+      calls.stdio = (options && options.stdio) || 'ignore';
+      // 测试环境没有 Electron：用真 Node 起同一个网关文件，模拟 utility fork 的进程语义。
+      // withStdout = true 按 stdio:'pipe' 起并把子进程 stdout 透出去 —— 端口交接
+      //（网关 bind(0) → 回报真实端口 → 父进程读它）因此被真实跑到，而不是只走退回路径。
+      const child = spawn(process.execPath, [modulePath], {
+        env: options && options.env,
+        stdio: withStdout ? ['ignore', 'pipe', 'ignore'] : 'ignore',
+      });
       return {
         pid: child.pid,
         kill: () => child.kill(),
+        stdout: withStdout ? child.stdout : undefined,
         on: (event, cb) => {
           if (event === 'exit') child.on('exit', (code) => cb(code));
         },
@@ -166,7 +174,8 @@ function loadManager({ utility = makeUtilityProcessStub(), session = null } = {}
 }
 
 test('应用内网关：fork 就绪 → token 放行 / 无 token 401 → stop 回收', async () => {
-  const { manager } = loadManager();
+  const utility = makeUtilityProcessStub();
+  const { manager } = loadManager({ utility });
   let pid = 0;
   try {
     const ok = await manager.ensure();
@@ -174,6 +183,12 @@ test('应用内网关：fork 就绪 → token 放行 / 无 token 401 → stop �
     assert.equal(manager.state, 'running');
     pid = manager.utility && manager.utility.pid;
     assert.ok(pid > 0, '应拿到网关进程 pid');
+
+    // 端口交接：网关自己 bind(0)，真实端口从 stdout 回报 —— 父进程没有预先探测
+    assert.equal(utility.calls.stdio, 'pipe', '走交接时要读 stdout');
+    assert.equal(utility.calls.env.VINYL_PORT, '0', '交接时由网关自己挑端口（0 = 系统分配）');
+    assert.equal(utility.calls.forks, 1, '交接成功就不该再 fork 第二次');
+    assert.ok(manager.port > 0, '端口来自网关的回报');
 
     const good = await httpGet(`http://127.0.0.1:${manager.port}/api/ping`, { 'x-vinyl-token': manager.token });
     assert.equal(good.status, 200, '带 token 的探测应放行');
@@ -194,6 +209,53 @@ test('应用内网关：fork 就绪 → token 放行 / 无 token 401 → stop �
     }
   }
   assert.equal(alive, false, 'stop 后内嵌网关进程应已退出');
+});
+
+test('应用内网关：拿不到 stdout 的通道退回「预探测端口」，显式传给网关', async () => {
+  const utility = makeUtilityProcessStub({ withStdout: false });
+  const { manager } = loadManager({ utility });
+  try {
+    const ok = await manager.ensure();
+    assert.equal(ok, true, '旧通道也要能起来');
+    assert.equal(utility.calls.forks, 2, '第一次交接拿不到流 → 第二次带端口重来');
+    assert.equal(utility.calls.stdio, 'ignore', '退回路径不读 stdout');
+    assert.ok(Number(utility.calls.env.VINYL_PORT) > 0, '退回路径把探测到的端口显式传进去');
+    assert.equal(manager.port, Number(utility.calls.env.VINYL_PORT));
+    const good = await httpGet(`http://127.0.0.1:${manager.port}/api/ping`, { 'x-vinyl-token': manager.token });
+    assert.equal(good.status, 200);
+  } finally {
+    manager.stop();
+  }
+});
+
+test('网关自己处理监听失败：端口被占时写清原因并以 1 退出（不再抛未捕获异常）', async () => {
+  // 先占住一个端口，再让真网关去监听同一个号 —— 模拟 TOCTOU 里「号被抢走」的那一刻
+  const squatter = http.createServer(() => {});
+  await new Promise((r) => squatter.listen(0, '127.0.0.1', r));
+  const taken = squatter.address().port;
+  const logFile = path.join(os.tmpdir(), `vinyl-gw-eaddr-${process.pid}.log`);
+  // 网关源码不能走 node -e：产物 100+ KB，Windows 命令行上限 32 KB（spawn 会直接失败）。
+  // 落成临时文件再跑，与插件里 materializeGateway 的做法一致。
+  const gwFile = path.join(os.tmpdir(), `vinyl-gw-eaddr-${process.pid}.js`);
+  fs.writeFileSync(gwFile, GATEWAY_SOURCE, 'utf8');
+  const child = spawn(process.execPath, [gwFile], {
+    env: { ...process.env, VINYL_PORT: String(taken), VINYL_LOG_FILE: logFile, VINYL_TOKEN: 'x' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let out = '';
+  child.stdout.on('data', (d) => (out += d));
+  child.stderr.on('data', (d) => (out += d));
+  const code = await new Promise((r) => child.on('exit', (c) => r(c)));
+  squatter.close();
+  assert.equal(code, 1, '监听失败要干净退出（未捕获异常会带一段堆栈、退出码也不稳定）');
+  assert.match(out, /监听失败/, '原因要写出来：父进程与用户才能在 gateway.log 里查到');
+  for (const f of [logFile, gwFile]) {
+    try {
+      fs.unlinkSync(f);
+    } catch {
+      // 没写成也无妨：这条断言只看进程行为
+    }
+  }
 });
 
 test('系统代理：resolveProxy 结果经 VINYL_PROXY 注入网关 env；DIRECT / 取不到则不注入', async () => {
