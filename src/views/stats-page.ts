@@ -17,6 +17,12 @@ import { SettingsSection, settingsSection } from './settings-section';
 import { markVinylModal, notice } from '../util';
 import { t, tf } from '../core/i18n';
 
+/** 备份体积：不到 1 MB 按 KB 报，再往上按 MB（一位小数）—— 只求一眼看出量级 */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
 function fmtDay(key: string): string {
   const [year, month, day] = key.split('-').map(Number);
   return new Date(year, month - 1, day).toLocaleDateString(undefined, {
@@ -114,16 +120,30 @@ export class ClearStatsModal extends Modal {
   onOpen(): void {
     const c = this.contentEl;
     c.createEl('p', { text: t('data.clearScope') });
+    // 同一张卡上的其它破坏性动作都有安全网（裁剪前必归档、恢复前必自动备份），
+    // 只有这个原本没有 —— 补一个默认勾选的「先备份一份」。
+    const backupFirst = c.createEl('label', { cls: 'vinyl-delete-opt' });
+    const cb = backupFirst.createEl('input', { attr: { type: 'checkbox' } });
+    cb.checked = true;
+    const text = backupFirst.createDiv({ cls: 'vinyl-delete-opt-text' });
+    text.createDiv({ text: t('data.clearBackupFirst') });
+    text.createDiv({ text: t('data.clearBackupHint'), cls: 'vinyl-muted vinyl-delete-opt-detail' });
     const actions = c.createDiv({ cls: 'modal-button-container' });
     actions.createEl('button', { text: t('common.cancel') }).onclick = () => this.close();
     const go = actions.createEl('button', { text: t('settings.clearStats'), cls: 'mod-warning' });
     go.onclick = async () => {
       go.disabled = true;
+      cb.disabled = true;
       try {
+        if (cb.checked) {
+          const file = await this.plugin.exportDataBackup();
+          notice(tf('backup.created', { path: file.path }));
+        }
         await this.plugin.clearPlaybackStats();
       } catch (e) {
         notice(tf('stats.clearFailed', { msg: (e as Error).message }));
         go.disabled = false;
+        cb.disabled = false;
         return;
       }
       this.close();
@@ -176,6 +196,10 @@ export class StatsPage {
   private renderDataManagement(parent: HTMLElement): void {
     const p = this.plugin;
     const body = this.card(parent, t('data.title'), 'stats-data', 'database').body;
+    // 恢复备份之后到重启之前：写入被关掉，必须常驻说出来（见 main.ts 的 awaitingRestartAfterRestore）
+    if (p.awaitingRestartAfterRestore) {
+      body.createDiv({ text: t('backup.restartBanner'), cls: 'vinyl-error vinyl-restart-banner' });
+    }
     // 只读状态行：名称在左、值在右（与设置页的登录状态行同一套做法）
     const valueRow = (name: string, value: string) => {
       const row = new Setting(body).setName(name);
@@ -183,6 +207,14 @@ export class StatsPage {
       row.controlEl.createDiv({ cls: 'vinyl-data-value', text: value });
     };
     valueRow(t('data.backupPlace'), p.backupFolderPath() + '/');
+    // 备份目录自己在长大：份数与体积摆出来（手动备份与裁剪归档刻意不自动清，用户至少要看得见）
+    const inventory = p.backupInventory();
+    if (inventory.count > 0) {
+      valueRow(
+        t('data.backupOnDisk'),
+        tf('data.backupOnDiskValue', { n: inventory.count, size: formatBytes(inventory.bytes) })
+      );
+    }
     valueRow(
       t('data.lastBackup'),
       p.settings.lastBackupAt

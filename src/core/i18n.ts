@@ -132,6 +132,11 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     en: 'Also delete local audio ({n})',
   },
   'batchDelete.alsoCover': { zh: '同时删除封面（{n} 张）', en: 'Also delete covers ({n})' },
+  // 勾了连带清理之后，确认按钮把「一共要删多少」写出来（批量删除的文件数用户没法逐条核对）
+  'batchDelete.confirmWithAssets': {
+    zh: '删除 {albums} 张 + {files} 个文件',
+    en: 'Delete {albums} albums + {files} files',
+  },
   'batchDelete.coverShared': {
     zh: '部分封面图被其他专辑引用，不会删除',
     en: 'Some cover images are used by other albums and are kept',
@@ -1055,15 +1060,27 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'data.autoBackup': { zh: '每周自动备份', en: 'Weekly auto backup' },
   'data.keepCount': { zh: '保留份数', en: 'Keep' },
   'data.keepN': { zh: '最近 {n} 份', en: 'Last {n}' },
+  'data.backupOnDisk': { zh: '已存备份', en: 'Backups on disk' },
+  'data.backupOnDiskValue': { zh: '{n} 份 · 约 {size}', en: '{n} files · {size}' },
   // 清除统计的确认弹窗（不可撤销的动作，说明放在按下去之前）
   'data.clearScope': {
     zh: '将删掉累计播放次数与逐日明细，不可撤销；已删除专辑的历史封面缓存也会一并清掉。',
     en: 'This deletes all-time play counts and per-day events, irreversibly; cached covers of removed albums go too.',
   },
+  'data.clearBackupFirst': { zh: '清除前先备份一份', en: 'Back up before clearing' },
+  'data.clearBackupHint': {
+    zh: '备份落到「数据管理」写的位置，事后能用它恢复。',
+    en: 'The backup lands where Data management says and can be restored later.',
+  },
   'notice.autoBackupDone': { zh: '已自动备份到 {path}', en: 'Auto-backed up to {path}' },
   'stats.exportFailed': { zh: '导出统计失败：{msg}', en: 'Could not export statistics: {msg}' },
   'stats.clearFailed': { zh: '清除统计失败：{msg}', en: 'Could not clear statistics: {msg}' },
   'backup.restartNotice': { zh: '备份已恢复。请重启 Obsidian 后再继续使用 Vinyl Life。', en: 'Backup restored. Restart Obsidian before using Vinyl Life again.' },
+  // 恢复之后到重启之前是「写不进去」的状态：常驻警示（一条几秒的 Notice 兜不住用户接着用几小时）
+  'backup.restartBanner': {
+    zh: '已恢复备份：重启 Obsidian 之前，新的播放记录与设置改动都不会被保存。',
+    en: 'Backup restored: until you restart Obsidian, new play events and setting changes are not saved.',
+  },
   'health.title': { zh: '收藏健康检查', en: 'Library health' },
   'health.summary': { zh: '检查了 {albums} 张专辑：{errors} 项错误，{notes} 项提示（另有 {collectOnly} 张标为仅收藏）。', en: 'Checked {albums} albums: {errors} errors, {notes} notes ({collectOnly} marked collection-only).' },
   'health.errorsHeading': { zh: '错误（需要修）', en: 'Errors (need fixing)' },

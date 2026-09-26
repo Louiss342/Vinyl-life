@@ -311,6 +311,14 @@ export class VinylSettingTab extends PluginSettingTab {
     this.stopAboutInk();
     containerEl.empty();
     this.buildTabStrip(containerEl);
+    // 恢复备份之后到重启之前写入是关着的（见 main.ts 的 awaitingRestartAfterRestore）：
+    // 设置页也要说 —— 用户正是在这里改设置，而改完不会落盘
+    if (this.plugin.awaitingRestartAfterRestore) {
+      containerEl.createDiv({
+        text: t('backup.restartBanner'),
+        cls: 'vinyl-error vinyl-restart-banner',
+      });
+    }
     const body = containerEl.createDiv({
       cls: `vinyl-settings-body is-${this.activeTab}`,
     });

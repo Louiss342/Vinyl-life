@@ -385,11 +385,21 @@ export class VinylShelfView extends ItemView {
     }, 500);
   }
 
-  // 内容签名（路径 + 已显示属性取值）：改 frontmatter 后卡片即时更新，而不只在增删专辑时
+  // 内容签名：卡片上用到的全部字段 —— 路径 / 已显示属性 / 封面 / 版本 / 四个音源态。
+  // 只签属性是不够的：换封面、拖音频进专辑（音源态变了）都不改属性，卡片会停在旧样子
+  // （提示「已更新」但封面没变；加了音源之后点卡片还是「打开笔记」而不是播放）。
   private shelfSignature(): string {
     const keys = this.plugin.settings.shelfProps;
     return this.entries
-      .map((e) => `${e.album.path}\u0001${keys.map((k) => e.album.displayProps[k] ?? '').join('\u0002')}`)
+      .map((e) =>
+        [
+          e.album.path,
+          keys.map((k) => e.album.displayProps[k] ?? '').join('\u0002'),
+          e.album.cover ?? '',
+          e.album.edition ?? '',
+          [e.local, e.netease, e.qq, e.kugou].map((v) => (v ? '1' : '0')).join(''),
+        ].join('\u0001')
+      )
       .sort()
       .join('\u0003');
   }
@@ -1779,6 +1789,9 @@ export class VinylShelfView extends ItemView {
       this.lastSnap.albumNotePath === album.path &&
       this.lastSnap.queue.length > 0
     ) {
+      // 已经是这一张：不重新取碟、不走交接动画，但**暂停中要接着放** —— 包括重启后自动
+      // 载入的「上次播放」。点一张唱片的语义是「我要听它」，不该只翻出播放器让用户自己按播放。
+      if (this.lastSnap.status === 'paused') void this.plugin.engine.play();
       await this.plugin.openPlayer();
       return;
     }
@@ -1817,7 +1830,9 @@ export class VinylShelfView extends ItemView {
       it
         .setTitle(t('menu.setCover'))
         .setIcon('image')
-        .onClick(() => new SetCoverModal(this.plugin.app, this.plugin, album).open())
+        .onClick(() =>
+          new SetCoverModal(this.plugin.app, this.plugin, album, () => this.render()).open()
+        )
     );
     // 评分：此前只能手写 frontmatter（审计点名的缺口）。模态框里 5 档 + 清除，
     // 与「设置专辑版本」同一形态（见 views/rating-modal）

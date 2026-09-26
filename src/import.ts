@@ -17,6 +17,7 @@ import {
   baseName,
   scalarText,
   sanitizeFileName,
+  stripWikilink,
   ensureFolder,
   relDirOf,
   notice,
@@ -390,6 +391,17 @@ export async function importKugouAlbum(ctx: ImportContext, input: string): Promi
 
 // ============ B. 本地音频导入（两模式） ============
 
+/** 复制模式的落点目录：优先用笔记里已有的 audioFolder（笔记改名之后它仍然指向真目录），
+ *  没有才按「设置里的音频目录 / 笔记标题」新建。库外绝对路径不往那儿复制 ——
+ *  那是「引用原文件」模式的地盘。 */
+function copyTargetDir(ctx: ImportContext, album: AlbumInfo): string {
+  const ref = stripWikilink(String(album.audioFolderRef || '').trim());
+  const external =
+    /^[a-zA-Z]:[\\/]/.test(ref) || ref.startsWith('/') || ref.startsWith('\\');
+  if (ref && !external) return normalizePath(ref);
+  return normalizePath(`${ctx.settings().audioFolder}/${sanitizeFileName(album.title)}`);
+}
+
 export async function importLocalAudio(
   ctx: ImportContext,
   album: AlbumInfo,
@@ -407,7 +419,10 @@ export async function importLocalAudio(
   const skippedUnsupported: string[] = [];
   const skippedExisting: string[] = [];
   let fallback = false;
-  let copyDir = '';
+  // 复制落点：笔记里已有 audioFolder 就沿用它，没有才按「音频目录 / 笔记标题」新建。
+  // 只跟着标题走有个坑：笔记一改名（加 (Remastered)、改错别字），再导入的曲目会落进新目录，
+  // 而笔记引用的还是旧目录 —— 提示导入成功、队列里一首不多，旧目录还成了没人引用的孤儿。
+  const copyDir = copyTargetDir(ctx, album);
 
   for (const f of files) {
     if (!isAudioFile(f.name)) {
@@ -417,9 +432,6 @@ export async function importLocalAudio(
     const safeName = sanitizeFileName(f.name);
 
     if (mode === 'copy') {
-      copyDir = normalizePath(
-        `${ctx.settings().audioFolder}/${sanitizeFileName(album.title)}`
-      );
       // 文件夹导入：保留子目录结构（audio/<专辑>/CD1/01.flac），散选文件则平铺
       const relDir = relDirOf(f);
       const destDir = relDir
@@ -448,9 +460,6 @@ export async function importLocalAudio(
       } else {
         // 非 Electron 拖拽（无文件路径）→ 回退复制进 vault
         fallback = true;
-        copyDir = normalizePath(
-          `${ctx.settings().audioFolder}/${sanitizeFileName(album.title)}`
-        );
         const p = normalizePath(`${copyDir}/${safeName}`);
         if (!ctx.app.vault.getAbstractFileByPath(p)) {
           const ab = await f.arrayBuffer();

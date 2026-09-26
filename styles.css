@@ -18,6 +18,14 @@
   font-size: 0.9em;
 }
 
+/* 恢复备份之后的常驻警示（数据管理卡顶部）：到重启之前写入是关着的，
+   一条几秒的 Notice 兜不住「用户没重启就接着用了好几小时」这种情况 */
+.vinyl-restart-banner {
+  border: 1px solid var(--text-error);
+  padding: 6px 10px;
+  margin-bottom: 8px;
+}
+
 .vinyl-badge {
   font-size: 0.72em;
   padding: 1px 6px;

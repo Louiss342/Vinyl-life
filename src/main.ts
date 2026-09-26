@@ -167,7 +167,10 @@ export default class VinylLifePlugin extends Plugin {
   handoff!: HandoffController;
   private lastReportedSourceFailure = '';
   private pendingSourceSwitch: { path: string; source: ActiveSource } | null = null;
-  private awaitingRestartAfterRestore = false;
+  /** 恢复备份后到重启前：saveSettings 会一直早退（见下面 saveSettings 的第一行）。
+   *  这段时间里新的播放事件与设置改动只留在内存 —— UI 必须常驻说出来，
+   *  一条几秒的 Notice 兜不住「用户没重启就接着用了几小时」这个场景。 */
+  awaitingRestartAfterRestore = false;
   /** 本轮会话里播放明细归档失败过（播放中反复触发时只提示一次） */
   private archiveFailedThisSession = false;
   /** 本轮会话里自动备份失败过（同上：每小时检查一次，失败别反复弹） */
@@ -1414,6 +1417,23 @@ export default class VinylLifePlugin extends Plugin {
   backupFolderPath(): string {
     const root = this.settings.albumFolder.split('/').slice(0, -1).join('/') || 'Vinyl Life';
     return normalizePath(`${root}/Backups`);
+  }
+
+  /** 备份目录的清单（份数 / 体积）：给「数据管理」当只读状态行。
+   *  只统计不清理 —— 手动备份与裁剪归档刻意不自动删（自动备份那部分见 pruneAutoBackups），
+   *  但用户至少该看得见它在长大，而不是等到网盘同步变慢才发现。 */
+  backupInventory(): { count: number; bytes: number } {
+    const folder = this.app.vault.getAbstractFileByPath(this.backupFolderPath());
+    if (!(folder instanceof TFolder)) return { count: 0, bytes: 0 };
+    let count = 0;
+    let bytes = 0;
+    for (const child of folder.children) {
+      if (child instanceof TFile && child.extension === 'json') {
+        count++;
+        bytes += child.stat.size;
+      }
+    }
+    return { count, bytes };
   }
 
   /** 写一份备份格式的 JSON：设置 + 指定统计快照 + 历史封面缓存。

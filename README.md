@@ -698,13 +698,13 @@ npm test
 - `npm run build`：构建，产出 `main.js`（插件本体）、`server.js`（本地网关，独立调试用）和 `src/core/gateway-bundle.ts`、`src/core/style-bundle.ts`（这两个是构建生成物，勿手改）。
 - `npm run typecheck`：类型检查。它依赖 build 先生成 `src/core/gateway-bundle.ts` 与 `src/core/style-bundle.ts`，两步顺序不能反。
 - `npm run lint`：ESLint（含官方审核规则集），提交前保持零报错。
-- `npm test`：跑测试，200 多项，纯 Node 环境，不需要 Obsidian。
+- `npm test`：跑测试（`node --test`，末尾会打印条数），纯 Node 环境，不需要 Obsidian。
 
 #### 10.2 体积预算
 
-`main.js` 有体积预算：540 KB。它是社区市场的下载主体，预算写在 `esbuild.config.mjs`。
+`main.js` 有体积预算：600 KB。它是社区市场的下载主体，预算写在 `esbuild.config.mjs`；每次构建都会把实测体积与剩余余量打进日志，超了直接构建失败。
 
-其中约 47 KB 是手写体（拉丁 Excalifont 加中文霞鹜文楷子集，空态教程与设置「关于」页共用，见 `assets/fonts/`），约 26 KB 是手绘笔触引擎 roughjs。
+其中约 26 KB 是手绘笔触引擎 roughjs；另有约 48 KB 是两个手写体子集（拉丁 Excalifont 加中文霞鹜文楷，空态教程与设置「关于」页共用，见 `assets/fonts/`）压在**内联兜底样式**里的分量 —— 万一日后要瘦身，这里是最粗的一根杠杆（兜底副本只在手工安装漏掉 `styles.css` 时才会用到，剥掉字体仍有完整样式）。
 
 #### 10.3 源码目录
 
@@ -1448,13 +1448,13 @@ npm test
 - `npm run build`: build, producing `main.js` (the plugin itself), `server.js` (the local gateway, for standalone debugging), and `src/core/gateway-bundle.ts` / `src/core/style-bundle.ts` (both generated — do not edit them by hand).
 - `npm run typecheck`: type-check. It depends on `npm run build` having generated `src/core/gateway-bundle.ts` / `src/core/style-bundle.ts` first, so the order cannot be reversed.
 - `npm run lint`: ESLint with the official review rule set; keep it clean before committing.
-- `npm test`: run the tests — 200+ of them, in plain Node, with no Obsidian required.
+- `npm test`: run the tests (`node --test`; the count is printed at the end), in plain Node, with no Obsidian required.
 
 #### 10.2 Size budget
 
-`main.js` has a size budget: 540 KB, and exceeding it fails the build. It is what the community store downloads, and the budget lives in `esbuild.config.mjs`.
+`main.js` has a size budget: 600 KB, and exceeding it fails the build. It is what the community store downloads, and the budget lives in `esbuild.config.mjs`; every build prints the measured size and the remaining headroom. About 26 KB of it is roughjs, the hand-drawn stroke engine.
 
-About 47 KB of it is the handwriting fonts (Latin Excalifont plus a Chinese LXGW WenKai subset, shared by the empty-shelf tutorial and the About settings page; see `assets/fonts/`), and about 26 KB is roughjs, the hand-drawn stroke engine.
+Another ~48 KB is the two handwriting font subsets (Latin Excalifont plus a Chinese LXGW WenKai subset, shared by the empty-shelf tutorial and the About settings page; see `assets/fonts/`) as carried inside the **inlined fallback stylesheet** — the coarsest lever if the size ever needs trimming again (that fallback only matters when a manual install is missing `styles.css`, and the UI keeps its full styling without the fonts).
 
 #### 10.3 Source layout
 

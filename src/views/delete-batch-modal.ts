@@ -64,15 +64,17 @@ export class DeleteBatchModal extends Modal {
     }
 
     // —— 连带清理选项（有可删资产才出现）——
-    const audioFolderCount = targets.audioFolders.reduce(
-      (n, f) => n + scanFolderContents(f).audios.length,
-      0
-    );
+    // 目录内容只扫一遍：下面既要总数、又要逐目录报数（此前同一个目录扫了两遍）
+    const folderAudioCounts = targets.audioFolders.map((f) => ({
+      folder: f,
+      n: scanFolderContents(f).audios.length,
+    }));
+    const audioTotal = folderAudioCounts.reduce((n, x) => n + x.n, 0) + targets.audioFiles.length;
     let audioCb: HTMLInputElement | null = null;
     if (targets.audioFolders.length || targets.audioFiles.length) {
       const parts: string[] = [];
-      for (const f of targets.audioFolders) {
-        parts.push(tf('delete.folderPart', { path: f.path, n: scanFolderContents(f).audios.length }));
+      for (const { folder, n } of folderAudioCounts) {
+        parts.push(tf('delete.folderPart', { path: folder.path, n }));
       }
       if (targets.audioFiles.length) {
         const names = targets.audioFiles.map((f) => f.name);
@@ -87,8 +89,9 @@ export class DeleteBatchModal extends Modal {
       }
       audioCb = this.optionRow(
         c,
-        tf('batchDelete.alsoAudio', { n: audioFolderCount + targets.audioFiles.length }),
-        parts.join(t('common.semicolon'))
+        tf('batchDelete.alsoAudio', { n: audioTotal }),
+        parts.join(t('common.semicolon')),
+        false
       );
     }
 
@@ -101,7 +104,8 @@ export class DeleteBatchModal extends Modal {
           .slice(0, PATH_CAP)
           .map((f) => f.path)
           .join(t('common.listSep')) +
-          (targets.coverFiles.length > PATH_CAP ? t('delete.othersMore') : '')
+          (targets.coverFiles.length > PATH_CAP ? t('delete.othersMore') : ''),
+        false
       );
     }
 
@@ -155,6 +159,19 @@ export class DeleteBatchModal extends Modal {
     const row = c.createDiv({ cls: 'vinyl-import-actions vinyl-delete-actions' });
     const cancelBtn = row.createEl('button', { text: t('common.cancel') });
     const delBtn = row.createEl('button', { text: t('common.delete'), cls: 'mod-warning' });
+    // 连带清理默认**不勾**（单张删除那边留着默认勾选）：批量是唯一一处「一个勾覆盖几百个文件」的场景，
+    // 而弹窗里只有数量、没有清单。勾上之后把总数写进确认按钮，用户按下去之前知道自己在删多少。
+    const syncConfirm = () => {
+      const files =
+        (audioCb?.checked ? audioTotal : 0) + (coverCb?.checked ? targets.coverFiles.length : 0);
+      delBtn.textContent =
+        files > 0
+          ? tf('batchDelete.confirmWithAssets', { albums: this.albums.length, files })
+          : t('common.delete');
+    };
+    audioCb?.addEventListener('change', syncConfirm);
+    coverCb?.addEventListener('change', syncConfirm);
+    syncConfirm();
     cancelBtn.addEventListener('click', () => this.close());
     const doDelete = async () => {
       if (this.busy) return;
@@ -183,11 +200,16 @@ export class DeleteBatchModal extends Modal {
     window.setTimeout(() => cancelBtn.focus(), 50);
   }
 
-  // 勾选项行：标题 + 明细路径
-  private optionRow(parent: HTMLElement, label: string, detail: string): HTMLInputElement {
+  // 勾选项行：标题 + 明细路径（批量这边默认不勾，见 syncConfirm 上方那段）
+  private optionRow(
+    parent: HTMLElement,
+    label: string,
+    detail: string,
+    checked = true
+  ): HTMLInputElement {
     const row = parent.createEl('label', { cls: 'vinyl-delete-opt' });
     const cb = row.createEl('input', { attr: { type: 'checkbox' } });
-    cb.checked = true;
+    cb.checked = checked;
     const text = row.createDiv({ cls: 'vinyl-delete-opt-text' });
     text.createDiv({ text: label });
     text.createDiv({ text: detail, cls: 'vinyl-muted vinyl-delete-opt-detail' });

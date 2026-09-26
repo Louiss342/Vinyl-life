@@ -37,7 +37,10 @@ export class SetCoverModal extends Modal {
   constructor(
     app: App,
     private plugin: VinylLifePlugin,
-    private album: AlbumInfo
+    private album: AlbumInfo,
+    /** 写回之后通知调用方刷新（与 RatingModal / AlbumEditionModal 同一口径）——
+     *  只靠 metadataCache 驱动是不够的：专辑墙的刷新签名以前不含 cover，页面会停在旧封面 */
+    private onSaved?: () => void
   ) {
     super(app);
     markVinylModal(this); // 全直角：弹窗壳收掉圆角（见 styles.css「全直角」段）
@@ -101,7 +104,7 @@ export class SetCoverModal extends Modal {
     removeBtn.addEventListener('click', () => void this.applyCover(null, ''));
   }
 
-  /** 写回 frontmatter（cover 传 null = 移除）；metadataCache 变更会驱动专辑墙自动刷新 */
+  /** 写回 frontmatter（cover 传 null = 移除）；写成功后就地通知调用方刷新 */
   private async applyCover(cover: string | null, label: string) {
     try {
       await this.app.fileManager.processFrontMatter(
@@ -112,6 +115,7 @@ export class SetCoverModal extends Modal {
         }
       );
       notice(cover ? tf('cover.updated', { label }) : t('cover.removed'));
+      this.onSaved?.();
       this.close();
     } catch (e) {
       console.error('[vinyl] 写入封面失败', e);

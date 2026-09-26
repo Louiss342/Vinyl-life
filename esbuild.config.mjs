@@ -137,7 +137,20 @@ async function build() {
   // （2026-09 审计瘦身：内联样式改成「先压缩再 gzip」，同一份 styles.css 的载荷 122.2 → 83.0 KB，
   //   main.js 实测 524.8 → 485.5 KB —— 预算不动，余量从 19 KB 回到约 54 KB。省下的全是注释，
   //   字体子集与版本戳逐字节保留，见上面 2.5) 那一段与 scripts/style-bundle.test.cjs。）
-  const MAIN_JS_BUDGET = 540 * 1024;
+  // 540 → 600：这里有一段**注释与实测脱节**的教训 —— 上面「余量约 54 KB」是 2026-09 瘦身当天的数，
+  //   之后歌词面 / 马达斜坡 / 逐曲评分 / 本地标签几波功能进来，实测余量只剩 15.7 KB，而注释还写着 54。
+  //   维护者按注释做取舍判断，等于拿着错的地图。所以这次除了改预算，还把余量打进构建日志（见下面那行），
+  //   让数字再也漂不动。
+  //   预算 540 → 600 是明说的取舍（用户 2026-09-26 决定）：这一波功能是真实功能，不该为了省 60 KB
+  //   去砍设计稿。若哪天又要瘦身，最大的一根杠杆是**兜底副本里的字体**：内联样式载荷 64.5 KB 里
+  //   有 48.6 KB（base64 后约 64.8 KB）是两个手写体子集，而它只在「手工安装漏了 styles.css」时用得上
+  //   —— 剥掉它界面仍有完整样式、只退回系统字体。真要动它，需同步 scripts/style-bundle.test.cjs
+  //   那条「载荷逐字节等于 styles.css 压缩后」的契约。
+  const MAIN_JS_BUDGET = 600 * 1024;
+  console.log(
+    `[vinyl-build] main.js 余量: ${((MAIN_JS_BUDGET - sizes['main.js']) / 1024).toFixed(1)} KB` +
+      `（预算 ${MAIN_JS_BUDGET / 1024} KB）`
+  );
   if (sizes['main.js'] > MAIN_JS_BUDGET) {
     throw new Error(
       `main.js 体积 ${(sizes['main.js'] / 1024).toFixed(1)} KB 超出预算 ${MAIN_JS_BUDGET / 1024} KB：` +

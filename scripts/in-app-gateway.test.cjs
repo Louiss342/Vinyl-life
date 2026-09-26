@@ -28,6 +28,9 @@ const GATEWAY_SOURCE = esbuild.buildSync({
   write: false,
 }).outputFiles[0].text;
 const GATEWAY_GZIP = zlib.gzipSync(Buffer.from(GATEWAY_SOURCE, 'utf8'), { level: 9 }).toString('base64');
+// 与构建同口径（esbuild.config.mjs:47）：源码 sha1 前 10 位就是临时文件名里的 hash。
+// 用真 hash 而不是桩值 —— 「内容比对」那条防线只有在 hash 真实时才有意义（见下面两条用例）。
+const GATEWAY_HASH = require('node:crypto').createHash('sha1').update(GATEWAY_SOURCE).digest('hex').slice(0, 10);
 
 function bundle(entry) {
   return esbuild.buildSync({
@@ -160,7 +163,7 @@ function loadManager({ utility = makeUtilityProcessStub(), session = null } = {}
     window: { setTimeout, clearTimeout, setInterval, clearInterval },
     require: (name) => {
       if (name === 'obsidian') return { Plugin: class {}, requestUrl };
-      if (name.endsWith('gateway-bundle')) return { GATEWAY_GZIP, GATEWAY_HASH: 'testhash' };
+      if (name.endsWith('gateway-bundle')) return { GATEWAY_GZIP, GATEWAY_HASH };
       if (name === '@electron/remote') {
         return { require: (id) => (id === 'electron' ? { utilityProcess: utility, session } : {}) };
       }
@@ -223,6 +226,42 @@ test('应用内网关：拿不到 stdout 的通道退回「预探测端口」，
     assert.equal(manager.port, Number(utility.calls.env.VINYL_PORT));
     const good = await httpGet(`http://127.0.0.1:${manager.port}/api/ping`, { 'x-vinyl-token': manager.token });
     assert.equal(good.status, 200);
+  } finally {
+    manager.stop();
+  }
+});
+
+test('网关临时文件：预置同名假网关会被真源码覆盖（文件名里的 hash 是公开可复算的）', async () => {
+  const dir = path.join(os.tmpdir(), 'vinyl-life');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `gateway-${GATEWAY_HASH}.js`);
+  // 模拟共享 /tmp 上的攻击：文件名对得上（hash 可从公开的 main.js 复算），内容是别人的代码
+  fs.writeFileSync(file, 'process.exit(0); // 冒充的网关\n', 'utf8');
+  const { manager } = loadManager({ utility: makeUtilityProcessStub() });
+  try {
+    await manager.ensure();
+    assert.equal(fs.readFileSync(file, 'utf8'), GATEWAY_SOURCE, '内容对不上就必须覆盖，不能直接拿来 fork');
+  } finally {
+    manager.stop();
+  }
+});
+
+test('网关临时文件：内容一致就复用、不重写（另一个窗口可能正跑着这一份）', async () => {
+  const dir = path.join(os.tmpdir(), 'vinyl-life');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `gateway-${GATEWAY_HASH}.js`);
+  fs.writeFileSync(file, GATEWAY_SOURCE, 'utf8');
+  const past = new Date(Date.now() - 86_400_000);
+  fs.utimesSync(file, past, past); // 改写会把 mtime 刷新成现在 —— 用旧时间戳当「没被动过」的证据
+  const { manager } = loadManager({ utility: makeUtilityProcessStub() });
+  try {
+    await manager.ensure();
+    assert.equal(fs.readFileSync(file, 'utf8'), GATEWAY_SOURCE);
+    assert.equal(
+      Math.round(fs.statSync(file).mtimeMs),
+      Math.round(past.getTime()),
+      '内容一致时不该重写临时文件'
+    );
   } finally {
     manager.stop();
   }

@@ -222,6 +222,32 @@ test('停止播放（空队列）：墙上的唱片全部回位', () => {
   assert.equal(b.disc.anims.length, 1, 'B 的回位动画');
 });
 
+test('点「已经在唱机上」的唱片：暂停中接着放，播放中只翻出播放器', async () => {
+  const { view } = makeViewPair();
+  const calls = [];
+  view.plugin = {
+    settings: { queueMode: false },
+    engine: { play: async () => calls.push('play') },
+    openPlayer: async () => calls.push('open'),
+    handoff: { handoff: async () => calls.push('handoff') },
+  };
+  const entry = {
+    album: { path: 'Albums/A.md' },
+    local: true,
+    netease: false,
+    qq: false,
+    kugou: false,
+  };
+  // 重启后自动载入的「上次播放」：队列还在、状态是 paused —— 点它应当接着放
+  view.lastSnap = { albumNotePath: 'Albums/A.md', queue: [track('Albums/A.md')], status: 'paused' };
+  await view.playAlbum(entry);
+  assert.deepEqual(calls, ['play', 'open'], '暂停中：先接着放，再把播放器翻出来（不重新取碟）');
+  calls.length = 0;
+  view.lastSnap = { albumNotePath: 'Albums/A.md', queue: [track('Albums/A.md')], status: 'playing' };
+  await view.playAlbum(entry);
+  assert.deepEqual(calls, ['open'], '已经在播：不重复触发播放，只翻出播放器');
+});
+
 test('减少动态效果：状态照旧回写，但不播位移动画', () => {
   // 这一份模块在「减少动效」环境里加载：prefersReducedMotion() 命中
   const { VinylShelfView } = loadModule('src/views/shelf-view.ts', {

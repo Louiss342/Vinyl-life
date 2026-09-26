@@ -282,6 +282,37 @@ test('文件夹导入：复制模式保留子目录结构（同名文件不再�
   assert.deepEqual(Array.from(res.skippedExisting), [], '不把同名文件误判成重复');
 });
 
+test('复制落点：笔记已有 audioFolder 就沿用它（笔记改名后不再往新目录里导）', async () => {
+  const h = setup();
+  // 笔记改名成 A (Remastered)，frontmatter 里的 audioFolder 还指着当初建的目录
+  const album = {
+    title: 'A (Remastered)',
+    file: { path: 'Vinyl Life/Vinyl Note/A (Remastered).md' },
+    audioFolderRef: '[[Vinyl Life/audio/A]]',
+  };
+  const res = await h.mod.importLocalAudio(h.ctx, album, [new File(['x'], 'ok.flac')], 'copy');
+  assert.deepEqual(
+    Array.from(res.added),
+    ['Vinyl Life/audio/A/ok.flac'],
+    '落点跟已有 audioFolder 走 —— 否则文件进新目录、笔记仍引用旧目录，等于白导'
+  );
+});
+
+test('复制落点：库外绝对路径的 audioFolder 不是复制目标（那是引用模式的地盘）', async () => {
+  const h = setup();
+  const album = {
+    title: 'B',
+    file: { path: 'Vinyl Life/Vinyl Note/B.md' },
+    audioFolderRef: 'D:\\Music\\B',
+  };
+  const res = await h.mod.importLocalAudio(h.ctx, album, [new File(['x'], 'ok.flac')], 'copy');
+  assert.deepEqual(
+    Array.from(res.added),
+    ['Vinyl Life/audio/B/ok.flac'],
+    '绝对路径回退到按标题新建（不往库外写）'
+  );
+});
+
 test('模板：可用设置指定的模板文件（占位符替换 + 落空行清理）', async () => {
   const h = setup();
   h.files.set(

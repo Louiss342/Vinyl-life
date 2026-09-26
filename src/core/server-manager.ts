@@ -10,6 +10,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as net from 'net';
 import { execFile } from 'child_process';
+import { createHash } from 'crypto';
 import { pluginAbsPath, sleep } from '../util';
 import { PING_TIMEOUT_MS, withRequestTimeout } from './request-error';
 import { getLanguage } from './i18n';
@@ -320,14 +321,17 @@ export class ServerManager {
     const dir = path.join(os.tmpdir(), 'vinyl-life');
     const file = path.join(dir, `gateway-${GATEWAY_HASH}.js`);
     try {
-      if (!fs.existsSync(file)) {
-        fs.mkdirSync(dir, { recursive: true });
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      // 已存在也要比对内容再决定用不用（不再只看 existsSync）：文件名里的 hash 可以从
+      // 公开的 main.js 复算，共享 /tmp 上预置一个同名文件就等于让插件以本进程权限执行
+      // 任意代码。一致才复用 —— 另一个 Obsidian 窗口可能正跑着这份；不一致就覆盖掉。
+      if (!this.gatewayFileMatches(file)) {
         const tmp = `${file}.${process.pid}.tmp`;
         // 内联的是 gzip+base64，这里还原成源码再落盘（内容与构建时的 server.js 逐字节一致）
         fs.writeFileSync(
           tmp,
           gunzipSync(Buffer.from(GATEWAY_GZIP, 'base64')).toString('utf8'),
-          'utf8'
+          { encoding: 'utf8', mode: 0o600 }
         );
         fs.renameSync(tmp, file);
         // 清理同目录下旧版本网关文件（在用的删不掉会抛错，忽略即可）
@@ -350,6 +354,16 @@ export class ServerManager {
       throw new Error(
         tf('gateway.tempWriteFailed', { file, msg: (e as Error).message })
       );
+    }
+  }
+
+  /** 临时目录里那份网关源码是否就是内联的这一份（文件名里的 hash = 源码 sha1 前 10 位） */
+  private gatewayFileMatches(file: string): boolean {
+    try {
+      const digest = createHash('sha1').update(fs.readFileSync(file)).digest('hex').slice(0, 10);
+      return digest === GATEWAY_HASH;
+    } catch {
+      return false; // 读不到（不存在 / 权限 / 竞态）→ 交给调用方重写一份
     }
   }
 

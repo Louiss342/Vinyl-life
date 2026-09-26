@@ -62,6 +62,18 @@ test('media-session：快照 → 元数据（曲名 / 专辑 / 封面）', () =>
   assert.equal(meta.album, '黑豹乐队');
   // vm 沙箱里的对象与测试侧原型不同，deepStrictEqual 会判不等 → 比 JSON 形状
   assert.equal(JSON.stringify(meta.artwork), JSON.stringify([{ src: 'app://cover.png' }]));
+  // 歌手：Track 上有 artist 就用它 —— 系统面板上「歌手 = 专辑名」等于少显示一半信息
+  assert.equal(
+    h.mod.metadataOf(
+      snap({
+        current: { key: 'k1', title: '无地自容', artist: '黑豹乐队' },
+        albumTitle: '黑豹乐队 (1991)',
+      })
+    ).artist,
+    '黑豹乐队',
+    '有 artist 时歌手必须是它，不是专辑名'
+  );
+  assert.equal(meta.artist, '黑豹乐队', '没有 artist 才退回专辑名');
   assert.equal(h.mod.metadataOf(snap({ current: undefined })), null, '没有当前曲目 → 清空');
   assert.equal(
     h.mod.metadataOf(snap({ current: { key: 'k', title: 'A' } })).artwork.length,

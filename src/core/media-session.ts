@@ -18,8 +18,9 @@ export function metadataOf(s: PlayerSnapshot): MediaMetadata | null {
   const artwork = track.cover ? [{ src: track.cover }] : [];
   return {
     title: track.title || '',
-    // 艺术家不在 Track 上（队列构建时没带），系统面板显示专辑名更有用
-    artist: s.albumTitle || '',
+    // 歌手用 Track 上的 artist（三平台与本地标签都填了）；只有拿不到时才退回专辑名 ——
+    // 「歌手 = 专辑名」在系统面板上等于少显示一半信息（旧注释说 Track 上没有 artist，已过时）
+    artist: track.artist || s.albumTitle || '',
     album: s.albumTitle || '',
     artwork,
   };

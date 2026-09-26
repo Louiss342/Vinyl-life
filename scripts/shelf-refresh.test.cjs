@@ -186,6 +186,33 @@ test('从墙顶刷新：位置本来就是 0，也不该被写成别的值', () 
   assert.equal(view.contentEl.scrollTop, 0);
 });
 
+test('刷新签名：换封面 / 改版本 / 加音源都算变化（只签属性会让卡片停在旧样子）', () => {
+  const view = makeView();
+  const entry = (over = {}) => ({
+    album: {
+      path: 'Vinyl Life/Vinyl Note/A.md',
+      displayProps: {},
+      cover: 'app://old.png',
+      edition: undefined,
+      ...over,
+    },
+    local: false,
+    netease: true,
+    qq: false,
+    kugou: false,
+  });
+  view.entries = [entry()];
+  const before = view.shelfSignature();
+  view.entries = [entry({ cover: 'app://new.png' })];
+  assert.notEqual(view.shelfSignature(), before, '换封面要算变化（此前提示成功但墙上还是旧图）');
+  view.entries = [entry({ edition: 'Remastered' })];
+  assert.notEqual(view.shelfSignature(), before, '改版本要算变化');
+  view.entries = [{ ...entry(), local: true }];
+  assert.notEqual(view.shelfSignature(), before, '加了本地音源要算变化（否则点卡片还是打开笔记）');
+  view.entries = [entry()];
+  assert.equal(view.shelfSignature(), before, '什么都没变就不该重画');
+});
+
 test('改一个卡片属性（refreshProps 重建卡片行）也不把用户弹回顶部', () => {
   const view = makeView();
   const host = view.contentEl;

@@ -1054,8 +1054,9 @@ export class VinylPlayerView extends ItemView {
       notice(t('card.noSource'));
       return;
     }
-    // 已经是这张（且队列还在）→ 只翻回去，不重新取碟
+    // 已经是这张（且队列还在）→ 只翻回去，不重新取碟；暂停中则接着放（与专辑墙点卡片同一口径）
     if (this.lastSnapshot?.albumNotePath === album.path && this.lastSnapshot.queue.length) {
+      if (this.lastSnapshot.status === 'paused') void this.plugin.engine.play();
       this.flipTo('player');
       return;
     }
