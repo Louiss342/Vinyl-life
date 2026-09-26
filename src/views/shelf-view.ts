@@ -217,6 +217,8 @@ export class VinylShelfView extends ItemView {
   private gridBatch: { grid: HTMLElement; shown: ShelfEntry[]; plan: CardPlan; from: number } | null =
     null;
   private gridRaf = 0;
+  /** roving tabindex 的光标：哪张卡片占着那个 Tab 停靠点（见 syncRoving） */
+  private cardCursor = '';
   private refreshTimer: number | null = null;
   private lastSnap: PlayerSnapshot | null = null;
   /** 上一次 updatePlaying 的输入缓存：队列引用与「在播的那张」都没变就不碰 DOM（快照 400ms 一次） */
@@ -389,11 +391,36 @@ export class VinylShelfView extends ItemView {
     this.closePanel();
   }
 
-  /** 键盘等价：卡片上 Enter / 空格 = 点击（role=button 的常规语义）。
-   *  卡片内部没有输入控件，所以不用区分按在卡片里的哪个位置。 */
+  /** 卡片墙的键盘等价：
+   *    · 方向键在卡片间走、Home / End 到首尾（整墙只占一个 Tab 停靠点，见 syncRoving）
+   *    · Enter / 空格 = 点击
+   *    · Shift+F10 / 菜单键 = 卡片的「⋯」菜单（标准「菜单按钮」模式）
+   *    · 选择模式下 Esc = 退出。搜索框的 Esc 只退焦点，由输入框自己拦住（stopPropagation） */
   private onShelfKeydown(ev: KeyboardEvent) {
+    const card = shelfCardOf(ev.target);
+    if (
+      card &&
+      (ev.key.startsWith('Arrow') || ev.key === 'Home' || ev.key === 'End')
+    ) {
+      if (this.moveCardFocus(card, ev.key)) {
+        ev.preventDefault();
+        ev.stopPropagation(); // 别漏给全局快捷键（用户可能把方向键绑到了别的命令上）
+      }
+      return;
+    }
+    // 「⋯」菜单的键盘入口。这枚钮退出了 Tab 序（整墙只有一个停靠点），
+    // 所以菜单必须另有入口 —— 否则「设置封面 / 在源站打开」对键盘用户又变成不可达。
+    if (card && (ev.key === 'ContextMenu' || (ev.key === 'F10' && ev.shiftKey))) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const entry = this.entryOfCard(card);
+      if (entry) {
+        const r = card.getBoundingClientRect();
+        this.showMenu(entry, { x: r.left, y: r.bottom });
+      }
+      return;
+    }
     if (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Spacebar') {
-      const card = shelfCardOf(ev.target);
       if (!card) return;
       ev.preventDefault(); // 空格默认会滚动面板
       // 别漏给全局快捷键：用户若把 Enter / 空格绑到了别的命令上，会在这里双触发
@@ -408,6 +435,88 @@ export class VinylShelfView extends ItemView {
       ev.stopPropagation();
       this.exitBatch();
     }
+  }
+
+  // ============ 键盘网格（roving tabindex） ============
+  // 卡片墙是一张网格：整墙只占**一个** Tab 停靠点，进去之后用方向键在卡片间走。
+  // 此前每张卡都是停靠点 —— 100 张专辑 = 100 次 Tab 才能穿过去（方案 §5.6 的 P2）。
+  // 行按 offsetTop 分组：列数由 CSS 决定（每行数量 'auto' 档下视图并不知道排了几列），量出来的才准。
+
+  /** 焦点在卡片间移动。返回 false = 这个键在这里没有去处（到头了 / 认不出），调用方别吞掉按键 */
+  private moveCardFocus(from: HTMLElement, key: string): boolean {
+    const cards = this.gridCards();
+    const i = cards.indexOf(from);
+    if (i < 0) return false;
+    if (key === 'Home') return this.focusCard(cards[0]);
+    if (key === 'End') return this.focusCard(cards[cards.length - 1]);
+
+    // 按 offsetTop 切行（同一行的卡片 offsetTop 相同）
+    const rows: HTMLElement[][] = [];
+    let lastTop: number | null = null;
+    for (const el of cards) {
+      const top = el.offsetTop;
+      if (lastTop === null || top !== lastTop) {
+        rows.push([]);
+        lastTop = top;
+      }
+      rows[rows.length - 1].push(el);
+    }
+    const row = rows.findIndex((r) => r.includes(from));
+    if (row < 0) return false;
+    const col = rows[row].indexOf(from);
+
+    if (key === 'ArrowLeft') return col > 0 ? this.focusCard(rows[row][col - 1]) : false;
+    if (key === 'ArrowRight') {
+      const next = rows[row][col + 1];
+      return next ? this.focusCard(next) : false;
+    }
+    const target = rows[row + (key === 'ArrowDown' ? 1 : -1)];
+    if (!target) return false;
+    // 同列优先；下一行没有这一列（最后一行不满）→ 取这一行的最后一张
+    return this.focusCard(target[col] ?? target[target.length - 1]);
+  }
+
+  /** 把焦点送到某张卡片：光标记在这个 path 上，Tab 停靠点跟着它走（roving tabindex） */
+  private focusCard(el: HTMLElement | undefined): boolean {
+    if (!el) return false;
+    const path = this.cardPathOf(el);
+    if (path) this.cardCursor = path;
+    this.syncRoving();
+    el.focus();
+    return true;
+  }
+
+  /** 整墙只留一个 Tab 停靠点：光标那张 tabIndex=0，其余 -1。
+   *  只在值不同的时候写（这个函数在每轮渲染后都跑，卡片可能上千张）。 */
+  private syncRoving() {
+    // 迭代器解构，不用 keys().next()：IteratorResult.value 的声明类型是 any
+    // （TReturn 默认 any），赋值会被 no-unsafe-assignment 抓（1.3.1 刚清完的那一族）。
+    const [firstPath = ''] = this.cardEls.keys();
+    this.cardCursor = this.cardEls.has(this.cardCursor) ? this.cardCursor : firstPath;
+    for (const [path, el] of this.cardEls) {
+      const want = path === this.cardCursor ? 0 : -1;
+      if (el.tabIndex !== want) el.tabIndex = want;
+    }
+  }
+
+  /** 当前墙上的卡片，按显示顺序（DOM 顺序由 applyPlan 维护，就是显示顺序） */
+  private gridCards(): HTMLElement[] {
+    const grid = this.gridEl;
+    if (!grid) return [];
+    const known = new Set(this.cardEls.values());
+    return Array.from(grid.children as unknown as HTMLElement[]).filter((el) => known.has(el));
+  }
+
+  /** 卡片元素 → 它对应的专辑条目 */
+  private entryOfCard(el: HTMLElement): ShelfEntry | null {
+    const path = this.cardPathOf(el);
+    if (!path) return null;
+    return this.entries.find((e) => e.album.path === path) ?? null;
+  }
+
+  private cardPathOf(el: HTMLElement): string | null {
+    const path = el.dataset?.path; // 卡片建的时候挂上去的（buildCard）
+    return path && this.cardEls.has(path) ? path : null;
   }
 
   private scheduleRefresh() {
@@ -882,6 +991,7 @@ export class VinylShelfView extends ItemView {
       drawn = this.applyPlan(grid, shown, plan, drawn, FIRST_CARDS);
     }
     if (drawn < shown.length) this.scheduleAppend(grid, shown, plan, drawn);
+    this.syncRoving(); // 整墙只留一个 Tab 停靠点（光标卡可能是刚建出来的）
     if (this.lastSnap) this.updatePlaying(this.lastSnap, true); // 卡片变了：把播放态重铺一次
     this.syncBatch(); // 卡片是新的：把勾选态铺回去
   }
@@ -890,7 +1000,7 @@ export class VinylShelfView extends ItemView {
    *  拖拽落点只挂一次（重建网格时才会重挂）。 */
   private ensureGrid(): HTMLElement {
     if (!this.gridEl || this.gridEl.isConnected === false) {
-      this.gridEl = this.gridHost!.createDiv({ cls: 'vinyl-shelf-grid' });
+      this.gridEl = this.gridHost.createDiv({ cls: 'vinyl-shelf-grid' });
       this.gridWired = false;
     }
     if (!this.gridWired) {
@@ -908,6 +1018,7 @@ export class VinylShelfView extends ItemView {
     this.gridWired = false;
     this.cardEls.clear();
     this.cardSig.clear();
+    this.cardCursor = '';
   }
 
   /** 照着计划画 shown[from, from+count) 这批卡片，并按显示顺序摆好位置；返回下一个下标。
@@ -950,6 +1061,9 @@ export class VinylShelfView extends ItemView {
       const st = this.gridBatch;
       if (!st) return;
       const next = this.applyPlan(st.grid, st.shown, st.plan, st.from, APPEND_CARDS);
+      // 这一帧里可能有卡片被重画（重画走 buildCard，带回默认的 tabIndex=-1）——
+      // 正好轮到光标卡时，整墙会一张停靠点都不剩，补回来才不会让键盘用户进不来。
+      this.syncRoving();
       if (next < st.shown.length) this.scheduleAppend(st.grid, st.shown, st.plan, next);
       else this.gridBatch = null;
     });
@@ -1838,8 +1952,10 @@ export class VinylShelfView extends ItemView {
     const card = createDiv();
     card.className = 'vinyl-shelf-card';
     card.dataset.path = album.path;
-    // 键盘可达：Tab 能落到卡片上，Enter / 空格等同点击（role=button 让读屏软件报「按钮」）
-    card.tabIndex = 0;
+    // 键盘可达，但**整墙只占一个 Tab 停靠点**（roving tabindex）：默认 -1，
+    // 由 syncRoving 把光标那张设成 0，方向键在卡片间走（见 moveCardFocus）。
+    // Enter / 空格等同点击（role=button 让读屏软件报「按钮」）。
+    card.tabIndex = -1;
     card.setAttribute('role', 'button');
     card.setAttribute('aria-label', album.title);
     this.cardEls.set(album.path, card);
@@ -1898,9 +2014,12 @@ export class VinylShelfView extends ItemView {
 
     // 卡片自己的菜单入口（「⋯」）：右键菜单此前是「设置封面」「在源站打开」的**唯一**入口，
     // 键盘与触控板用户完全够不着。与右键共用 showMenu，落点按这枚按钮的矩形算。
-    // 常态视觉隐藏（见 styles.css），悬停或键盘聚焦时显形 —— 但始终留在 Tab 序里：
-    // display:none 会让它从键盘路径上消失，那就等于没做。
+    // 常态视觉隐藏（见 styles.css），悬停或卡片获得焦点时显形（:focus-within，见那条规则）。
+    // **退出 Tab 序**（tabIndex=-1）：整墙现在只有一个停靠点（见 syncRoving），
+    // 菜单的键盘入口是卡片上的 Shift+F10 / 菜单键（标准「菜单按钮」模式，见 onShelfKeydown）。
+    // 它仍留在 DOM 与可访问性树里、鼠标点得到，只是不再逐张占一个 Tab。
     const menuBtn = card.createEl('button', { cls: 'clickable-icon vinyl-shelf-card-menu' });
+    menuBtn.tabIndex = -1;
     setIcon(menuBtn, 'more-horizontal');
     // 切语言时专辑墙整块重绘（见 main 的 refreshLanguage），所以这里不必登记重放
     menuBtn.setAttribute('aria-label', tf('menu.cardMenu', { name: album.title }));

@@ -627,7 +627,9 @@ Vinyl Life/
 
 其余命令（打开专辑墙 / 播放器、导入专辑 / 本地音频、保存 / 载入队列笔记）按需要自己绑。
 
-播放器内部另有一批**不用绑**的键盘操作，Tab 到相应元素上直接按：队列行 `Enter` 切歌、`Alt + ↑/↓` 调序、`Delete` 移除；专辑段头 `Alt + ↑/↓` 整段上下移（与拖拽等价）；歌词行 `Enter` / 空格跳到那一句；搜索框 `Esc` 只退焦点不清条件；唱片区与歌词页 `Esc` 回唱机。卡片属性行的 `Alt + ↑/↓` 调序、「⋯」按钮开卡片菜单，也是同一套「拖拽 / 右键的键盘等价」。
+播放器内部另有一批**不用绑**的键盘操作，Tab 到相应元素上直接按：队列行 `Enter` 切歌、`Alt + ↑/↓` 调序、`Delete` 移除；专辑段头 `Alt + ↑/↓` 整段上下移（与拖拽等价）；歌词行 `Enter` / 空格跳到那一句；搜索框 `Esc` 只退焦点不清条件；唱片区与歌词页 `Esc` 回唱机。卡片属性行的 `Alt + ↑/↓` 调序、卡片上的 `Shift + F10`（或键盘的菜单键）开卡片菜单，也是同一套「拖拽 / 右键的键盘等价」。
+
+专辑墙是一张**键盘网格**：整面墙只占一个 Tab 停靠点，进去之后 `←/→/↑/↓` 在卡片间走、`Home` / `End` 到首尾、`Enter` / 空格打开焦点那张；卡片菜单在那里同样是 `Shift + F10`（不必逐张 Tab —— 100 张专辑曾是 100 次 Tab）。
 
 ### 7、安装与开始使用
 
@@ -1376,7 +1378,9 @@ Everything the interface can do is reachable from the command palette (`Ctrl/Cmd
 
 The remaining commands (open the shelf / player, import an album or local audio, save / load a queue note) are there to bind as you see fit.
 
-Inside the player there is a second set of keys that need no binding — Tab to the element and press: on a queue row `Enter` plays it, `Alt + ↑/↓` reorders it, `Delete` removes it; on an album's segment header `Alt + ↑/↓` moves the whole album, exactly like dragging; on a lyric line `Enter` / Space jumps to that moment; `Esc` leaves the record crate or the lyrics face. Card property rows reorder with `Alt + ↑/↓` too, and the card's “⋯” button opens the same menu as right-clicking.
+Inside the player there is a second set of keys that need no binding — Tab to the element and press: on a queue row `Enter` plays it, `Alt + ↑/↓` reorders it, `Delete` removes it; on an album's segment header `Alt + ↑/↓` moves the whole album, exactly like dragging; on a lyric line `Enter` / Space jumps to that moment; `Esc` leaves the record crate or the lyrics face. Card property rows reorder with `Alt + ↑/↓` too, and `Shift + F10` (or the keyboard's Menu key) on a card opens the same menu as right-clicking.
+
+The album shelf is a **keyboard grid**: the whole wall is a single Tab stop — once inside, `←/→/↑/↓` walk between the cards, `Home` / `End` jump to the ends, and `Enter` / Space opens the focused one. The card menu is `Shift + F10` there as well (no more one-Tab-per-album — a hundred albums used to mean a hundred Tabs).
 
 ### 7. Installation and getting started
 

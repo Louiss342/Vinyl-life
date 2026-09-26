@@ -1,5 +1,6 @@
 // 可访问性回归（源码 + 样式文本扫描，不需要 Obsidian）：
-//   ① 卡片 / 队列行可键盘操作（tabIndex + role=button + aria-label，Enter / 空格等价点击）
+//   ① 卡片 / 队列行可键盘操作（role=button + aria-label，Enter / 空格等价点击；专辑墙是
+//      roving tabindex + 方向键网格：整墙只占一个 Tab 停靠点）
 //   ② :focus-visible 焦点圈与 prefers-reduced-motion 兜底存在于 styles.css
 //   ③ 所有 WAAPI 动画（element.animate）所在文件都引用减少动效判定（防新增动画绕过）
 //   ④ 浮层打开时焦点跟着进去、并报出「这是什么浮层」（挂在 body 末尾的面板，
@@ -24,15 +25,49 @@ function tsFiles(dir = path.join(root, 'src'), out = []) {
 
 test('可访问性：专辑墙卡片可聚焦、有语义、键盘等价点击', () => {
   const src = read('src/views/shelf-view.ts');
-  assert.match(src, /card\.tabIndex = 0/, '卡片要能被 Tab 选中');
+  // 2026-09-26：卡片从「每张都是 Tab 停靠点」改成 roving —— 默认 -1，唯一的 0 由 syncRoving
+  // 指派给光标那张（网格导航本身在下一条用例里守着）。
+  assert.match(src, /card\.tabIndex = -1/, '卡片默认退出 Tab 序（停靠点由 syncRoving 指派）');
+  assert.match(
+    src,
+    /private syncRoving[\s\S]{0,600}?want = path === this\.cardCursor \? 0 : -1/,
+    'syncRoving 指派唯一停靠点'
+  );
   assert.match(src, /card\.setAttribute\('role', 'button'\)/, '读屏软件要能报出「按钮」');
   assert.match(src, /card\.setAttribute\('aria-label', album\.title\)/, '卡片要有可读名称');
   assert.match(src, /'keydown'[\s\S]{0,80}onShelfKeydown/, '要挂键盘监听');
   assert.match(
     src,
-    /private onShelfKeydown[\s\S]{0,400}?ev\.preventDefault\(\)[\s\S]{0,120}?card\.click\(\)/,
+    /ev\.key === 'Enter' \|\| ev\.key === ' ' \|\| ev\.key === 'Spacebar'[\s\S]{0,200}?ev\.preventDefault\(\)[\s\S]{0,120}?card\.click\(\)/,
     'Enter / 空格要等价于点击（空格还得 preventDefault，别让面板滚动）'
   );
+});
+
+test('可访问性：专辑墙是方向键网格（整墙一个停靠点，100 张专辑不该要 100 次 Tab）', () => {
+  const src = read('src/views/shelf-view.ts');
+  // 方向键在卡片间走、Home / End 到首尾（与统计页热力图同一套 roving 口径）
+  assert.match(src, /private moveCardFocus/, '网格导航要有独立的判定函数');
+  for (const key of ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End']) {
+    assert.match(src, new RegExp(`'${key}'`), `方向键 ${key} 要在卡片间走`);
+  }
+  // 到边了不吞按键：处理成功才 preventDefault（否则用户绑在方向键上的命令会失灵）
+  assert.match(
+    src,
+    /if \(this\.moveCardFocus\(card, ev\.key\)\) \{\s*ev\.preventDefault\(\)/,
+    '没有去处时别吞按键'
+  );
+  assert.match(src, /ev\.stopPropagation\(\);\s*\/\/ 别漏给全局快捷键/, '处理完别漏给全局快捷键');
+  // 每轮渲染后把停靠点补回去（卡片可能刚建出来 / 刚被重画）
+  assert.match(src, /this\.syncRoving\(\)/, '渲染后要同步停靠点');
+  // 「⋯」退出 Tab 序后，卡片菜单必须有键盘入口（标准「菜单按钮」模式），否则
+  // 「设置封面 / 在源站打开」对键盘用户又变成不可达
+  assert.match(src, /menuBtn\.tabIndex = -1/, '「⋯」按钮不再逐张占一个 Tab 停靠点');
+  assert.match(
+    src,
+    /ev\.key === 'ContextMenu' \|\| \(ev\.key === 'F10' && ev\.shiftKey\)/,
+    'Shift+F10 / 菜单键要能打开卡片菜单'
+  );
+  assert.match(src, /this\.showMenu\(entry, \{ x: r\.left, y: r\.bottom \}\)/, '菜单落点按卡片矩形算');
 });
 
 test('可访问性：队列行可聚焦、Enter 切歌、Alt+↑/↓ 调序（拖拽的键盘等价）', () => {
@@ -269,7 +304,10 @@ test('可访问性：卡片要有可聚焦的菜单入口（右键菜单曾是�
     /vinyl-shelf-card-menu[\s\S]{0,200}?aria-label/,
     '这枚按钮要有可读名称（不能只有一个图标）'
   );
-  // 键盘用户在「无鼠标」时也要看得见它：不能 display:none 藏掉（那就从 Tab 序里消失了）
+  // 键盘用户在「无鼠标」时也要看得见它：不能 display:none 藏掉。
+  // 2026-09-26：它此后**刻意退出 Tab 序**（menuBtn.tabIndex = -1，整墙只留一个 roving 停靠点），
+  // 菜单的键盘入口改成卡片上的 Shift+F10 / 菜单键（见「专辑墙是方向键网格」一条）——
+  // 这里只管「在 DOM 与可访问性树里、可读、聚焦时显形」，键盘可达性由那一条守。
   const css = read('styles.css');
   assert.match(css, /\.vinyl-shelf-card-menu \{[\s\S]{0,200}?opacity:\s*0/, '常态淡出');
   assert.match(
