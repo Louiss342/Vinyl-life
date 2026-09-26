@@ -83,6 +83,51 @@ test('教程重绘：ResizeObserver / scroll / layout-change 走合流口，且�
   );
 });
 
+test('增量渲染：网格按 path 复用，不再整墙重建（判断在 core/shelf-diff，视图只执行）', () => {
+  const src = read('src/views/shelf-view.ts');
+  assert.doesNotMatch(
+    src,
+    /private renderGrid\(\) \{[\s\S]{0,400}?this\.gridHost\.empty\(\)/,
+    'renderGrid 不再一上来就把整面墙清掉'
+  );
+  assert.match(src, /planCards\(this\.cardSig, next\)/, '走增量计划');
+  assert.match(src, /private applyPlan\(/, '照计划执行（复用 / 重画 / 新建）');
+  assert.match(
+    src,
+    /if \(grid\.children\[i\] !== el\) grid\.insertBefore\(el, grid\.children\[i\] \?\? null\)/,
+    '顺序对的卡片不动 DOM（insertBefore 会把已有节点挪过来）'
+  );
+  assert.match(src, /private ensureGrid\(\)/, '网格容器跨渲染复用');
+});
+
+test('工具栏与网格跨渲染复用：render 只在首次（或 DOM 掉了）整套重建', () => {
+  const src = read('src/views/shelf-view.ts');
+  assert.match(
+    src,
+    /const fresh = !this\.toolbarEl \|\| !this\.gridHost \|\| this\.toolbarEl\.isConnected === false;/,
+    '判据要认「首次 / 容器没了」，别每次刷新都走整套重建'
+  );
+  assert.match(
+    src,
+    /\} else \{[\s\S]{0,300}?this\.syncHeading\(\);[\s\S]{0,120}?this\.syncDisplayButton\(\);/,
+    '增量路径只同步会变的两处（计数 / 陈列按钮态），搜索框与焦点都留着'
+  );
+});
+
+test('分批渲染：首屏同步画一批，其余分帧追加，且能被新的渲染打断', () => {
+  const src = read('src/views/shelf-view.ts');
+  assert.match(src, /const FIRST_CARDS = \d+;/, '首屏批量');
+  assert.match(src, /const APPEND_CARDS = \d+;/, '每帧追加量');
+  assert.match(src, /private scheduleAppend\(/, '分帧追加');
+  assert.match(
+    src,
+    /grid\.getBoundingClientRect\(\)\.height < coverTo/,
+    '首屏要画到盖住恢复的滚动位置（否则位置会被浏览器夹回 0）'
+  );
+  assert.match(src, /private cancelGridBatch\(\)/, '新渲染要能打断上一轮没画完的批次');
+  assert.match(src, /this\.cancelGridBatch\(\);\s*\n\s*this\.closePanel\(\);/, '关视图时也要收');
+});
+
 test('vault 事件：两处（插件层缓存作废 / 专辑墙刷新）共用同一份判据，别各写一套', () => {
   const main = read('src/main.ts');
   const shelf = read('src/views/shelf-view.ts');

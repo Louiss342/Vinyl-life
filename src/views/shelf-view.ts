@@ -32,6 +32,7 @@ import { DISC_DIRECTIONS, discTransform } from '../core/disc-motion';
 import { albumSourceLinks } from '../core/source-link';
 import { queuedAlbumPaths } from '../core/queue';
 import type { Track } from '../core/track';
+import { CardPlan, cardSignature, planCards } from '../core/shelf-diff';
 import { animateDiscLiftOff } from '../animation/handoff';
 import {
   RECORD_COLORS,
@@ -153,6 +154,11 @@ const sourceShortLabel = (key: SourceFilter): string => {
   }
 };
 
+// 卡片渲染的批量：首屏同步画这么多（一屏通常 12~40 张，60 张足够盖住），其余按帧追加。
+// 1000 张的墙打开时首屏不必等 1000 张卡片全建完 —— 那是可感的白屏。
+const FIRST_CARDS = 60;
+const APPEND_CARDS = 80;
+
 // 空态教程的图纸参数（Excalidraw 设计稿 Drawing 2026-09-15 14.14.52，1 图纸单位 = 1px）。
 // 笔触一律交给 roughjs（Excalidraw 用的同一套手绘引擎），线宽 / 虚线 / roughness 等公共参数
 // 在 views/hand-drawn.ts（与「关于」页共用），这里只留这张图纸自己的比例与种子 ——
@@ -203,6 +209,14 @@ export class VinylShelfView extends ItemView {
   private unsub: (() => void) | null = null;
   private entries: ShelfEntry[] = [];
   private cardEls = new Map<string, HTMLElement>();
+  /** 每张卡片上一次的渲染签名（path → sig）：决定这张卡能复用还是得重画（见 core/shelf-diff） */
+  private cardSig = new Map<string, string>();
+  private gridEl: HTMLElement | null = null;
+  private gridWired = false;
+  /** 分帧追加的进行中状态（1000 张的墙首屏先画一批，其余按帧接着画） */
+  private gridBatch: { grid: HTMLElement; shown: ShelfEntry[]; plan: CardPlan; from: number } | null =
+    null;
+  private gridRaf = 0;
   private refreshTimer: number | null = null;
   private lastSnap: PlayerSnapshot | null = null;
   /** 上一次 updatePlaying 的输入缓存：队列引用与「在播的那张」都没变就不碰 DOM（快照 400ms 一次） */
@@ -371,6 +385,7 @@ export class VinylShelfView extends ItemView {
     this.tutorialRO?.disconnect();
     this.tutorialRO = null;
     this.cancelTutorialSettle();
+    this.cancelGridBatch();
     this.closePanel();
   }
 
@@ -458,24 +473,37 @@ export class VinylShelfView extends ItemView {
     // 先记后还，两行都要在：清空那一刻浏览器就把 scrollTop 夹成 0 了，跟 empty() 换个顺序就白记。
     // 新内容不够高时浏览器会把值自己夹回范围内，不用管。
     const scrollTop = c.scrollTop;
-    c.empty();
     c.addClass('vinyl-shelf');
     this.applyAppearance();
-    this.cardEls.clear();
-    // 工具栏的元素随旧 DOM 一起没了：先把引用清掉，免得重建间隙里的回调摸到 detached 节点
-    this.toolbarEl = null;
-    this.headingEl = null;
-    this.displayBtnEl = null;
-    this.addBtnEl = null;
-    this.searchEl = null;
-    this.searchInput = null;
-    this.batchInfoEl = null;
-    this.batchAllBtn = null;
-    this.batchClearBtn = null;
-    this.batchDeleteBtn = null;
-    this.batchDoneBtn = null;
-    this.renderToolbar(c);
-    this.gridHost = c.createDiv({ cls: 'vinyl-shelf-grid-host' });
+    // 工具栏与网格容器**只建一次**：之后的刷新就地同步。整棵树重建会把滚动位置、焦点、
+    // 卡片对象一起丢掉 —— 卡片本身现在按 path 增量更新（见 renderGrid 与 core/shelf-diff）。
+    const fresh = !this.toolbarEl || !this.gridHost || this.toolbarEl.isConnected === false;
+    if (fresh) {
+      this.cancelGridBatch();
+      c.empty();
+      // 工具栏的元素随旧 DOM 一起没了：先把引用清掉，免得重建间隙里的回调摸到 detached 节点
+      this.toolbarEl = null;
+      this.headingEl = null;
+      this.displayBtnEl = null;
+      this.addBtnEl = null;
+      this.searchEl = null;
+      this.searchInput = null;
+      this.batchInfoEl = null;
+      this.batchAllBtn = null;
+      this.batchClearBtn = null;
+      this.batchDeleteBtn = null;
+      this.batchDoneBtn = null;
+      this.gridEl = null;
+      this.gridWired = false;
+      this.cardEls.clear();
+      this.cardSig.clear();
+      this.renderToolbar(c);
+      this.gridHost = c.createDiv({ cls: 'vinyl-shelf-grid-host' });
+    } else {
+      // 增量路径：只有计数与「陈列」按钮的当前态会随刷新变（搜索框、焦点、卡片都留着）
+      this.syncHeading();
+      this.syncDisplayButton();
+    }
     this.renderGrid();
     this.syncBatch(); // 重建后再把选择模式的整体状态铺回去（卡片是新 DOM）
     if (keepPanel) this.reattachPanel(keepPanel);
@@ -792,8 +820,7 @@ export class VinylShelfView extends ItemView {
 
   private renderGrid() {
     if (!this.gridHost) return;
-    this.gridHost.empty();
-    this.cardEls.clear();
+    this.cancelGridBatch(); // 上一轮没画完的分批作废（否则会把旧列表的卡片接到新列表后面）
     this.clearTutorial(); // 教程层挂在视图上而不是网格里，要单独收
 
     // 选择模式：专辑可能已被删掉 / 改名（卡片是快照）→ 选择表与全选范围里去掉不存在的；
@@ -811,11 +838,13 @@ export class VinylShelfView extends ItemView {
 
     if (!this.entries.length) {
       // 一张专辑都没有（新装也是这样）：直接给图纸上那份「图文教程」
+      this.dropGrid(); // 空态是另一套 DOM，网格留着会互相压
       this.buildTutorial();
       this.syncBatch();
       return;
     }
     if (!shown.length) {
+      this.dropGrid();
       const empty = this.gridHost.createDiv({ cls: 'vinyl-shelf-empty' });
       empty.createDiv({ text: t('shelf.filtered.title'), cls: 'vinyl-shelf-empty-title' });
       empty.createDiv({ text: t('shelf.filtered.hint'), cls: 'vinyl-muted' });
@@ -832,13 +861,106 @@ export class VinylShelfView extends ItemView {
       return;
     }
 
-    const grid = this.gridHost.createDiv({ cls: 'vinyl-shelf-grid' });
-    for (const e of shown) {
-      grid.appendChild(this.buildCard(e));
+    const grid = this.ensureGrid();
+    // 这一轮要做什么：撤谁、谁复用、谁重画、谁新建（判断在 core/shelf-diff，可单测）
+    const keys = this.plugin.settings.shelfProps;
+    const next = shown.map((e) => ({
+      path: e.album.path,
+      sig: cardSignature(e.album, e, keys),
+    }));
+    const plan = planCards(this.cardSig, next);
+    for (const path of plan.remove) {
+      this.cardEls.get(path)?.remove();
+      this.cardEls.delete(path);
+      this.cardSig.delete(path);
     }
-    this.wireGridDrop(grid);
-    if (this.lastSnap) this.updatePlaying(this.lastSnap);
-    this.syncBatch(); // 卡片是新 DOM：把勾选态铺回去
+    // 首屏同步画：至少 FIRST_CARDS 张；若用户停在墙中间（scrollTop > 0），一直画到盖住那个
+    // 位置 —— 否则分批期间内容高度不够，恢复的滚动位置会被浏览器夹回 0。
+    let drawn = this.applyPlan(grid, shown, plan, 0, FIRST_CARDS);
+    const coverTo = this.contentEl.scrollTop + this.contentEl.clientHeight;
+    while (drawn < shown.length && grid.getBoundingClientRect().height < coverTo) {
+      drawn = this.applyPlan(grid, shown, plan, drawn, FIRST_CARDS);
+    }
+    if (drawn < shown.length) this.scheduleAppend(grid, shown, plan, drawn);
+    if (this.lastSnap) this.updatePlaying(this.lastSnap, true); // 卡片变了：把播放态重铺一次
+    this.syncBatch(); // 卡片是新的：把勾选态铺回去
+  }
+
+  /** 网格容器：整个视图生命周期里复用（重建会丢滚动位置与卡片对象）。
+   *  拖拽落点只挂一次（重建网格时才会重挂）。 */
+  private ensureGrid(): HTMLElement {
+    if (!this.gridEl || this.gridEl.isConnected === false) {
+      this.gridEl = this.gridHost!.createDiv({ cls: 'vinyl-shelf-grid' });
+      this.gridWired = false;
+    }
+    if (!this.gridWired) {
+      this.wireGridDrop(this.gridEl);
+      this.gridWired = true;
+    }
+    return this.gridEl;
+  }
+
+  /** 撤掉网格与全部卡片（切到空态 / 筛选无结果时）：空态是另一套 DOM，留着网格会互相压 */
+  private dropGrid() {
+    this.cancelGridBatch();
+    this.gridHost?.empty();
+    this.gridEl = null;
+    this.gridWired = false;
+    this.cardEls.clear();
+    this.cardSig.clear();
+  }
+
+  /** 照着计划画 shown[from, from+count) 这批卡片，并按显示顺序摆好位置；返回下一个下标。
+   *  复用 / 重画 / 新建三种动作都在这里落地 —— 判断本身在 core/shelf-diff 的 planCards 里。 */
+  private applyPlan(
+    grid: HTMLElement,
+    shown: ShelfEntry[],
+    plan: CardPlan,
+    from: number,
+    count: number
+  ): number {
+    const end = Math.min(plan.order.length, from + count);
+    for (let i = from; i < end; i++) {
+      const action = plan.order[i];
+      const entry = shown[i];
+      let el = this.cardEls.get(action.path) ?? null;
+      if (action.action === 'rebuild' && el) {
+        // 内容变了：原地换一张（位置不动，列表里其它卡片也不受影响）
+        const fresh = this.buildCard(entry);
+        el.replaceWith(fresh);
+        el = fresh;
+        this.cardEls.set(action.path, el);
+      } else if (!el) {
+        el = this.buildCard(entry);
+        this.cardEls.set(action.path, el);
+      }
+      this.cardSig.set(action.path, action.sig);
+      // 摆位置：不在这个下标上才动 DOM（insertBefore 会把已有节点挪过来，顺序错的才付代价）
+      if (grid.children[i] !== el) grid.insertBefore(el, grid.children[i] ?? null);
+    }
+    return end;
+  }
+
+  /** 剩下的卡片分帧追加：每帧一批，画完即止。滚动位置不受影响 —— 新卡片永远接在末尾，
+   *  已有卡片的位置一动不动。 */
+  private scheduleAppend(grid: HTMLElement, shown: ShelfEntry[], plan: CardPlan, from: number) {
+    this.gridBatch = { grid, shown, plan, from };
+    this.gridRaf = window.requestAnimationFrame(() => {
+      this.gridRaf = 0;
+      const st = this.gridBatch;
+      if (!st) return;
+      const next = this.applyPlan(st.grid, st.shown, st.plan, st.from, APPEND_CARDS);
+      if (next < st.shown.length) this.scheduleAppend(st.grid, st.shown, st.plan, next);
+      else this.gridBatch = null;
+    });
+  }
+
+  private cancelGridBatch() {
+    if (this.gridRaf) {
+      window.cancelAnimationFrame(this.gridRaf);
+      this.gridRaf = 0;
+    }
+    this.gridBatch = null;
   }
 
   // ============ 空态教程 ============
@@ -1946,7 +2068,8 @@ export class VinylShelfView extends ItemView {
   // 播放中高亮 + 唱片离墙：当前专辑描边着色；队列里排着的专辑（列表模式下常有多张）同样把
   // 唱片收走 —— 「已在列表里」就是「已经离开墙」。进出队列都带动画：排进来时自己飞离墙面，
   // 退出列表模式（队列收敛回当前专辑）时被移出的那几张滑回封套。
-  private updatePlaying(s: PlayerSnapshot) {
+  /** force：卡片刚被建 / 换过（渲染路径调的），即使输入没变也要把状态重铺一遍 */
+  private updatePlaying(s: PlayerSnapshot, force = false) {
     this.lastSnap = s;
     const current = s.status !== 'idle' && s.albumNotePath ? s.albumNotePath : null;
     // 队列引用没换就不必重算「排着哪些专辑」；当前专辑也没变就直接返回 ——
@@ -1956,7 +2079,7 @@ export class VinylShelfView extends ItemView {
       this.queuedFrom = s.queue;
       this.queuedPaths = queuedAlbumPaths(s.queue);
     }
-    if (!queueChanged && current === this.playingPath) return;
+    if (!force && !queueChanged && current === this.playingPath) return;
     this.playingPath = current;
     const queued = this.queuedPaths;
     for (const [path, el] of this.cardEls) {
