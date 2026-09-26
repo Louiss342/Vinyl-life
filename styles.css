@@ -4752,5 +4752,5 @@
   .vinyl-link-panes { flex-direction: column; }
 }
 
-/*! vinyl-life styles v1.3.1 — 由 npm run version-bump 维护，勿手改这一行：
+/*! vinyl-life styles v1.4.0 — 由 npm run version-bump 维护，勿手改这一行：
    插件启动时核对版本（见 src/core/style-fallback.ts）；缺失或与 main.js 不符会自动挂上内置副本。 */
