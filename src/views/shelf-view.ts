@@ -31,6 +31,7 @@ import {
 import { DISC_DIRECTIONS, discTransform } from '../core/disc-motion';
 import { albumSourceLinks } from '../core/source-link';
 import { queuedAlbumPaths } from '../core/queue';
+import type { Track } from '../core/track';
 import { animateDiscLiftOff } from '../animation/handoff';
 import {
   RECORD_COLORS,
@@ -64,7 +65,7 @@ import {
 } from '../core/shelf-sort';
 import { rangeInList, toggleInList } from '../core/multi-select';
 
-import { collectDroppedFiles, droppedRootName, isAudioFile, isImageFile, markVinylMenu, notice, prefersReducedMotion } from '../util';
+import { collectDroppedFiles, droppedRootName, isAudioFile, markVinylMenu, notice, prefersReducedMotion, vaultChangeMatters } from '../util';
 // 手绘笔触用 roughjs（Excalidraw 内部同款引擎）。只引 SVG 那一支：canvas 渲染器用不上，
 // 直接引包入口会把它一起打进来（实测多 2 KB）。线宽 / 虚线等公共参数见 hand-drawn.ts。
 import { RoughSVG } from 'roughjs/bin/svg';
@@ -204,6 +205,10 @@ export class VinylShelfView extends ItemView {
   private cardEls = new Map<string, HTMLElement>();
   private refreshTimer: number | null = null;
   private lastSnap: PlayerSnapshot | null = null;
+  /** 上一次 updatePlaying 的输入缓存：队列引用与「在播的那张」都没变就不碰 DOM（快照 400ms 一次） */
+  private queuedFrom: Track[] | null = null;
+  private queuedPaths = new Set<string>();
+  private playingPath: string | null = null;
   private state: ShelfViewState = { query: '', sort: DEFAULT_SHELF_SORT, sourceFilter: 'all' };
   private toolbarEl: HTMLElement | null = null;
   private headingEl: HTMLElement | null = null; // 标题 + 计数（计数是手绘体）
@@ -252,6 +257,9 @@ export class VinylShelfView extends ItemView {
   } | null = null;
   private tutorialRO: ResizeObserver | null = null;
   private settleRaf = 0; // 教程布局的「定型补枪」（见 settleTutorial）
+  private tutorialRaf = 0; // 教程重绘的合流（见 requestTutorialLayout）
+  private tutorialKey = ''; // 上一次画图时的尺寸指纹：没变就不重画（见 layoutTutorial）
+  private dirty = false; // 不可见期间有改动：重新可见时补一次渲染（见 render 的开头）
   private settleTimers: number[] = [];
 
   constructor(leaf: WorkspaceLeaf, plugin: VinylLifePlugin) {
@@ -296,14 +304,22 @@ export class VinylShelfView extends ItemView {
     //   音频增删改 → 本地音源角标；图片增删改 → 封面自动识别；文件夹增删改名 → 专辑音频目录失效。
     // 导入一批音频会连着触发几十个 create，统一交给 scheduleRefresh 防抖合并（500ms 内只扫一次库）。
     const onVaultChanged = (f: TAbstractFile, oldPath?: string) => {
-      if (f instanceof TFolder) {
+      const isFolder = f instanceof TFolder;
+      const isFile = f instanceof TFile;
+      if (!isFolder && !isFile) return;
+      // 判据与插件层的音源缓存作废共用一份（见 util.vaultChangeMatters）：文件夹 / 音频 / 图片，
+      // 以及专辑笔记目录里的 md（新笔记落地。笔记内容的变化走上面那个 metadataCache）
+      if (
+        vaultChangeMatters({
+          path: f.path,
+          extension: isFile ? f.extension : '',
+          isFolder,
+          albumFolder: this.plugin.settings.albumFolder,
+          oldPath,
+        })
+      ) {
         this.scheduleRefresh();
-        return;
       }
-      if (!(f instanceof TFile)) return;
-      // rename 时旧名一并判：音频/封面被改名成其他后缀等于离开了专辑目录，角标同样要重算
-      const related = (name: string) => isAudioFile(name) || isImageFile(name);
-      if (related(f.name) || (!!oldPath && related(oldPath))) this.scheduleRefresh();
     };
     this.registerEvent(this.plugin.app.vault.on('create', (f: TAbstractFile) => onVaultChanged(f)));
     this.registerEvent(this.plugin.app.vault.on('delete', (f: TAbstractFile) => onVaultChanged(f)));
@@ -329,11 +345,17 @@ export class VinylShelfView extends ItemView {
     this.registerDomEvent(this.contentEl, 'keydown', (ev) => this.onShelfKeydown(ev));
     this.unsub = this.plugin.engine.subscribe((s) => this.updatePlaying(s));
     // 空态教程：视图尺寸一变（窗口 / 侧边栏开合）就重算线圈与箭头的位置；没有教程时空转
-    this.tutorialRO = new ResizeObserver(() => this.layoutTutorial());
+    this.tutorialRO = new ResizeObserver(() => this.requestTutorialLayout());
     this.tutorialRO.observe(this.contentEl);
-    this.registerDomEvent(this.contentEl, 'scroll', () => this.layoutTutorial());
+    this.registerDomEvent(this.contentEl, 'scroll', () => this.requestTutorialLayout());
     // 工作区布局变化（分屏 / 标签移动 / 恢复布局）时容器尺寸可能几帧内还在变，补一次布局
-    this.registerEvent(this.app.workspace.on('layout-change', () => this.layoutTutorial()));
+    this.registerEvent(this.app.workspace.on('layout-change', () => this.requestTutorialLayout()));
+    // 不可见期间攒下的改动：重新可见时补一次渲染（判据与 render 开头同一处）
+    const flushIfVisible = () => {
+      if (this.dirty && this.isShown()) this.render();
+    };
+    this.registerEvent(this.app.workspace.on('active-leaf-change', flushIfVisible));
+    this.registerEvent(this.app.workspace.on('layout-change', flushIfVisible));
     this.render();
   }
 
@@ -419,6 +441,13 @@ export class VinylShelfView extends ItemView {
   // ============ 渲染 ============
 
   render() {
+    // 看不见的时候（后台标签页 / 折叠的侧栏 / 独立窗口已关）不重建整墙：改一个属性就要重建
+    // 上千张卡片，而用户根本看不到。只标脏，等重新可见时补一次（见 onOpen 的 active-leaf-change）。
+    if (!this.isShown()) {
+      this.dirty = true;
+      return;
+    }
+    this.dirty = false;
     // 浮层挂在 body 上：这次重建不该把它关掉（在「添加」面板里导入一张专辑就会触发后台刷新，
     // 面板要保持打开才能连续添加）。只把锚点换到重建后的新按钮上，见下面的 reattachPanel。
     const keepPanel = this.panel?.kind ?? null;
@@ -451,6 +480,14 @@ export class VinylShelfView extends ItemView {
     this.syncBatch(); // 重建后再把选择模式的整体状态铺回去（卡片是新 DOM）
     if (keepPanel) this.reattachPanel(keepPanel);
     c.scrollTop = scrollTop;
+  }
+
+  /** 本视图此刻真的看得见吗（后台标签页 / 折叠的侧栏 / 独立窗口已关都算看不见）。
+   *  判据与播放器的 syncVisibility 同一口径；isShown 缺失时按「看得见」处理。 */
+  private isShown(): boolean {
+    // 标注而不是断言：测试里容器可以是 undefined（视图没挂到叶子上）
+    const el: HTMLElement | undefined = this.containerEl;
+    return typeof el?.isShown === 'function' ? el.isShown() : true;
   }
 
   /** 卡片属性变更后的就地刷新（main.refreshShelfProps 广播给所有专辑墙视图）：
@@ -814,6 +851,19 @@ export class VinylShelfView extends ItemView {
     this.cancelTutorialSettle();
     this.tutorial?.root.remove();
     this.tutorial = null;
+    this.tutorialRaf = 0;
+    this.tutorialKey = '';
+  }
+
+  /** 教程重绘的合流口：ResizeObserver / scroll / layout-change 都走这里，一帧最多重画一次。
+   *  直接调 layoutTutorial 的话，拖窗口边缘时每个事件都要跑一遍（里面是 6+ 次
+   *  getBoundingClientRect + 十来个 SVG 节点重建），而这块恰好是新用户第一眼看到的东西。 */
+  private requestTutorialLayout() {
+    if (this.tutorialRaf) return;
+    this.tutorialRaf = window.requestAnimationFrame(() => {
+      this.tutorialRaf = 0;
+      this.layoutTutorial();
+    });
   }
 
   /** 教程层刚建好时容器未必定型：视图创建 / 工作区恢复的头几帧量到的是过渡尺寸
@@ -887,6 +937,13 @@ export class VinylShelfView extends ItemView {
     const base = T.root.getBoundingClientRect(); // 教程层铺满视图内容区，作为统一坐标原点
     const btn = group.getBoundingClientRect();
     if (!base.width || !btn.width) return;
+    // 尺寸没变就不重画：ResizeObserver 与 layout-change 会在同一尺寸下反复报到，
+    // 而重画一次要重建十来个 SVG 节点。指纹只取决定几何的那几个量（宽高 + 线圈位置）。
+    const sizeKey = `${Math.round(base.width)}x${Math.round(base.height)}|${Math.round(
+      btn.left
+    )},${Math.round(btn.top)},${Math.round(btn.width)}`;
+    if (sizeKey === this.tutorialKey) return;
+    this.tutorialKey = sizeKey;
 
     const cx = btn.left + btn.width / 2 - base.left;
     const cy = btn.top + btn.height / 2 - base.top;
@@ -1672,7 +1729,11 @@ export class VinylShelfView extends ItemView {
     // 唱片层（绝对定位）：位于封面之下（img/占位 z-index 1 在上，disc 藏于封面后方探出）
     cover.createDiv({ cls: 'vinyl-shelf-disc' });
     if (album.cover) {
-      cover.createEl('img', { attr: { src: album.cover } });
+      // lazy + async：500 张的墙不该在打开那一刻把 500 张封面一起塞进解码队列
+      // （封面盒已有 aspect-ratio，不会因此抖版）。alt 留空：专辑名就在卡片上，这是装饰图。
+      cover.createEl('img', {
+        attr: { src: album.cover, alt: '', loading: 'lazy', decoding: 'async' },
+      });
     } else if (album.coverRaw) {
       const ph = cover.createDiv({ cls: 'vinyl-shelf-cover-color' });
       ph.style.background = String(album.coverRaw);
@@ -1888,7 +1949,16 @@ export class VinylShelfView extends ItemView {
   private updatePlaying(s: PlayerSnapshot) {
     this.lastSnap = s;
     const current = s.status !== 'idle' && s.albumNotePath ? s.albumNotePath : null;
-    const queued = queuedAlbumPaths(s.queue);
+    // 队列引用没换就不必重算「排着哪些专辑」；当前专辑也没变就直接返回 ——
+    // 快照每 400ms 一次，而卡片可能上百张，逐张写 class 是纯开销。
+    const queueChanged = s.queue !== this.queuedFrom;
+    if (queueChanged) {
+      this.queuedFrom = s.queue;
+      this.queuedPaths = queuedAlbumPaths(s.queue);
+    }
+    if (!queueChanged && current === this.playingPath) return;
+    this.playingPath = current;
+    const queued = this.queuedPaths;
     for (const [path, el] of this.cardEls) {
       const playing = path === current;
       const away = playing || queued.has(path);

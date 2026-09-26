@@ -222,6 +222,25 @@ test('停止播放（空队列）：墙上的唱片全部回位', () => {
   assert.equal(b.disc.anims.length, 1, 'B 的回位动画');
 });
 
+test('快照没变就不碰 DOM：队列引用与当前专辑都没换时直接返回', () => {
+  const { view, a, b } = makeViewPair();
+  const queue = [track('Albums/A.md'), track('Albums/B.md')];
+  view.updatePlaying(snap(queue, 'Albums/A.md'));
+  assert.equal(a.classList.contains('is-playing'), true);
+  // 模拟「DOM 被别处改动」，再用同一个快照喂一次：输入没变就不该把它写回去
+  a.classList.remove('is-playing');
+  view.updatePlaying(snap(queue, 'Albums/A.md'));
+  assert.equal(
+    a.classList.contains('is-playing'),
+    false,
+    '同一个队列引用 + 同一个当前专辑：不该再逐张写 class（快照 400ms 一次，这是每条都在付的开销）'
+  );
+  // 换成新队列引用（引擎每次入队/重排都会产生新数组）→ 该写的还得写
+  view.updatePlaying(snap([...queue], 'Albums/A.md'));
+  assert.equal(a.classList.contains('is-playing'), true, '队列换了引用就要重写');
+  assert.equal(b.classList.contains('is-queued'), true);
+});
+
 test('点「已经在唱机上」的唱片：暂停中接着放，播放中只翻出播放器', async () => {
   const { view } = makeViewPair();
   const calls = [];

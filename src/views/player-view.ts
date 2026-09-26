@@ -1122,7 +1122,8 @@ export class VinylPlayerView extends ItemView {
     }
 
     // 队列（引用变化才重建；当前高亮走 class 切换）
-    if (s.queue !== this.renderedQueue) this.rebuildQueue(els, s);
+    const queueRebuilt = s.queue !== this.renderedQueue;
+    if (queueRebuilt) this.rebuildQueue(els, s);
     // 队列模式开关的当前状态（设置改了、切了开关都要跟着走）
     this.syncQueueControls();
     // 播放模式按钮：图标随模式变，非默认（单次）时给个高亮色
@@ -1132,17 +1133,26 @@ export class VinylPlayerView extends ItemView {
       els.playModeBtn.toggleClass('is-active', s.playMode !== 'once');
     }
     // 正在播的那一行：既给视觉（is-current），也给读屏（aria-current）——
-    // 只有类名的话，读屏用户翻队列时不知道现在放到哪儿了
-    this.queueRows.forEach((row, i) => {
-      row.classList.toggle('is-current', i === s.index);
-      row.setAttribute('aria-current', i === s.index ? 'true' : 'false');
-    });
+    // 只有类名的话，读屏用户翻队列时不知道现在放到哪儿了。
+    // 只写变化的那两行：快照每 400ms 一次，几百行的队列全量 toggle 纯属白干；
+    // 队列刚重建过则必须补写（新行上没有这个类）。
+    const indexChanged = s.index !== this.lastIndex;
+    if (indexChanged || queueRebuilt) {
+      if (indexChanged && !queueRebuilt) {
+        const prevRow = this.queueRows[this.lastIndex];
+        prevRow?.classList.remove('is-current');
+        prevRow?.setAttribute('aria-current', 'false');
+      }
+      const row = this.queueRows[s.index];
+      row?.classList.add('is-current');
+      row?.setAttribute('aria-current', 'true');
+      this.lastIndex = s.index;
+    }
 
     // 定位正在播的那首：打开时定位一次；之后跟随播放走，但只在「上一条还看得见」时才跟 ——
     // 自己往上翻看队列了就别把人拽回来（翻远了点 Vinyl order 上的定位钮回来）。
-    const wasVisible = this.currentRowVisible();
-    const indexChanged = s.index !== this.lastIndex;
-    this.lastIndex = s.index;
+    // 「看得见吗」要量两个元素的矩形（强制回流）：只在真的换了曲目时才问
+    const wasVisible = indexChanged ? this.currentRowVisible() : false;
     if (this.locateBtn) this.locateBtn.disabled = s.index < 0;
     if (s.index >= 0 && (this.pendingLocate || (indexChanged && wasVisible))) {
       this.pendingLocate = false;

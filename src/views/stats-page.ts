@@ -437,7 +437,10 @@ export class StatsPage {
     });
     const art = button.createDiv({ cls: 'vinyl-stats-album-art' });
     if (coverSrc && !/^#[0-9a-f]{3,8}$/i.test(coverSrc)) {
-      art.createEl('img', { attr: { src: coverSrc, alt: name } });
+      // 当日唱片墙 / 排行也是成排的封面：同样 lazy（alt 有名字，这里不是装饰图）
+      art.createEl('img', {
+        attr: { src: coverSrc, alt: name, loading: 'lazy', decoding: 'async' },
+      });
     } else {
       const fallback = art.createDiv({ cls: 'vinyl-stats-album-fallback', text: name.slice(0, 1) || '♪' });
       if (coverSrc) fallback.style.background = coverSrc;

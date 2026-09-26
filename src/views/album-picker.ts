@@ -155,7 +155,9 @@ export class AlbumPicker {
 
     const cover = tile.createSpan({ cls: 'vinyl-pick-cover' });
     if (album.cover) {
-      cover.createEl('img', { attr: { src: album.cover, alt: '' } });
+      cover.createEl('img', {
+        attr: { src: album.cover, alt: '', loading: 'lazy', decoding: 'async' },
+      });
     } else if (album.coverRaw) {
       const color = cover.createSpan({ cls: 'vinyl-pick-color' });
       color.style.background = String(album.coverRaw);

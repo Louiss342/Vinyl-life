@@ -404,6 +404,35 @@ export function vaultFolderIssue(value: string): VaultFolderIssue {
   return '';
 }
 
+/** vault 的 create / delete / rename 值不值得重扫（专辑墙刷新与音源检测缓存共用这一份判据）。
+ *
+ *  为什么要挑：一次重扫 = 对**每张**专辑重算音源，而重算要碰文件系统（库外引用走
+ *  fs.existsSync / 递归 readdir）。此前不看路径一律作废 —— 别的插件写一篇日记、同步客户端
+ *  落地一个文件，500 张的墙就要对 500 张专辑各来一遍同步系统调用。
+ *
+ *  认三类：文件夹（里面装什么都有可能）、音频与图片（本地音源角标 / 封面自动识别）、
+ *  专辑笔记目录里的 md（这张专辑在不在收藏里会变；笔记**内容**的变化由 metadataCache 管，
+ *  不走这里）。其余（普通笔记、canvas、插件文件、配置…）直接早退，不做任何工作。
+ *
+ *  参数是普通数据（不是 TAbstractFile）：判据本身只是字符串比较，这样才测得住 ——
+ *  它错了的表现是「改了东西界面没反应」，属于最难发现的那类。 */
+export function vaultChangeMatters(args: {
+  path: string;
+  extension: string;
+  isFolder: boolean;
+  albumFolder: string;
+  oldPath?: string;
+}): boolean {
+  if (args.isFolder) return true;
+  const related = (p: string) => isAudioFile(p) || isImageFile(p);
+  // rename 时旧名一并判：音频/封面被改名成别的后缀等于离开了专辑目录
+  if (related(args.path) || (!!args.oldPath && related(args.oldPath))) return true;
+  if (args.extension !== 'md') return false;
+  const folder = args.albumFolder;
+  const inAlbumFolder = (p: string) => p === folder || p.startsWith(folder + '/');
+  return inAlbumFolder(args.path) || (!!args.oldPath && inAlbumFolder(args.oldPath));
+}
+
 /** 系统「减少动态效果」是否开启（前庭敏感的用户靠它关掉转盘与交接动画）。
  *  拿不到 matchMedia（脚本沙箱 / 老环境）按 false 处理：宁可有动画，也别在渲染路径上抛。 */
 export function prefersReducedMotion(): boolean {

@@ -1,6 +1,6 @@
 // Vinyl Life —— 主入口：注册视图 / 命令 / 设置面板，装配服务层与播放引擎。
 // 本地源（零后端）+ 在线源（应用内网关）统一为 Track 队列。
-import { Editor, Plugin, TFile, TFolder, MarkdownView, WorkspaceLeaf, normalizePath, Notice } from 'obsidian';
+import { Editor, Plugin, TAbstractFile, TFile, TFolder, MarkdownView, WorkspaceLeaf, normalizePath, Notice } from 'obsidian';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
@@ -59,6 +59,7 @@ import {
   relPathOf,
   libraryRootHint,
   fmtTime,
+  vaultChangeMatters,
 } from './util';
 import {
   ImportContext,
@@ -194,12 +195,35 @@ export default class VinylLifePlugin extends Plugin {
 
     // 音源检测的缓存作废（为什么有缓存、口径是什么，见 album-index 的 invalidateSourceCache）：
     // 专辑墙开着时它自己那次刷新就够，但播放器、健康检查、失败提示这些入口在墙关着的时候
-    // 也会读这份结论 —— 所以在插件层再兜一道。这条监听不做任何 I/O，代价是一次计数器自增；
+    // 也会读这份结论 —— 所以在插件层再兜一道。
+    //
+    // **只认会影响结论的那几类变化**：一次作废 = 下一次刷新对**每张**专辑重算，而重算要碰文件
+    // 系统（库外引用走 fs.existsSync / 递归 readdir）。曾经这里不看路径一律作废 —— 别的插件
+    // 写一篇日记、同步客户端落地一个文件，500 张的墙就要对 500 张专辑各来一遍同步系统调用。
+    // 判据与专辑墙的 onVaultChanged 同一口径（文件夹 / 音频 / 图片），再加上「专辑笔记目录里的
+    // md」（增删改名会影响这张专辑在不在）。其余（普通笔记、canvas、插件文件、配置）直接早退。
     // 「库外目录自己变了」听不到（没有事件源），用户显式点刷新 / 打开健康检查时会再作废一次。
-    const onVaultStructureChanged = () => invalidateSourceCache();
-    this.registerEvent(this.app.vault.on('create', onVaultStructureChanged));
-    this.registerEvent(this.app.vault.on('delete', onVaultStructureChanged));
-    this.registerEvent(this.app.vault.on('rename', onVaultStructureChanged));
+    const onVaultStructureChanged = (f: TAbstractFile, oldPath?: string) => {
+      const isFolder = f instanceof TFolder;
+      const isFile = f instanceof TFile;
+      if (!isFolder && !isFile) return;
+      if (
+        vaultChangeMatters({
+          path: f.path,
+          extension: isFile ? f.extension : '',
+          isFolder,
+          albumFolder: this.settings.albumFolder,
+          oldPath,
+        })
+      ) {
+        invalidateSourceCache();
+      }
+    };
+    this.registerEvent(this.app.vault.on('create', (f) => onVaultStructureChanged(f)));
+    this.registerEvent(this.app.vault.on('delete', (f) => onVaultStructureChanged(f)));
+    this.registerEvent(
+      this.app.vault.on('rename', (f, oldPath) => onVaultStructureChanged(f, oldPath))
+    );
 
     // 首次运行自动搭好目录结构（默认 Vinyl Life/{Vinyl Note, covers, audio, Stats}）：
     // 新装用户装完即用；已有目录不动，失败不阻塞加载（导入流程里还会再兜一次）
