@@ -516,30 +516,8 @@
   border-color: var(--interactive-accent);
 }
 
-/* 卡片菜单入口（「⋯」）：常态淡出，悬停或键盘聚焦时显形。
-   位置固定在左上角：另外三个方向（唱片朝左/上/下）会把勾选圈挪到别的角，左上角与它都不撞。
-   刻意不用 display:none —— 那样它会从 Tab 序里消失，键盘用户就又回到「够不着卡片菜单」。
-   减少动效的用户不需要这 120ms 的淡入（别的动效同一口径，见文件里的 reduce 段）。 */
-.vinyl-shelf-card-menu {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  z-index: 3;
-  opacity: 0;
-  transition: opacity 120ms ease;
-}
-
-.vinyl-shelf-card:hover .vinyl-shelf-card-menu,
-.vinyl-shelf-card:focus-within .vinyl-shelf-card-menu,
-.vinyl-shelf-card-menu:focus-visible {
-  opacity: 1;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .vinyl-shelf-card-menu {
-    transition: none;
-  }
-}
+/* 卡片左上角曾是「⋯」菜单入口（悬停淡入那套），2026-09-27 用户要求去掉 —— 样式一并删掉，
+   免得留下一份没人用的选择器当线索。菜单入口现在只有右键与 Shift+F10 / 菜单键。 */
 
 .vinyl-shelf-card.is-batch-selected .vinyl-shelf-card-check .svg-icon {
   opacity: 1;
@@ -674,6 +652,11 @@
   padding: 0 54px 0 0; /* 右侧留唱片探出位（默认方向） */
   cursor: pointer;
   position: relative; /* 批量删除的勾选圈（.vinyl-shelf-card-check）的定位基准 */
+  /* 关掉宿主的悬停气泡：卡片带 aria-label（读屏要报专辑名），宿主因此会给它画一枚样式化提示，
+     鼠标扫过墙面就挨张弹专辑名 —— 用户 2026-09-27 要求去掉。做法就是这条自定义属性：
+     宿主的提示模块读 --no-tooltip（"true" 即不弹，Obsidian 自己的堆叠标签 / 自动补全也在用），
+     所以 aria-label 照留、读屏不丢名字，只是不再弹气泡。属性行（.vinyl-shelf-prop）另行复位。 */
+  --no-tooltip: true;
 }
 
 /* 探出位随「黑胶动画方向」换边 */
@@ -803,9 +786,12 @@
 .vinyl-shelf-prop {
   margin-top: 6px;
   line-height: 1.25;
+  /* 复位卡片上的 --no-tooltip（自定义属性会继承到每一行）：属性行的气泡留着 —— 整行只有值，
+     「1997」这种裸值不报属性名就分不清是发行日期还是别的（用户 2026-09-27 只点名专辑名那枚）。 */
+  --no-tooltip: false;
 }
 
-/* 属性行不显示属性名（表头），整行只有值；属性名在悬停提示里（见 buildCard 的 title） */
+/* 属性行不显示属性名（表头），整行只有值；属性名在悬停提示里（见 buildCard 给属性行挂的 aria-label） */
 .vinyl-shelf-prop-value {
   color: var(--text-normal);
   font-size: 0.88em;
@@ -868,16 +854,10 @@
   flex-wrap: wrap;
 }
 
-/* 正在播放：描边 + 标题着色 */
-.vinyl-shelf-card.is-playing .vinyl-shelf-cover {
-  box-shadow:
-    0 0 0 2px var(--interactive-accent),
-    0 4px 8px rgba(0, 0, 0, 0.3);
-}
-
-.vinyl-shelf-card.is-playing .vinyl-shelf-card-title {
-  color: var(--interactive-accent);
-}
+/* 正在播放：**不再着色**（用户 2026-09-27：点开一张就落一圈高亮、专辑名跟着变色，那是「选中」的
+   语言；而点卡片是「我要听它」，唱片离墙 + 播放器接管已经报得很清楚）。这里曾有两条规则 ——
+   封面 box-shadow 描边与标题 color 换 accent 色，已删。
+   is-playing 类名本身还留着：唱片离墙、悬停摆动让位都靠它（见下面两条）。 */
 
 /* ============ 专辑墙：交接与卡位空出 ============ */
 
@@ -4649,7 +4629,10 @@
     box-shadow: none; /* 强制色彩下外发光会被抹掉，留着只会让亮格看起来脏 */
   }
 
-  /* 播放中 / 选中这类「只靠颜色」的状态也补一条描边 */
+  /* 「播放中」（专辑墙）与「选中」（统计页热力图）在强制色彩下各补一条描边。
+     专辑墙这条 2026-09-27 之后只在这档里存在：用户去掉了正常模式下的高亮（少了就少了，
+     播放器里报得更全），而强制色彩下唱片离墙恰恰是「消失」（离墙态 opacity: 0）——
+     不描这一圈，整面墙上就再没有一处「这张在播」的标记。 */
   .vinyl-shelf-card.is-playing,
   .vinyl-stats-day.is-selected {
     outline: 2px solid Highlight;

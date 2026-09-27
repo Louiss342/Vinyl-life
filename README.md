@@ -338,9 +338,9 @@ Vinyl Life/
 
 ##### 6.1.7 卡片右键与换碟
 
-![专辑墙：封面卡片排列，正在播放的专辑在墙上高亮，右侧是黑胶播放器](assets/screenshots/album-shelf.zh.webp)
+![专辑墙：封面卡片排列，右侧是黑胶播放器](assets/screenshots/album-shelf.zh.webp)
 
-专辑以封面卡片排列。鼠标移上去，唱片从封套里露出来；点一张有音源的专辑，唱片会从墙上移到唱机。正在播放的那张在墙上高亮。
+专辑以封面卡片排列。鼠标移上去，唱片从封套里露出来；点一张有音源的专辑，唱片会从墙上移到唱机 —— 那只空出来的封套就是墙上唯一一处「这张在播」的标记，卡片本身不变色（点卡片是「我要听它」，不是「选中它」）。
 
 右键卡片可以打开笔记、补充音频、更换封面，或者打开对应的音乐平台页面。没有音源的专辑也能放在墙上，点它直接打开笔记。
 
@@ -1087,9 +1087,9 @@ When an album carries several sources, you can switch directly from a failure no
 
 ##### 6.1.7 Card menu and switching records
 
-![The album shelf: cover cards, the playing album highlighted, and the turntable player in the sidebar](assets/screenshots/album-shelf.en.webp)
+![The album shelf: cover cards and the turntable player in the sidebar](assets/screenshots/album-shelf.en.webp)
 
-Albums are laid out as cover cards. Hover over one and the record slides out of its sleeve; click an album that has audio and the record animates from the shelf to the turntable. The album that is playing is highlighted on the shelf.
+Albums are laid out as cover cards. Hover over one and the record slides out of its sleeve; click an album that has audio and the record animates from the shelf to the turntable — that emptied sleeve is the shelf's only “this one is playing” marker; the card itself keeps its usual look (clicking a card means “play this”, not “select this”).
 
 Right-clicking a card lets you open the note, add audio, change the cover, or open the matching page on the music platform. Albums with no audio can sit on the shelf too; clicking them opens the note directly.
 

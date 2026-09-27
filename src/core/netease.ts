@@ -9,6 +9,7 @@ import type {
   SearchPage,
 } from './api-types';
 import { t } from './i18n';
+import { SessionCache } from './session-cache';
 
 export class NeteaseService {
   constructor(
@@ -23,7 +24,20 @@ export class NeteaseService {
     if (!ok) throw new Error(this.gatewayError() || t('auth.gatewayNotReadyNetease'));
   }
 
+  /** 专辑曲目表：会话级缓存（见 session-cache）。它是起播链上的第一段网络（实测 100~150ms），
+   *  一次会话里又不会变 —— 悬停预热拨的正是这一份，预热过的专辑点下去时这里是命中。 */
+  private albumCache = new SessionCache<NeteaseAlbumResponse>(32);
+
   async album(id: number): Promise<NeteaseAlbumResponse> {
+    const key = String(id);
+    const hit = this.albumCache.get(key);
+    if (hit) return hit;
+    const body = await this.fetchAlbum(id);
+    this.albumCache.set(key, body);
+    return body;
+  }
+
+  private async fetchAlbum(id: number): Promise<NeteaseAlbumResponse> {
     if (await this.web.isLoggedIn()) {
       try {
         return await this.web.album(id);

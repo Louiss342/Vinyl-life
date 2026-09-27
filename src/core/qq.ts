@@ -6,6 +6,7 @@ import { Track } from './track';
 import { GatewayError, withRequestTimeout } from './request-error';
 import type { SongUrlResult } from './server-client';
 import { getLanguage, t, tf } from './i18n';
+import { SessionCache } from './session-cache';
 import type {
   ApiErrorResponse,
   LoginResponse,
@@ -79,8 +80,16 @@ export class QqService {
   }
 
   // —— 曲库 ——
+  /** 专辑曲目表：会话级缓存（见 session-cache）—— 与网易云同一条口径：悬停预热与点击共用一份 */
+  private albumCache = new SessionCache<QqAlbumResponse>(32);
+
   async album(mid: string): Promise<QqAlbumResponse> {
-    return this.getJson<QqAlbumResponse>('/api/qq/album', { id: mid });
+    const key = String(mid);
+    const hit = this.albumCache.get(key);
+    if (hit) return hit;
+    const body = await this.getJson<QqAlbumResponse>('/api/qq/album', { id: mid });
+    this.albumCache.set(key, body);
+    return body;
   }
 
   /** QQ 侧按页码翻页（不是 offset）：页大小固定在网关侧，客户端只报第几页 */

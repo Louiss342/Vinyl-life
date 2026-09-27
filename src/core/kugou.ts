@@ -7,6 +7,7 @@ import { Track } from './track';
 import { GatewayError, withRequestTimeout } from './request-error';
 import type { SongUrlResult } from './server-client';
 import { getLanguage, t, tf } from './i18n';
+import { SessionCache } from './session-cache';
 import type {
   ApiErrorResponse,
   KugouAlbumResponse,
@@ -76,8 +77,16 @@ export class KugouService {
   }
 
   // —— 曲库 ——
+  /** 专辑曲目表：会话级缓存（见 session-cache）—— 与另外两个源同一条口径 */
+  private albumCache = new SessionCache<KugouAlbumResponse>(32);
+
   async album(id: string): Promise<KugouAlbumResponse> {
-    return this.getJson<KugouAlbumResponse>('/api/kugou/album', { id });
+    const key = String(id);
+    const hit = this.albumCache.get(key);
+    if (hit) return hit;
+    const body = await this.getJson<KugouAlbumResponse>('/api/kugou/album', { id });
+    this.albumCache.set(key, body);
+    return body;
   }
 
   /** 与 QQ 一样按页码翻页（不是 offset）：页大小固定在网关侧，客户端只报第几页 */

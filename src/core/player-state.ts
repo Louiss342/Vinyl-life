@@ -7,7 +7,14 @@ import { LocalSource } from './local-source';
 import { NeteaseService } from './netease';
 import { QqService } from './qq';
 import { KugouService } from './kugou';
-import { buildAlbumQueue, BuildQueueResult, ActiveSource, SourcePolicy, sourceLabel } from './queue';
+import {
+  buildAlbumQueue,
+  BuildQueueResult,
+  ActiveSource,
+  SourcePolicy,
+  sourceLabel,
+  QueueDeps,
+} from './queue';
 import {
   SCRATCH_LIVE_ALIGN_TOL,
   SCRATCH_LIVE_PAUSE_RATE,
@@ -28,6 +35,9 @@ import { notice, prefersReducedMotion, scalarText } from '../util';
 import { t, tf } from './i18n';
 
 export type PlayerStatus = 'idle' | 'loading' | 'playing' | 'paused' | 'error';
+
+/** 在线地址的保鲜期（见 urlCache）：平台签名地址约一刻钟到期，取 10 分钟留足余量 */
+const URL_TTL_MS = 10 * 60 * 1000;
 
 /** 播放模式：单次（播完停）/ 循环（播完回到开头）/ 随机（打乱后一直放）。
  *  作用对象是当前队列：单专辑时就是这张专辑的曲目，队列模式下是整条列表的曲目。 */
@@ -135,7 +145,13 @@ export class PlaybackEngine {
   private listeners = new Set<(s: PlayerSnapshot) => void>();
   // 在线源 URL 缓存：按 trackKey 区分来源（netease id 为数字、qq id 为 mid 字符串，
   // 无法共用裸 id 键，否则跨源会命中错误缓存）。
-  private urlCache = new Map<string, string>();
+  // 值带时间戳：平台给的地址是**签名**的，约一刻钟就过期（URL 里那串 20260927203050 就是
+  // 它自己的到期时刻）。过期地址起播会先报一次错、再由 onAudioError 重取 —— 那道兜底是给
+  // 「正放着的时候过期」准备的，不该让「预热好的地址放久了」也去走它：超过 URL_TTL_MS
+  // 就当没缓存、重新取一次（这本来就是没有预热时每次都会发生的事）。
+  private urlCache = new Map<string, { url: string; at: number }>();
+  /** 同一首正在取址的那趟网络（见 resolveUrl 的去重说明）：落地即摘 */
+  private urlInflight = new Map<string, Promise<string>>();
   // 实际拿到的音质档（与 urlCache 同生命周期；降档后即为低档位）
   private levelCache = new Map<string, string>();
   private vaultBlobRetried = new Set<string>();
@@ -293,17 +309,25 @@ export class PlaybackEngine {
   }
 
   // —— 队列 ——
-  /** opts.autoplay 缺省时看设置（「加载队列后立即播放」）；恢复上次会话传 false
-   *  —— 重启 Obsidian 时突然出声是惊吓，不是功能。 */
-  async loadAlbum(album: AlbumInfo, opts?: { autoplay?: boolean; source?: SourcePolicy }): Promise<BuildQueueResult> {
-    const seq = ++this.loadSeq;
-    const res = await buildAlbumQueue(opts?.source ? { ...album, sourcePref: opts.source } : album, {
+  /** 队列构建的依赖（loadAlbum / enqueueAlbum / prefetchAlbum 共用一处，免得三份各写各的） */
+  private queueDeps(): QueueDeps {
+    return {
       local: this.deps.local,
       netease: this.deps.netease,
       qq: this.deps.qq,
       kugou: this.deps.kugou,
       defaultSource: this.deps.settings().defaultSource,
-    });
+    };
+  }
+
+  /** opts.autoplay 缺省时看设置（「加载队列后立即播放」）；恢复上次会话传 false
+   *  —— 重启 Obsidian 时突然出声是惊吓，不是功能。 */
+  async loadAlbum(album: AlbumInfo, opts?: { autoplay?: boolean; source?: SourcePolicy }): Promise<BuildQueueResult> {
+    const seq = ++this.loadSeq;
+    const res = await buildAlbumQueue(
+      opts?.source ? { ...album, sourcePref: opts.source } : album,
+      this.queueDeps()
+    );
     // 期间用户又点了别的专辑（交接动效 / 播放器换碟菜单两个入口）→ 丢弃本次结果
     if (seq !== this.loadSeq) return res;
     if (!res.tracks.length) {
@@ -359,13 +383,7 @@ export class PlaybackEngine {
    *  与 loadAlbum 共用代次：快速连点两张专辑时，先发起的构建后返回会被丢弃。 */
   async enqueueAlbum(album: AlbumInfo): Promise<BuildQueueResult> {
     const seq = ++this.loadSeq;
-    const res = await buildAlbumQueue(album, {
-      local: this.deps.local,
-      netease: this.deps.netease,
-      qq: this.deps.qq,
-      kugou: this.deps.kugou,
-      defaultSource: this.deps.settings().defaultSource,
-    });
+    const res = await buildAlbumQueue(album, this.queueDeps());
     if (seq !== this.loadSeq) return res;
     if (!res.tracks.length) {
       notice(res.reason || t('player.noPlayableTrack'));
@@ -602,6 +620,8 @@ export class PlaybackEngine {
       await this.audio.play();
       this.status = 'playing';
       this.emit();
+      // 这一首开声了：下一首的地址现在就去取（藏在它正在放的这几分钟里，见 prefetchNext）
+      this.prefetchNext();
       // 试听片段（会员曲目匿名取流只给一段）：说一次，别让用户以为「放到一半断了」。
       // 一首只提示一次：单曲循环 / 来回切不会刷屏（角标是常驻的那份，见 player-view 的队列行）
       if (isTrialTrack(track) && !this.trialNoticed.has(trackKey(track))) {
@@ -1064,6 +1084,9 @@ export class PlaybackEngine {
   }
 
   // —— 地址解析（本地 / 网易云 / QQ 三路）——
+  /** 取址入口。本地两条直接走；在线三源先看缓存（没过保的地址）、再看「同一首正在取的那趟网络」：
+   *  预热与起播会撞在一起（刚点完专辑又把指针停回那张卡上、或者连按下一首），共用一趟就只发
+   *  一次请求。 */
   async resolveUrl(track: Track): Promise<string> {
     switch (track.source) {
       case 'local-vault':
@@ -1071,20 +1094,33 @@ export class PlaybackEngine {
       case 'local-external':
         // 优先网关按 Range 供流（整轨不进内存），起不来网关才退回整文件 Blob
         return this.deps.local.resolveExternalPlayableUrl(track.path);
+      default:
+        break;
+    }
+    const key = trackKey(track);
+    const hit = this.freshUrl(key);
+    if (hit) return hit;
+    const inflight = this.urlInflight.get(key);
+    if (inflight !== undefined) return inflight;
+    const p = this.fetchOnlineUrl(track, key).finally(() => {
+      // 只清「自己这一趟」的登记：同一首连着来第三趟时，前一趟收尾不能抹掉新那趟
+      if (this.urlInflight.get(key) === p) this.urlInflight.delete(key);
+    });
+    this.urlInflight.set(key, p);
+    return p;
+  }
+
+  /** 在线三源的取址本体（缓存命中与去重都在 resolveUrl 那一层判过了） */
+  private async fetchOnlineUrl(track: Track, key: string): Promise<string> {
+    switch (track.source) {
       case 'netease': {
-        const key = trackKey(track);
-        const hit = this.urlCache.get(key);
-        if (hit) return hit;
         const r = await this.deps.netease.songUrl(track.id, this.deps.settings().quality);
         if (!r.url) throw new Error(r.restriction || t('auth.sourceUnavailable'));
-        this.urlCache.set(key, r.url);
+        this.rememberUrl(key, r.url);
         if (r.level) this.levelCache.set(key, r.level);
         return r.url;
       }
       case 'qq': {
-        const key = trackKey(track);
-        const hit = this.urlCache.get(key);
-        if (hit) return hit;
         const r = await this.deps.qq.songUrl(track.id, this.deps.settings().quality, track.mediaMid);
         if (!r.url) {
           throw new Error(
@@ -1092,14 +1128,11 @@ export class PlaybackEngine {
             (track.pay ? t('player.vipNoUrl') : t('auth.sourceUnavailable'))
           );
         }
-        this.urlCache.set(key, r.url);
+        this.rememberUrl(key, r.url);
         if (r.level) this.levelCache.set(key, r.level);
         return r.url;
       }
       case 'kugou': {
-        const key = trackKey(track);
-        const hit = this.urlCache.get(key);
-        if (hit) return hit;
         // 取流要带 hash + 专辑 id + mixsongid 三件套（见 core/kugou.ts）；付费曲目的限制文案与 QQ 同义
         const r = await this.deps.kugou.songUrl(
           track.id,
@@ -1113,10 +1146,83 @@ export class PlaybackEngine {
             (track.pay ? t('player.vipNoUrl') : t('auth.sourceUnavailable'))
           );
         }
-        this.urlCache.set(key, r.url);
+        this.rememberUrl(key, r.url);
         if (r.level) this.levelCache.set(key, r.level);
         return r.url;
       }
+    }
+  }
+
+  /** 缓存里的地址还新鲜吗（过期的一并丢掉，见 urlCache 的说明）。不新鲜返回 null ——
+   *  调用方按「没缓存」处理，也就是重新取一次。 */
+  private freshUrl(key: string): string | null {
+    const hit = this.urlCache.get(key);
+    if (!hit) return null;
+    if (Date.now() - hit.at > URL_TTL_MS) {
+      this.urlCache.delete(key);
+      return null;
+    }
+    return hit.url;
+  }
+
+  private rememberUrl(key: string, url: string) {
+    this.urlCache.set(key, { url, at: Date.now() });
+  }
+
+  // —— 取址预热（把起播链上的网络藏到用户看不见的地方）——
+  // 起播要等的网络有两段：专辑曲目表（实测 100~150ms，见 session-cache 的服务缓存）与
+  // 这一首的地址（实测 110~350ms）。两段都可以提前做：曲目表在悬停时预热（下面 prefetchAlbum），
+  // 地址在当前这首一开声就取下一首的（prefetchNext）。真正点下去时只剩元素缓冲那一段。
+  /** 把一首在线曲目的播放地址先取回来：只写缓存，不动状态、不出声、不发快照。
+   *  失败一律静默 —— 这是提前量，不是用户动作；真轮到它时 playIndex 会如实报错。
+   *  **本地源不在此列**：它们的「取址」是建 Blob（整文件读进内存，几十 MB），
+   *  不该由悬停或预热顺手触发。 */
+  async prefetchTrackUrl(track: Track): Promise<void> {
+    if (track.source !== 'netease' && track.source !== 'qq' && track.source !== 'kugou') return;
+    if (this.freshUrl(trackKey(track))) return;
+    try {
+      await this.resolveUrl(track);
+    } catch {
+      // 静默：预热失败不改变任何状态（缓存里没有就是没有，真播时还会再取一次）
+    }
+  }
+
+  /** 当前这首开声后顺手把下一首的地址取回来（切歌 / 自动下一首都受益） */
+  private prefetchNext() {
+    const next = this.index >= 0 ? this.queue[this.index + 1] : undefined;
+    if (next) void this.prefetchTrackUrl(next);
+  }
+
+  /** 悬停预热：把一张专辑的队列先搭一遍 —— 在线曲目表进服务缓存、第一首的地址进 urlCache。
+   *  只取数据：引擎状态一律不动（不建队列、不出声）。失败静默。
+   *
+   *  串行化 + 后来居上：指针扫过一面墙会连着报好几张，这里一次只跑一张，且跑到一半时
+   *  只接最新的那一张（`pending`）—— 中途扫过的那些不追（它们多半不是用户想点的那张，
+   *  而每追一张就是一次平台请求）。停在某张卡上不动时，最新的一张就是它。 */
+  private prefetchPending: AlbumInfo | null = null;
+  private prefetchChain: Promise<void> = Promise.resolve();
+
+  prefetchAlbum(album: AlbumInfo): Promise<void> {
+    this.prefetchPending = album;
+    this.prefetchChain = this.prefetchChain
+      .then(() => {
+        const target = this.prefetchPending;
+        this.prefetchPending = null;
+        return target ? this.runPrefetchAlbum(target) : undefined;
+      })
+      .catch(() => {
+        // 链子本身不抛（runPrefetchAlbum 已经自己吞了），这里只是兜底
+      });
+    return this.prefetchChain;
+  }
+
+  private async runPrefetchAlbum(album: AlbumInfo): Promise<void> {
+    try {
+      const res = await buildAlbumQueue(album, this.queueDeps());
+      const first = res.tracks[0];
+      if (first) await this.prefetchTrackUrl(first);
+    } catch {
+      // 静默：悬停只是提前量，失败的后果就是「点下去时和以前一样」
     }
   }
 

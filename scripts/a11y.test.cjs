@@ -1,6 +1,7 @@
 // 可访问性回归（源码 + 样式文本扫描，不需要 Obsidian）：
 //   ① 卡片 / 队列行可键盘操作（role=button + aria-label，Enter / 空格等价点击；专辑墙是
-//      roving tabindex + 方向键网格：整墙只占一个 Tab 停靠点）
+//      roving tabindex + 方向键网格：整墙只占一个 Tab 停靠点；卡片保留 aria-label 但关掉
+//      悬停气泡 —— --no-tooltip，用户 2026-09-27）
 //   ② :focus-visible 焦点圈与 prefers-reduced-motion 兜底存在于 styles.css
 //   ③ 所有 WAAPI 动画（element.animate）所在文件都引用减少动效判定（防新增动画绕过）
 //   ④ 浮层打开时焦点跟着进去、并报出「这是什么浮层」（挂在 body 末尾的面板，
@@ -59,9 +60,9 @@ test('可访问性：专辑墙是方向键网格（整墙一个停靠点，100 �
   assert.match(src, /ev\.stopPropagation\(\);\s*\/\/ 别漏给全局快捷键/, '处理完别漏给全局快捷键');
   // 每轮渲染后把停靠点补回去（卡片可能刚建出来 / 刚被重画）
   assert.match(src, /this\.syncRoving\(\)/, '渲染后要同步停靠点');
-  // 「⋯」退出 Tab 序后，卡片菜单必须有键盘入口（标准「菜单按钮」模式），否则
-  // 「设置封面 / 在源站打开」对键盘用户又变成不可达
-  assert.match(src, /menuBtn\.tabIndex = -1/, '「⋯」按钮不再逐张占一个 Tab 停靠点');
+  // 卡片菜单必须有键盘入口（标准「菜单按钮」模式）。这枚「⋯」按钮 2026-09-27 已从卡片上删掉，
+  // 于是这条成了唯一一条不靠鼠标的路 —— 没有它，「设置封面 / 在源站打开」对键盘用户不可达。
+  assert.doesNotMatch(src, /vinyl-shelf-card-menu/, '卡片上不再挂「⋯」按钮（用户 2026-09-27）');
   assert.match(
     src,
     /ev\.key === 'ContextMenu' \|\| \(ev\.key === 'F10' && ev\.shiftKey\)/,
@@ -292,29 +293,24 @@ test('可访问性：菜单落点不能用鼠标事件坐标（键盘触发时 c
   assert.match(src, /showAtPosition/, '菜单要用 showAtPosition 落位');
 });
 
-test('可访问性：卡片要有可聚焦的菜单入口（右键菜单曾是设置封面的唯一入口）', () => {
+test('可访问性：卡片菜单不靠右键独占（「⋯」按钮 2026-09-27 删掉，键盘那条路得留住）', () => {
   const src = read('src/views/shelf-view.ts');
+  // 卡片上不再挂那枚「⋯」按钮（用户 2026-09-27：每张封面角上都压着一枚，是最吵的装饰）。
+  // 菜单本身没消失：右键（鼠标）与 Shift+F10 / 菜单键（键盘）共用同一个 showMenu，
+  // 键盘那条用卡片矩形算落点（键盘触发的坐标恒为 0，见上一条用例）。
+  assert.doesNotMatch(src, /vinyl-shelf-card-menu/, '卡片上不再挂「⋯」按钮（用户 2026-09-27）');
   assert.match(
     src,
-    /card[\s\S]{0,600}aria-label[\s\S]{0,200}addEventListener\('click'/,
-    '卡片内要有可聚焦的「⋯」按钮，右键菜单不能是唯一入口'
+    /card\.addEventListener\('contextmenu'[\s\S]{0,300}?this\.showMenu\(e, \{ x: ev\.clientX, y: ev\.clientY \}\)/,
+    '右键那条路还在'
   );
   assert.match(
     src,
-    /vinyl-shelf-card-menu[\s\S]{0,200}?aria-label/,
-    '这枚按钮要有可读名称（不能只有一个图标）'
+    /ev\.key === 'ContextMenu' \|\| \(ev\.key === 'F10' && ev\.shiftKey\)[\s\S]{0,300}?this\.showMenu\(entry, \{ x: r\.left, y: r\.bottom \}\)/,
+    '键盘那条路还在（右键不能是唯一入口）'
   );
-  // 键盘用户在「无鼠标」时也要看得见它：不能 display:none 藏掉。
-  // 2026-09-26：它此后**刻意退出 Tab 序**（menuBtn.tabIndex = -1，整墙只留一个 roving 停靠点），
-  // 菜单的键盘入口改成卡片上的 Shift+F10 / 菜单键（见「专辑墙是方向键网格」一条）——
-  // 这里只管「在 DOM 与可访问性树里、可读、聚焦时显形」，键盘可达性由那一条守。
-  const css = read('styles.css');
-  assert.match(css, /\.vinyl-shelf-card-menu \{[\s\S]{0,200}?opacity:\s*0/, '常态淡出');
-  assert.match(
-    css,
-    /\.vinyl-shelf-card:focus-within \.vinyl-shelf-card-menu/,
-    '键盘聚焦时要显形（只写 :hover 的话键盘用户永远看不到它）'
-  );
+  // 样式一并删干净：留着一份没人用的选择器，下一个人会以为按钮还在
+  assert.doesNotMatch(read('styles.css'), /vinyl-shelf-card-menu/, '样式表里不留死选择器');
 });
 
 test('可访问性：命令面板能触达只有鼠标路径的那些动作，旧命令 ID 冻结', () => {
@@ -401,6 +397,20 @@ test('可访问性：截断文本的可读性靠 aria-label（title 在本仓库
     shelf,
     /card\.setAttribute\('aria-label', album\.title\)/,
     '卡片同样用 aria-label 报完整专辑名'
+  );
+  // 悬停气泡（用户 2026-09-27：鼠标扫过墙面不该挨张弹专辑名）靠 --no-tooltip 关掉，而不是
+  // 摘掉 aria-label —— 名字是读屏软件的，气泡才是碍事的那个。宿主的提示模块读这条自定义属性
+  // （Obsidian 自己的堆叠标签 / 自动补全也这么关），所以两边都留得住。
+  const css = read('styles.css');
+  assert.match(
+    css,
+    /\.vinyl-shelf-card \{[^}]*--no-tooltip:\s*true/,
+    '卡片的悬停气泡要关掉（读屏那个名字照留）'
+  );
+  assert.match(
+    css,
+    /\.vinyl-shelf-prop \{[^}]*--no-tooltip:\s*false/,
+    '属性行的气泡留着：自定义属性会继承，卡片上关了就得在行上复位'
   );
 });
 

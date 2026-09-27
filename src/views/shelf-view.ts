@@ -159,6 +159,11 @@ const sourceShortLabel = (key: SourceFilter): string => {
 const FIRST_CARDS = 60;
 const APPEND_CARDS = 80;
 
+// 悬停预热的停留门槛（ms）：停够这么久才认为「用户可能要点它」（见 schedulePrefetch）。
+// 260 是扫视与人手停顿之间的分界 —— 拿不准时宁可少预一次：漏预只是回到没有预热时的速度，
+// 多预则是白白敲一次平台接口。
+const PREFETCH_DWELL_MS = 260;
+
 // 空态教程的图纸参数（Excalidraw 设计稿 Drawing 2026-09-15 14.14.52，1 图纸单位 = 1px）。
 // 笔触一律交给 roughjs（Excalidraw 用的同一套手绘引擎），线宽 / 虚线 / roughness 等公共参数
 // 在 views/hand-drawn.ts（与「关于」页共用），这里只留这张图纸自己的比例与种子 ——
@@ -355,8 +360,14 @@ export class VinylShelfView extends ItemView {
       )
     );
     // 卡片文字的悬停滚动：委托挂在 contentEl 上（卡片每次刷新都重建，逐张挂监听会白挂随卡片丢弃的一堆）
-    this.registerDomEvent(this.contentEl, 'pointerover', (ev) => onMarqueeOver(ev));
-    this.registerDomEvent(this.contentEl, 'pointerout', (ev) => onMarqueeOut(ev));
+    this.registerDomEvent(this.contentEl, 'pointerover', (ev) => {
+      onMarqueeOver(ev);
+      this.schedulePrefetch(ev);
+    });
+    this.registerDomEvent(this.contentEl, 'pointerout', (ev) => {
+      onMarqueeOut(ev);
+      this.cancelPrefetch(ev);
+    });
     // 键盘焦点落进卡片时同样要能读全长专辑名（曾经只有鼠标一条路）。
     // 焦点在卡片上、marquee 是它的后代 —— 与指针的 closest 方向相反，所以走 *_In 那一对。
     this.registerDomEvent(this.contentEl, 'focusin', (ev) => measureMarqueesIn(shelfCardOf(ev.target)));
@@ -394,6 +405,7 @@ export class VinylShelfView extends ItemView {
       window.clearTimeout(this.refreshTimer);
       this.refreshTimer = null;
     }
+    this.clearPrefetchTimer();
     this.tutorialRO?.disconnect();
     this.tutorialRO = null;
     this.cancelTutorialSettle();
@@ -404,7 +416,8 @@ export class VinylShelfView extends ItemView {
   /** 卡片墙的键盘等价：
    *    · 方向键在卡片间走、Home / End 到首尾（整墙只占一个 Tab 停靠点，见 syncRoving）
    *    · Enter / 空格 = 点击
-   *    · Shift+F10 / 菜单键 = 卡片的「⋯」菜单（标准「菜单按钮」模式）
+   *    · Shift+F10 / 菜单键 = 卡片菜单（标准「菜单按钮」模式。卡片上的「⋯」按钮 2026-09-27
+   *      去掉后，这条就是键盘唯一进得去菜单的路 —— 也是现在唯一不靠鼠标的那条）
    *    · 选择模式下 Esc = 退出。搜索框的 Esc 只退焦点，由输入框自己拦住（stopPropagation） */
   private onShelfKeydown(ev: KeyboardEvent) {
     const card = shelfCardOf(ev.target);
@@ -418,8 +431,8 @@ export class VinylShelfView extends ItemView {
       }
       return;
     }
-    // 「⋯」菜单的键盘入口。这枚钮退出了 Tab 序（整墙只有一个停靠点），
-    // 所以菜单必须另有入口 —— 否则「设置封面 / 在源站打开」对键盘用户又变成不可达。
+    // 卡片菜单的键盘入口。卡片上不再有「⋯」按钮（2026-09-27 去掉），右键又是纯鼠标手势 ——
+    // 没有这条，「评分 / 设置封面 / 在源站打开」对键盘用户就完全不可达。落点按卡片矩形算。
     if (card && (ev.key === 'ContextMenu' || (ev.key === 'F10' && ev.shiftKey))) {
       ev.preventDefault();
       ev.stopPropagation();
@@ -539,6 +552,48 @@ export class VinylShelfView extends ItemView {
       // 签名不变但浮层开着：候选计数可能已变（新增字段但尚未显示）→ 就地重绘，不关层
       else this.refreshPanelContent();
     }, 500);
+  }
+
+  // —— 悬停预热 ——
+  // 指针在一张卡上停够 PREFETCH_DWELL_MS，就把这张专辑的队列先搭起来（引擎那侧：在线曲目表
+  // 进服务缓存、第一首的地址进 urlCache，见 PlaybackEngine.prefetchAlbum）。点击起播要等的
+  // 两段网络实测 100~150ms + 110~350ms，预热之后只剩元素缓冲那一段。
+  // 为什么是「停够一会儿」而不是「碰到就预」：扫过一面墙会挨张报 pointerover，
+  // 每张都去敲平台接口等于把墙当成一次批量抓取 —— 停下不动才是「可能要点它」的信号。
+  private hoverCard: HTMLElement | null = null;
+  private hoverPrefetchTimer: number | null = null;
+
+  /** 指针进入某张卡（卡片内部换元素不算「换了一张」） */
+  private schedulePrefetch(ev: PointerEvent) {
+    const card = shelfCardOf(ev.target);
+    if (!card || card === this.hoverCard) return;
+    this.hoverCard = card;
+    this.clearPrefetchTimer();
+    // 选择模式里点卡片是勾选不是播放，预热的就不是用户接下来要做的事
+    if (this.batch.active) return;
+    const entry = this.entryOfCard(card);
+    if (!entry) return;
+    this.hoverPrefetchTimer = window.setTimeout(() => {
+      this.hoverPrefetchTimer = null;
+      void this.plugin.engine.prefetchAlbum(entry.album);
+    }, PREFETCH_DWELL_MS);
+  }
+
+  /** 指针离开这张卡（含移到别的卡）：没停够就不预热。移到另一张上时由 pointerover 重新计时 */
+  private cancelPrefetch(ev: PointerEvent) {
+    const card = shelfCardOf(ev.target);
+    if (!card) return;
+    const to = ev.relatedTarget as Node | null;
+    if (to && card.contains(to)) return; // 卡片内部移动（落在封面 / 属性行之间）不算离开
+    if (card === this.hoverCard) this.hoverCard = null;
+    this.clearPrefetchTimer();
+  }
+
+  private clearPrefetchTimer() {
+    if (this.hoverPrefetchTimer !== null) {
+      window.clearTimeout(this.hoverPrefetchTimer);
+      this.hoverPrefetchTimer = null;
+    }
   }
 
   // 整墙的内容签名：它是「要不要重画」的闸门。**与卡片那一层共用同一个签名函数** ——
@@ -1990,12 +2045,13 @@ export class VinylShelfView extends ItemView {
     // Enter / 空格等同点击（role=button 让读屏软件报「按钮」）。
     card.tabIndex = -1;
     card.setAttribute('role', 'button');
+    // 卡片的可读名称（读屏软件按它报）。**悬停气泡已关掉**：宿主会给任何带 aria-label 的元素
+    // 画一枚样式化提示，鼠标扫过墙面就一路弹专辑名 —— 用户 2026-09-27 要求去掉，
+    // 做法是 CSS 的 --no-tooltip（见 styles.css 的 .vinyl-shelf-card），不是摘掉这个属性：
+    // 读屏软件仍要听到专辑名。属性行自己的提示（属性名：值）不在此列，见下面的属性循环。
     card.setAttribute('aria-label', album.title);
     this.cardEls.set(album.path, card);
 
-    // 笔记路径的悬停提示只挂在封面上：挂整张卡片的话，鼠标移到专辑名或属性行也会弹出来，
-    // 正好挡住正在滚动的文字。属性行自己的提示（属性名：值）见下面的 buildCard 属性循环。
-    // 封面不再单独挂 title（原先报的是 vault 路径）：悬停交给卡片的 aria-label，只报专辑名
     const cover = card.createDiv({ cls: 'vinyl-shelf-cover' });
     // 唱片层（绝对定位）：位于封面之下（img/占位 z-index 1 在上，disc 藏于封面后方探出）
     cover.createDiv({ cls: 'vinyl-shelf-disc' });
@@ -2045,24 +2101,9 @@ export class VinylShelfView extends ItemView {
     const mark = card.createDiv({ cls: 'vinyl-shelf-card-check' });
     setIcon(mark, 'check');
 
-    // 卡片自己的菜单入口（「⋯」）：右键菜单此前是「设置封面」「在源站打开」的**唯一**入口，
-    // 键盘与触控板用户完全够不着。与右键共用 showMenu，落点按这枚按钮的矩形算。
-    // 常态视觉隐藏（见 styles.css），悬停或卡片获得焦点时显形（:focus-within，见那条规则）。
-    // **退出 Tab 序**（tabIndex=-1）：整墙现在只有一个停靠点（见 syncRoving），
-    // 菜单的键盘入口是卡片上的 Shift+F10 / 菜单键（标准「菜单按钮」模式，见 onShelfKeydown）。
-    // 它仍留在 DOM 与可访问性树里、鼠标点得到，只是不再逐张占一个 Tab。
-    const menuBtn = card.createEl('button', { cls: 'clickable-icon vinyl-shelf-card-menu' });
-    menuBtn.tabIndex = -1;
-    setIcon(menuBtn, 'more-horizontal');
-    // 切语言时专辑墙整块重绘（见 main 的 refreshLanguage），所以这里不必登记重放
-    menuBtn.setAttribute('aria-label', tf('menu.cardMenu', { name: album.title }));
-    menuBtn.addEventListener('click', (ev) => {
-      ev.stopPropagation(); // 别冒泡给卡片（那会直接换碟）
-      if (this.batch.active) return; // 与右键一致：选择模式里不弹菜单
-      const r = menuBtn.getBoundingClientRect();
-      this.showMenu(e, { x: r.left, y: r.bottom });
-    });
-
+    // 卡片上曾挂一枚「⋯」菜单入口（为键盘 / 触控板用户开一条不靠右键的路），2026-09-27 用户
+    // 要求去掉：每张封面角上都压着一枚按钮，是墙面上最吵的一处装饰。菜单本身没消失，
+    // 入口还剩两条、都不依赖它：右键（鼠标）与 Shift+F10 / 菜单键（键盘，见 onShelfKeydown）。
     card.addEventListener('click', (ev) => {
       if (this.batch.active) {
         this.pickForBatch(album.path, ev);
@@ -2134,7 +2175,7 @@ export class VinylShelfView extends ItemView {
     await this.plugin.handoff.handoff(album, cardEl);
   }
 
-  /** 卡片菜单。落点由调用方给（右键给鼠标位置、卡片上的「⋯」按钮给自己的矩形）——
+  /** 卡片菜单。落点由调用方给（右键给鼠标位置、键盘入口给卡片矩形）——
    *  菜单本身不区分是谁打开的，键盘与鼠标两条路径因此落到同一个位置。 */
   private showMenu(e: ShelfEntry, pos: { x: number; y: number }) {
     const { album } = e;

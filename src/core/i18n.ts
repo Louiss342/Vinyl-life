@@ -170,8 +170,6 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   // 评分弹窗：自由填数字（用户 2026-09-26 定稿），留空 = 清除
   'rating.placeholder': { zh: '填一个数字，留空则清除', en: 'Type a number; leave it empty to clear' },
   'rating.invalid': { zh: '请输入一个数字（例如 4 或 4.5）', en: 'Please type a number (for example 4 or 4.5)' },
-  // 卡片上的「⋯」菜单入口（右键菜单此前是设置封面 / 在源站打开的唯一入口）
-  'menu.cardMenu': { zh: '专辑操作：{name}', en: 'Album actions: {name}' },
   'menu.openNetease': { zh: '在网易云打开', en: 'Open in NetEase' },
   'menu.openQq': { zh: '在 QQ 音乐打开', en: 'Open in QQ Music' },
   'menu.openKugou': { zh: '在酷狗音乐打开', en: 'Open in Kugou Music' },

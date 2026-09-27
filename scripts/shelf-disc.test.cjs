@@ -2,7 +2,8 @@
 //   A 纯函数：queuedAlbumPaths —— 队列里排着哪些专辑；
 //   B 视图：updatePlaying 的进出队列动画 —— 排进列表时唱片飞离墙面，
 //     退出列表模式（队列收敛回当前专辑）时滑回封套，首帧只回写状态不播动画；
-//   C 样式真值：离墙态覆盖「播放中 / 已排入列表」两种卡片，悬停不把已离墙的唱片勾回来。
+//   C 样式真值：离墙态覆盖「播放中 / 已排入列表」两种卡片，悬停不把已离墙的唱片勾回来；
+//     播放中的卡片不再着色（2026-09-27：用户不要「选中」那套视觉，离墙与播放器已经报得够清楚）。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -169,7 +170,7 @@ function makeViewPair() {
 test('播放状态：首帧只回写状态，队列里的专辑唱片离墙但不播动画', () => {
   const { view, a, b } = makeViewPair();
   view.updatePlaying(snap([track('Albums/A.md'), track('Albums/B.md')], 'Albums/A.md'));
-  assert.equal(a.classList.contains('is-playing'), true, '在播的那张：描边高亮 + 唱片离墙');
+  assert.equal(a.classList.contains('is-playing'), true, '在播的那张：唱片离墙（2026-09-27 起不再着色）');
   assert.equal(b.classList.contains('is-queued'), true, '队列里排着的：唱片也离墙');
   assert.equal(b.classList.contains('is-playing'), false, '但不算「播放中」');
   assert.equal(a.disc.anims.length, 0, '首帧是一次渲染，不是一次动作：不播离墙动画');
@@ -295,6 +296,28 @@ test('样式：离墙态覆盖「播放中」与「已排入列表」，与交�
   assert.ok(rule, '播放中 / 已排入列表 共用同一条离墙规则');
   assert.match(rule[1], /opacity:\s*0/);
   assert.match(rule[1], /var\(--vinyl-disc-off/, '位移取方向变量（与 handoff 终点一致）');
+});
+
+test('样式：播放中的卡片不再着色（用户 2026-09-27）', () => {
+  const css = read('styles.css');
+  // 点卡片是「我要听它」，不是「选中它」：封面描边与标题换色这两条已删（曾经是 is-playing 的视觉）。
+  assert.doesNotMatch(
+    css,
+    /\.vinyl-shelf-card\.is-playing \.vinyl-shelf-cover\s*\{/,
+    '封面的高亮描边不该回来'
+  );
+  assert.doesNotMatch(
+    css,
+    /\.vinyl-shelf-card\.is-playing \.vinyl-shelf-card-title\s*\{/,
+    '专辑名的变色不该回来'
+  );
+  // 类名本身留着：离墙态（上一条）与悬停摆动让位都按它走，删的是颜色不是状态
+  assert.match(css, /\.vinyl-shelf-card\.is-playing \.vinyl-shelf-disc/, 'is-playing 仍然驱动离墙态');
+  assert.match(
+    css,
+    /@media \(forced-colors: active\)[\s\S]{0,2000}?\.vinyl-shelf-card\.is-playing/,
+    '强制色彩下仍补描边：那里唱片离墙＝彻底看不见，不描就再没有「这张在播」的指示'
+  );
 });
 
 test('样式：悬停摆动排除「已排入列表」的卡片（唱片已经不在墙上）', () => {
