@@ -176,6 +176,10 @@ export default class VinylLifePlugin extends Plugin {
   private archiveFailedThisSession = false;
   /** 本轮会话里自动备份失败过（同上：每小时检查一次，失败别反复弹） */
   private autoBackupFailedThisSession = false;
+  /** 本次启动读不出 data.json、已经把原文件另存了一份（见 readSettingsFile）。
+   *  这段会话里绝不能自动备份：内存中是默认值，那份「备份」是空的，而保留份数一裁
+   *  就会把上一份真正的好备份挤掉 —— 等于用一次坏读毁掉仅有的退路。 */
+  private dataQuarantined = false;
   /** 歌词缓存（trackKey → 行；null = 这首歌确实没有歌词）。一首几十 KB，见 rememberLyrics 的上限 */
   private lyricsCache = new Map<string, LyricLine[] | null>();
   /** 在途的取歌词：同一首并发问两次只打一次网（来回翻面很容易撞上） */
@@ -222,7 +226,10 @@ export default class VinylLifePlugin extends Plugin {
     this.registerEvent(this.app.vault.on('create', (f) => onVaultStructureChanged(f)));
     this.registerEvent(this.app.vault.on('delete', (f) => onVaultStructureChanged(f)));
     this.registerEvent(
-      this.app.vault.on('rename', (f, oldPath) => onVaultStructureChanged(f, oldPath))
+      this.app.vault.on('rename', (f, oldPath) => {
+        onVaultStructureChanged(f, oldPath);
+        this.migrateAlbumKeys(oldPath, f.path);
+      })
     );
 
     // 首次运行自动搭好目录结构（默认 Vinyl Life/{Vinyl Note, covers, audio, Stats}）：
@@ -343,14 +350,49 @@ export default class VinylLifePlugin extends Plugin {
   onunload() {
     if (this.statsSaveTimer) window.clearTimeout(this.statsSaveTimer);
     void this.saveSettings(); // 尽力落盘（防抖窗口内的统计）
-    this.server?.stop();
+    // dispose 而不是 stop：网关的自愈定时器也得撤掉，否则它会在卸载之后把网关拉起来（见其注释）
+    this.server?.dispose();
     this.engine?.dispose();
     this.local?.clearAllBlobs();
   }
 
-  async loadSettings() {
+  /** data.json 的读取：区分「还没有这个文件」（新装 / 首次运行）与「文件在、但读不出来」
+   *  （同步工具写到一半、断电、手改坏了）。这个区别很要紧 —— Obsidian 的 loadData 在
+   *  JSON 解析失败时返回 null，与「文件不存在」是同一个返回值；一律按全新安装处理的话，
+   *  用户唯一一份设置与统计会在启动后几秒内被默认值盖掉（顺带写出一份空备份，还可能按
+   *  保留份数把上一份好备份挤掉）。所以坏文件先原样另存一份，再退回默认值。 */
+  private async readSettingsFile(): Promise<Partial<VinylSettings>> {
+    const dir = this.manifest.dir || '';
+    const dataPath = dir ? `${dir}/data.json` : 'data.json';
+    let raw: string | null = null;
+    try {
+      const adapter = this.app.vault.adapter;
+      if (await adapter.exists(dataPath)) raw = await adapter.read(dataPath);
+    } catch {
+      raw = null; // 读不到（adapter 不给这能力 / 权限）：按「拿不到内容」处理
+    }
     const loaded: unknown = await this.loadData();
-    const data: Partial<VinylSettings> = loaded && typeof loaded === 'object' ? loaded : {};
+    if (loaded && typeof loaded === 'object' && !Array.isArray(loaded)) {
+      return loaded;
+    }
+    if (raw && raw.trim()) {
+      this.dataQuarantined = true;
+      const name = `data.json.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+      const target = normalizePath(dir ? `${dir}/${name}` : name);
+      try {
+        await this.app.vault.adapter.write(target, raw);
+        notice(tf('data.corruptQuarantined', { name }));
+      } catch (e) {
+        // 留档失败也绝不能静默：用户至少要知道原文件没了
+        console.error('[vinyl] 无法另存损坏的 data.json', e);
+        notice(tf('data.corruptUnreadable', { name: dataPath }));
+      }
+    }
+    return {};
+  }
+
+  async loadSettings() {
+    const data: Partial<VinylSettings> = await this.readSettingsFile();
     this.settings = { ...DEFAULT_SETTINGS, ...data };
     // 1.0.10 之前的调试命令开关已移除；清掉旧 data.json 残留，避免下次保存继续带回。
     delete (this.settings as VinylSettings & { debugCommands?: unknown }).debugCommands;
@@ -838,9 +880,18 @@ export default class VinylLifePlugin extends Plugin {
       ? ` · [${fmtTime(snap.currentTime)}](${this.resumeLink(target, snap.current.title, snap.currentTime)})`
       : '';
     const line = tf('note.listeningLine', { ts, title, position });
-    const content = await this.app.vault.read(file);
-    const newContent = content.trimEnd() + (content.trim() ? '\n\n' : '') + line + '\n';
-    await this.app.vault.modify(file, newContent);
+    // 走 process（读改写是原子的）：read + modify 两步之间，编辑器里敲的字（约 2 秒防抖）
+    // 或同一篇笔记的另一次追加都会被后一次写回整篇盖掉 —— 而「边听边写感想」正是主路径。
+    try {
+      await this.app.vault.process(file, (content) => {
+        return content.trimEnd() + (content.trim() ? '\n\n' : '') + line + '\n';
+      });
+    } catch (e) {
+      // 写不进去（文件被占用 / 磁盘满 / 权限）时必须说出来：这条记录是用户手动触发的，
+      // 静默失败会让他以为已经写上了
+      notice(tf('notice.appendFailed', { name: file.basename, msg: (e as Error).message }));
+      return;
+    }
     const leaf = this.app.workspace.getLeaf(false);
     await leaf.openFile(file);
     const editor = (leaf.view as { editor?: Editor }).editor;
@@ -1363,7 +1414,39 @@ export default class VinylLifePlugin extends Plugin {
     }
   }
 
+  /** 重命名专辑笔记（或整个文件夹）时，把以「笔记路径」为键的两张表一起搬过去。
+   *  不搬的话：统计页会把这张专辑显示成「已移除」并给出「恢复」按钮，点下去会在**旧路径**
+   *  重建一篇带 album 标签的笔记 —— 墙上凭空多一张重复专辑、播放次数从此拆成两笔；
+   *  而 sourceFailures 里那条以旧路径为键的记录既不显示也不清除，永久留在 data.json 里。
+   *  文件夹改名按前缀整段搬（里面的专辑笔记全都跟着走了）。 */
+  private migrateAlbumKeys(oldPath: string, newPath: string): void {
+    if (!oldPath || oldPath === newPath) return;
+    const under = (key: string) => key === oldPath || key.startsWith(oldPath + '/');
+    const move = <T>(table: Record<string, T>): number => {
+      let n = 0;
+      for (const key of Object.keys(table)) {
+        if (!under(key)) continue;
+        const target = newPath + key.slice(oldPath.length);
+        if (target === key || table[target] !== undefined) continue; // 目标已有记录：不覆盖
+        table[target] = table[key];
+        delete table[key];
+        n++;
+      }
+      return n;
+    };
+    // 两次 rename 事件（文件夹一次、其中的文件各一次）谁先到都成立：搬过的键第二次找不到了
+    const moved = move(this.settings.stats.albums) + move(this.settings.sourceFailures);
+    if (moved) void this.saveSettings();
+  }
+
   async clearPlaybackStats(): Promise<void> {
+    // 恢复备份之后到重启之前，saveSettings 是早退的（见它的第一行）：而这里会先把历史封面
+    // 缓存从盘上删掉、统计却写不回去 —— 重启后统计「复活」，引用的封面副本却已经没了
+    //（破图，且「恢复专辑」再也补不回封面）。所以写盘恢复之前，这一步一律不执行。
+    if (this.awaitingRestartAfterRestore) {
+      notice(t('data.writePausedAfterRestore'));
+      return;
+    }
     this.settings.stats = ensureStats(null);
     const cache = pluginAbsPath(this, '.stats-covers');
     try {
@@ -1405,6 +1488,10 @@ export default class VinylLifePlugin extends Plugin {
    *  失败只提示一次，且不更新「最近成功备份」——下次检查会再试。 */
   private async maybeAutoBackup(): Promise<void> {
     if (!this.settings.autoBackup || this.autoBackupFailedThisSession) return;
+    // 这次启动没读出 data.json（已另存一份，见 readSettingsFile）：内存里是默认值，
+    // 这份「自动备份」是空的，而保留份数一裁就会把上一份真正的好备份挤掉
+    //（pruneAutoBackups 按份数留）—— 等于用一次坏读毁掉仅有的退路。本次会话不备份。
+    if (this.dataQuarantined) return;
     const last = this.settings.lastBackupAt || 0;
     if (Date.now() - last < AUTO_BACKUP_INTERVAL_MS) return;
     try {

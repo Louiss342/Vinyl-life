@@ -852,6 +852,10 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     en: 'The note for this album is gone (deleted or renamed)',
   },
   'notice.appended': { zh: '已追加到「{name}」', en: 'Appended to "{name}"' },
+  'notice.appendFailed': {
+    zh: '写入「{name}」失败：{msg}',
+    en: 'Could not write to "{name}": {msg}',
+  },
   // 插入此刻正在听：行文案（插进当前笔记，语法随语言变 → 用 tf 占位符拼）
   'notice.nowPlayingLine': {
     zh: '此刻正在听《{album}》的《{track}》',
@@ -1091,6 +1095,15 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'backup.failed': { zh: '备份失败：{msg}', en: 'Backup failed: {msg}' },
   // —— 历史页「数据管理」：只有行名与值，不要小字说明 ——
   'data.title': { zh: '数据管理', en: 'Data management' },
+  // data.json 读不出来（不是「还没建」）：原文件已另存一份，本次以默认设置启动
+  'data.corruptQuarantined': {
+    zh: 'data.json 读不出来，原文件已另存为 {name}；本次以默认设置启动。',
+    en: 'Could not read data.json — the original was kept as {name}. Starting with default settings.',
+  },
+  'data.corruptUnreadable': {
+    zh: 'data.json 读不出来，而且没能另存备份（{name}）：请先备份这个文件再继续用。',
+    en: 'data.json could not be read, and a copy could not be saved ({name}). Back it up before continuing.',
+  },
   'data.backupPlace': { zh: '备份位置', en: 'Backup location' },
   'data.lastBackup': { zh: '最近成功备份', en: 'Last successful backup' },
   'data.neverBackedUp': { zh: '还没有备份过', en: 'No backup yet' },
@@ -1117,6 +1130,11 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'backup.restartBanner': {
     zh: '已恢复备份：重启 Obsidian 之前，新的播放记录与设置改动都不会被保存。',
     en: 'Backup restored: until you restart Obsidian, new play events and setting changes are not saved.',
+  },
+  // 恢复备份后到重启前：会删文件、或必须写盘才能成立的动作一律不执行（见 clearPlaybackStats）
+  'data.writePausedAfterRestore': {
+    zh: '已恢复备份：重启 Obsidian 之前不写入磁盘，这一步没有执行。',
+    en: 'Backup restored: nothing is written to disk until Obsidian restarts, so this was skipped.',
   },
   'health.title': { zh: '收藏健康检查', en: 'Library health' },
   'health.summary': { zh: '检查了 {albums} 张专辑：{errors} 项错误，{notes} 项提示（另有 {collectOnly} 张标为仅收藏）。', en: 'Checked {albums} albums: {errors} errors, {notes} notes ({collectOnly} marked collection-only).' },
