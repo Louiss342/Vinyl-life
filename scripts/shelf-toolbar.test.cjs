@@ -187,26 +187,45 @@ test('样式：窄窗一格一格让位（先省计数，再让搜索占用标�
 });
 
 test('样式：搜索原位展开（图标 ↔ 输入框），输入框宽度跟窗格走', () => {
+  // 用户口径 2026-09-27 第三轮：展开 / 收起是一段看得见的动画，不再是 display: none 跳一帧。
+  // 宽度从 0 长到 input 那一档（--vinyl-search-w，窄窗格那条容器查询改的也是它），
+  // 图标同时收成 0 宽；收起时内边距与边框一起归零，才不会剩一条空边框。
+  const box = rule(CSS, '.vinyl-shelf-search-box');
+  assert.match(box, /width:\s*0/, '常态：输入框宽 0（不是 display: none —— 那样没有中间帧）');
+  assert.match(box, /padding:\s*0;/, '常态：内边距归零（只收宽度会剩一条 14px 的空边框）');
+  assert.match(box, /border:\s*0 solid/, '常态：边框宽度归零');
+  assert.match(box, /transition:[\s\S]{0,200}?width 0\.2s/, '宽度走 0.2s 的过渡');
+  assert.match(box, /visibility:\s*hidden/, '收起后不进 Tab 序（延迟到动画走完再藏）');
   assert.match(
     CSS,
-    /\.vinyl-shelf-search\.is-open \.vinyl-shelf-search-toggle\s*\{[^}]*display:\s*none/,
-    '展开后图标让位'
+    /\.vinyl-shelf-search\.is-open \.vinyl-shelf-search-box\s*\{[^}]*width:\s*calc\(var\(--vinyl-search-w\) \+ var\(--vinyl-search-chrome\)\)/,
+    '展开才长到输入框那一档宽（右侧三枚按钮跟着平移，不再瞬间跳位）'
   );
   assert.match(
     CSS,
-    /\.vinyl-shelf-search-box\s*\{[^}]*display:\s*none/,
-    '常态：输入框收起'
+    /\.vinyl-shelf-search\.is-open \.vinyl-shelf-search-toggle\s*\{[^}]*width:\s*0/,
+    '展开后图标让位：收成 0 宽（与卡片变长同一条曲线）'
   );
   assert.match(
-    CSS,
-    /\.vinyl-shelf-search\.is-open \.vinyl-shelf-search-box\s*\{[^}]*display:\s*flex/,
-    '展开才显示输入框（向左长出来，右侧按钮原地不动）'
+    rule(CSS, '.vinyl-shelf-search-box input'),
+    /width:\s*var\(--vinyl-search-w\)/,
+    '输入框宽度读同一个变量（动画期间不跟着挤）'
   );
-  assert.match(rule(CSS, '.vinyl-shelf-search-box input'), /clamp\(/, '宽度按窗格宽度自适应');
+  assert.match(box, /--vinyl-search-w:\s*clamp\(/, '这一档宽度按窗格宽度自适应');
+  assert.match(
+    CSS,
+    /@container \(max-width: 380px\)[\s\S]{0,300}?\.vinyl-shelf-search-box\s*\{\s*--vinyl-search-w:\s*clamp\(/,
+    '窄窗格收一号：改的是同一个变量'
+  );
   assert.match(
     rule(CSS, '.vinyl-shelf-toolbar .vinyl-toolbar-icon,\n.vinyl-shelf-toolbar .vinyl-shelf-search-toggle'),
     /width:\s*28px/,
     '按钮收成 28px'
+  );
+  assert.match(
+    CSS,
+    /@media \(prefers-reduced-motion: reduce\)[\s\S]{0,400}?\.vinyl-shelf-search-box,[\s\S]{0,200}?transition:\s*none/,
+    '减少动效：宽度直接到位'
   );
 });
 
@@ -273,16 +292,40 @@ test('样式：浮层统一菜单表面、图标与悬停，不使用芯片与�
     /\.vinyl-panel-section \+ \.vinyl-panel-row\s*\{[^}]*border-top:\s*none/,
     '小节标题下面不画线（标题自己开一组）'
   );
-  // 来源 / 搜索来源是同一个控件（药丸轨道 + 浮起的选中段）：轨道一圈淡底、段高 28px（含内边距 34，
-  // 与弹窗按钮同档），选中段靠「primary 底 + 细阴影」浮起来 —— 不再用强调色淡底 + 直角连体格子。
+  // 来源 / 搜索来源是同一个控件：一排同款的单选段（用户口径 2026-09-27 第三轮）——
+  // 未选中 = primary 底 + 发丝边（与搜索框同一档表面），选中 = 强调色描边 + 强调色淡底；
+  // 灰底轨道撤掉（深色主题里黑乎乎，选中段又与浮层同底、看不出选中 —— 两处截图都对比过）。
   const seg = rule(CSS, '.vinyl-segment');
-  assert.match(seg, /height:\s*28px/, '分段控件的段 28px（轨道含内边距共 34，与弹窗按钮同档）');
+  assert.match(seg, /height:\s*30px/, '分段控件的段 30px（描边加进去与弹窗按钮同一档）');
   assert.match(seg, /flex:\s*1 1 auto/, '段宽按内容分配（长标签拿得多，不再等分到人人截断）');
-  assert.match(rule(CSS, '.vinyl-segments'), /background:\s*var\(--background-secondary\)/, '分段控件是一圈淡底轨道');
-  assert.match(CSS, /\.vinyl-segment\.is-on\s*\{[^}]*background:\s*var\(--background-primary\)/, '选中的那一段浮起来（primary 底）');
+  assert.doesNotMatch(
+    rule(CSS, '.vinyl-segments'),
+    /background:\s*var\(--background-secondary\)/,
+    '不再有灰底轨道（用户点名的「没选中黑乎乎」）'
+  );
   assert.match(
     CSS,
-    /\.modal\.vinyl-modal \.vinyl-segment\s*\{[^}]*font-size:\s*var\(--font-ui-smaller\)/,
+    /:is\(\.vinyl-panel, \.modal\.vinyl-modal\) \.vinyl-segment\s*\{[^}]*background:\s*var\(--background-primary\)/,
+    '未选中：primary 底（与搜索框同一种表面）'
+  );
+  assert.match(
+    CSS,
+    /:is\(\.vinyl-panel, \.modal\.vinyl-modal\) \.vinyl-segment\s*\{[^}]*border:\s*1px solid var\(--background-modifier-border\)/,
+    '未选中：一圈发丝边'
+  );
+  assert.match(
+    CSS,
+    /:is\(\.vinyl-panel, \.modal\.vinyl-modal\) \.vinyl-segment\.is-on\s*\{[^}]*border-color:\s*var\(--interactive-accent\)/,
+    '选中：强调色描边（用户点名的「没有选中提示」）'
+  );
+  assert.match(
+    CSS,
+    /:is\(\.vinyl-panel, \.modal\.vinyl-modal\) \.vinyl-segment\.is-on\s*\{[^}]*background:\s*color-mix\(in srgb, var\(--interactive-accent\)/,
+    '选中：强调色淡底（与工具栏「筛了来源」那枚 chip 同一套语义）'
+  );
+  assert.match(
+    CSS,
+    /:is\(\.vinyl-panel, \.modal\.vinyl-modal\) \.vinyl-segment\s*\{[^}]*font-size:\s*var\(--font-ui-smaller\)/,
     '段的字号自己钉住（弹层兜底会灌 12px，六段并排时「酷狗音乐」被切成省略号）'
   );
   assert.match(

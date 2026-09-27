@@ -43,18 +43,22 @@ const CIRCLES = [
   '.vinyl-pick-mark {', // 专辑架多选的小圆勾
 ];
 
-// 弹层里那一组：具体档位（弹窗 14 / 浮层与菜单 12 / 分段轨道 10 / 输入框与按钮 7）由「功能弹层」段
+// 弹层里那一组：具体档位（弹窗 14 / 浮层与菜单 12 / 输入框与按钮 7）由「功能弹层」段
 // 统一登记，这里只放行；页面内的自绘 UI 仍一律直角。'.vinyl-panel {' 用全等比对 ——
 // 换成 includes 会把页面内的 .vinyl-panel-icon 之类也一并放行。
 const PANEL_ROUNDED = [
   '.vinyl-panel {',
+  '.vinyl-panel :is(button', // 浮层里宿主画的控件（关闭键 / 选择文件…）：与弹窗同一档 7px
   '.modal.vinyl-modal',
   '.menu.vinyl-menu',
   'vinyl-queue-panel',
   'vinyl-import-dialog',
   'vinyl-import-workspace',
   'vinyl-import-search-row', // 弹层里的搜索行（输入框与搜索键）
-  'vinyl-segment', // 来源 / 搜索来源的药丸轨道
+  'vinyl-segment', // 来源 / 搜索来源的单选段（2026-09-27 第三轮：一排描边药丸，不再是灰底轨道）
+  'vinyl-import-result', // 搜索结果行：只出现在浮层 / 弹窗里，按弹层里的控件那一档
+  'vinyl-panel-value-btn', // 「封面下的信息」那一小枚按键：悬停浮出的轮廓与浮层里的控件同一档
+  'vinyl-props-row', // 陈列第二层（封面下的信息）的行：只在浮层里用，悬停高亮按控件那一档收圆
   'vinyl-shelf-toolbar', // 专辑墙工具栏：浮在墙上的操作面，按浮层那一档算（用户口径 2026-09-27 第二轮）
   'vinyl-shelf-search-box', // 工具栏里展开的搜索框：与弹层输入框同款
   'vinyl-toolbar-textbtn', // 选择模式的文本钮：与弹层按钮同款
@@ -115,9 +119,10 @@ test('样式：用户点名的几处是直角（专辑架 / 专辑墙封面 / �
   // 专辑墙浮层（陈列 / 添加）与工具栏：同一档浮层表面
   assert.equal(valueOf('.vinyl-panel {'), '12px', '陈列 / 添加浮层：统一圆角');
   assert.equal(valueOf('.vinyl-shelf-toolbar {'), '12px', '工具栏：与浮层同一档（用户口径 2026-09-27 第二轮）');
-  // 分段控件（来源 / 搜索来源）：弹层里的药丸轨道 —— 轨道比段面大一档（10 − 3px 内边距 = 7，同心）
-  assert.equal(valueOf('.vinyl-segments {'), '10px', '分段控件的轨道：与弹层同一档圆角');
+  // 分段控件（来源 / 搜索来源）：一排描边的单选段（2026-09-27 第三轮把灰底轨道撤了，
+  // 就没有「轨道比段面大一档」这回事了 —— 只剩段面这一档）
   assert.equal(valueOf('.vinyl-segment {'), '7px', '分段控件的段面：与输入框 / 按钮同一档圆角');
+  assert.equal(valueOf('.vinyl-import-result {'), '7px', '搜索结果行：与弹层里的控件同一档圆角');
   assert.equal(valueOf('.vinyl-toolbar-textbtn {'), '7px', '选择模式的文本按钮：与弹层按钮同一档圆角');
 });
 
@@ -130,6 +135,52 @@ test('样式：宿主控件与弹层的兜底段在位（弹窗壳 / 菜单 / �
   assert.ok(hostAt !== -1, '宿主控件兜底段缺少设置页按钮那一条');
   const hostRule = CSS.slice(hostAt, CSS.indexOf('}', hostAt));
   assert.match(hostRule, /border-radius:\s*0/, '设置页宿主按钮：直角');
+});
+
+test('样式：弹层里的按键是「完整的按键」（描边 + 圆角），不再有无边框的菜单行', () => {
+  // 用户口径 2026-09-27 第三轮：健康检查里那几个动作原来被画成「撑满整行的无边框文本」，
+  // 看着不像按键（「按键显示都不完整」），同一个窗里还和上面那排描边按键并存，像两种东西
+  // （「两个按钮形状还不统一」）。现在全族按键一种长相：描边 + 7px 圆角 + 34px 高。
+  assert.doesNotMatch(
+    CSS,
+    /\.modal\.vinyl-modal \.vinyl-health-row button\s*\{[^}]*border:\s*none/,
+    '健康检查行的按键不再被抹掉描边'
+  );
+  assert.doesNotMatch(
+    CSS,
+    /\.modal\.vinyl-modal \.vinyl-health-row button\s*\{[^}]*background:\s*transparent/,
+    '也不再把底色抹透（mod-cta 的强调色底要留得住）'
+  );
+  assert.doesNotMatch(
+    CSS,
+    /\.modal\.vinyl-modal\.vinyl-dialog-actions \.modal-content button\s*\{[^}]*border:\s*none/,
+    '单列选择窗（换源 / 扫码登录 / 设置封面）的按键同样是完整按键'
+  );
+  // 单列选择窗只把排布压成一列（上下排开），不改按键长相
+  const single = /\.modal\.vinyl-modal\.vinyl-dialog-actions \.modal-content > button\s*\{([^}]*)\}/.exec(CSS)?.[1] || '';
+  assert.match(single, /width:\s*100%/, '一列排开：按键占满整行宽');
+  assert.doesNotMatch(single, /border|background|box-shadow/, '只改排布，不碰按键的表面');
+  // 健康检查行的动作排在说明下面一行里：描边按键 + 换行（不再是撑满整行的条）
+  assert.match(
+    CSS,
+    /\.vinyl-health-row button\s*\{\s*margin:\s*0 8px 6px 0/,
+    '行里的按键按内容宽排一行，放不下自己换行'
+  );
+});
+
+test('样式：分段控件在两处（浮层 / 弹窗）长得一样', () => {
+  // 宿主与弹层兜底那条 .modal.vinyl-modal button:where(…) 是 0,2,1：段的外观不挂两级祖先就压不过它，
+  // 同一段在弹窗里会是 text-normal、在浮层里是 text-muted（用户说的「两处不统一」正是这一类）。
+  const block = /:is\(\.vinyl-panel, \.modal\.vinyl-modal\) \.vinyl-segment\s*\{([^}]*)\}/.exec(CSS)?.[1] || '';
+  assert.ok(block, '段的外观要挂在「浮层 / 弹窗」两级祖先上（两处共用一份）');
+  for (const prop of ['border:', 'background:', 'font-size:']) {
+    assert.ok(block.includes(prop), `段的 ${prop} 归这一条（两处一致）`);
+  }
+  assert.match(
+    CSS,
+    /:is\(\.vinyl-panel, \.modal\.vinyl-modal\) \.vinyl-segment\.is-on\s*\{[^}]*font-weight:\s*var\(--font-medium\)/,
+    '选中那一段加粗（两处一致）'
+  );
 });
 
 test('接线：弹窗挂 vinyl-modal、菜单挂 vinyl-menu（只影响插件自己的弹层）', () => {

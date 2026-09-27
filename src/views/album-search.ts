@@ -453,7 +453,11 @@ export class AlbumSearchPane {
     text.createEl('h3', { text: info.title });
     text.createDiv({ cls: 'vinyl-muted', text: info.artists.join(' / ') });
     text.createDiv({ cls: 'vinyl-muted', text: [info.releaseDate, info.trackCount ? tf('import.trackCount', { n: info.trackCount }) : ''].filter(Boolean).join(' · ') });
-    text.createSpan({ cls: 'vinyl-import-preview-source', text: scopeName(info.source) });
+    // 来源徽章走结果行里那一套配色（同一张专辑在两处的「来源」长得一样），只多一个上边距挂位
+    text.createSpan({
+      cls: `vinyl-badge ${sourceBadgeClass(info.source)} vinyl-import-preview-source`,
+      text: scopeName(info.source),
+    });
     if (candidate.nameInLibrary) el.createDiv({ cls: 'vinyl-muted', text: t('import.sameNameHint') });
     const tracks = el.createDiv({ cls: 'vinyl-import-preview-tracks' });
     tracks.createEl('h4', { text: t('import.trackPreview') });
