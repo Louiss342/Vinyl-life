@@ -1,6 +1,7 @@
 // 专辑删除回归：esbuild 编译真实 src/delete.ts（连带 album-index 的 frontmatter 解析）后在 vm 执行
 // （stub obsidian + 假 vault）。覆盖：可删资产盘点（音频文件夹 / 零散文件 / 封面）、
-// 其他专辑引用保护（含子目录嵌套）、外链路径不删、勾选项关闭时不动作、文件夹内文件不重复删除；
+// 其他专辑引用保护（含子目录嵌套，以及「本专辑文件落在别人音频文件夹里」这两种方向）、
+// 外链路径不删、勾选项关闭时不动作、文件夹内文件不重复删除；
 // 以及批量删除（专辑墙工具栏入口）：同批专辑互相视为不存在，共用资源可删、批外引用仍受保护。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -264,6 +265,57 @@ test('保护：其他专辑音频位于本专辑文件夹的子目录（嵌套�
 
   assert.deepEqual(Array.from(t.audioFolders), [], '子目录被他人占用时整棵目录不删');
   assert.deepEqual(Array.from(t.sharedAudioPaths), [AUDIO_DIR]);
+});
+
+test('保护：本专辑的音频落在别人的音频文件夹里 → 不删（只比路径本身会误删）', () => {
+  const h = setup();
+  // B 独占 audio/B，而 A 的 audio 列表引用了 B 目录里的一个文件（同一文件被两张专辑引用）
+  h.addAudioDir('06-专辑墙/audio/B', ['shared.mp3']);
+  h.addFile('06-专辑墙/专辑/B.md', { tags: ['album'], audioFolder: '[[06-专辑墙/audio/B]]' });
+  const note = h.addFile('06-专辑墙/专辑/A.md', {
+    tags: ['album'],
+    audio: ['06-专辑墙/audio/B/shared.mp3'],
+  });
+  const t = h.mod.collectAlbumDeleteTargets(h.app, h.albumOf(note));
+
+  assert.deepEqual(
+    Array.from(t.audioFiles),
+    [],
+    '文件在别人的音频文件夹里：那是别人的资产，删了就轮到 B 的队列断一条'
+  );
+  assert.deepEqual(Array.from(t.sharedAudioPaths), ['06-专辑墙/audio/B/shared.mp3'], '列进共享提示');
+});
+
+test('保护：封面落在别人的音频文件夹里 → 不删', () => {
+  const h = setup();
+  const cover = h.addFile('06-专辑墙/audio/B/cover.jpg', {});
+  h.addFile('06-专辑墙/专辑/B.md', { tags: ['album'], audioFolder: '[[06-专辑墙/audio/B]]' });
+  const note = h.addFile('06-专辑墙/专辑/A.md', {
+    tags: ['album'],
+    cover: `[[${cover.path}]]`,
+  });
+  const t = h.mod.collectAlbumDeleteTargets(h.app, h.albumOf(note));
+
+  assert.equal(t.coverFile?.path, cover.path);
+  assert.equal(t.coverShared, true, '同一条口径：封面在别人的文件夹里也算共享');
+});
+
+test('保护：批量删除时同一条共享口径成立（本批之外的文件夹仍护住其中的文件）', () => {
+  const h = setup();
+  h.addAudioDir('06-专辑墙/audio/B', ['shared.mp3']);
+  const noteA = h.addFile('06-专辑墙/专辑/A.md', {
+    tags: ['album'],
+    audio: ['06-专辑墙/audio/B/shared.mp3'],
+  });
+  const noteC = h.addFile('06-专辑墙/专辑/C.md', {
+    tags: ['album'],
+    audio: ['06-专辑墙/audio/B/shared.mp3'],
+  });
+  h.addFile('06-专辑墙/专辑/B.md', { tags: ['album'], audioFolder: '[[06-专辑墙/audio/B]]' });
+  const batch = h.mod.collectAlbumBatchDeleteTargets(h.app, [h.albumOf(noteA), h.albumOf(noteC)]);
+
+  assert.deepEqual(Array.from(batch.audioFiles), [], 'B 没选中：它目录里的文件不能删');
+  assert.deepEqual(Array.from(batch.sharedAudioPaths), ['06-专辑墙/audio/B/shared.mp3']);
 });
 
 test('执行：勾选项全开 → 删文件夹 + 零散文件 + 封面，各一次', async () => {

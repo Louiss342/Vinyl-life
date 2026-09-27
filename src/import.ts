@@ -391,14 +391,17 @@ export async function importKugouAlbum(ctx: ImportContext, input: string): Promi
 
 // ============ B. 本地音频导入（两模式） ============
 
+/** 库外引用（盘符路径 / 外链）：复制模式不往那儿写，也拿它判断「引用该不该改写」 */
+function isExternalRef(ref: string): boolean {
+  return /^[a-zA-Z]:[\\/]/.test(ref) || ref.startsWith('/') || ref.startsWith('\\');
+}
+
 /** 复制模式的落点目录：优先用笔记里已有的 audioFolder（笔记改名之后它仍然指向真目录），
  *  没有才按「设置里的音频目录 / 笔记标题」新建。库外绝对路径不往那儿复制 ——
  *  那是「引用原文件」模式的地盘。 */
 function copyTargetDir(ctx: ImportContext, album: AlbumInfo): string {
   const ref = stripWikilink(String(album.audioFolderRef || '').trim());
-  const external =
-    /^[a-zA-Z]:[\\/]/.test(ref) || ref.startsWith('/') || ref.startsWith('\\');
-  if (ref && !external) return normalizePath(ref);
+  if (ref && !isExternalRef(ref)) return normalizePath(ref);
   return normalizePath(`${ctx.settings().audioFolder}/${sanitizeFileName(album.title)}`);
 }
 
@@ -480,7 +483,11 @@ export async function importLocalAudio(
     album.file,
     (fm: Record<string, unknown>) => {
       if (mode === 'copy') {
-        if (!fm.audioFolder) fm.audioFolder = `[[${copyDir}]]`;
+        // 库外引用（「重新定位音频」写进去的就是绝对路径）必须改写成复制落点：文件已经进库了，
+        // 笔记再指着库外就是零首入队 —— 复制进来的那些成了没人引用的孤儿，再导一次还全落进
+        // 「已存在，跳过」。库内、且已经是这次落点的引用不动；库内的别的目录也不夺（用户自己写的）。
+        const current = stripWikilink(scalarText(fm.audioFolder)).trim();
+        if (!current || isExternalRef(current)) fm.audioFolder = `[[${copyDir}]]`;
       } else {
         const raw = fm.audio;
         // 旧数据可能是单值也可能是数组；非标量项（对象 / 数组）按无法使用丢弃
@@ -560,10 +567,34 @@ function valuePlaceholders(vars: AlbumNoteFields): Record<string, string> {
   };
 }
 
+// frontmatter 区段的结束下标（开头 `---` 到下一个 `---` 之后）；没写 frontmatter 的模板返回 0
+function frontmatterEndIndex(text: string): number {
+  const m = /^---\r?\n[\s\S]*?\r?\n---/.exec(text);
+  return m ? m.index + m[0].length : 0;
+}
+
+/** frontmatter 里一处值型占位符的落点。**只转义「整个值位置」**：
+ *   - `键: {{x}}`：整值是它，按 YAML 双引号标量转义（yamlString 的口径，与 fillAlbumFrontmatter 一致）；
+ *   - `键: "{{x}}"`：模板自己写了引号，只转义引号内部、不再补引号（补了就成 `""Weird Al" Yankovic""`）；
+ *   - 嵌在别的文本里的（`note: {{title}} · {{artist}}`）：原样替换 —— 给这种位置套引号会让整行非法
+ *     （YAML 的引号标量后面不能再跟内容），比它要修的毛病更糟；正文同理不动。
+ *  空值照旧替换成空串：yamlString 在别处也只用非空值，空值不必从「空」变成「空串」。 */
+function frontmatterValueAt(text: string, offset: number, len: number, value: string): string {
+  if (!value) return value;
+  const lineStart = text.lastIndexOf('\n', offset - 1) + 1;
+  const eol = text.indexOf('\n', offset + len);
+  const head = text.slice(lineStart, offset);
+  const rest = text.slice(offset + len, eol < 0 ? text.length : eol).trim();
+  if (!/^[A-Za-z_][\w-]*:[ \t]*"?$/.test(head)) return value;
+  if (head.endsWith('"')) return rest.startsWith('"') ? yamlString(value).slice(1, -1) : value;
+  return rest === '' || rest.startsWith('#') ? yamlString(value) : value;
+}
+
 /**
  * 占位符替换。两类：
  *   - **值型**（`{{title}}` `{{artist}}` `{{year}}` `{{genre}}` `{{rating}}` `{{date}}` `{{time}}` 与三个平台 id）：
- *     替换成值本身，放正文、放引号里都行；
+ *     替换成值本身，放正文、放引号里都行；落在 frontmatter 的整值位置上时按 YAML 转义
+ *     （艺人名里一个 `"` 就能让整段 frontmatter 解析失败，那张专辑会从专辑墙上消失）；
  *   - **行型**（`{{audioFolder}}` `{{cover}}`）：替换成整整一行 frontmatter，拿不到值的整行消失
  *     （空行留着会在属性面板里多出一个空字段）。
  * 未识别的占位符原样保留。frontmatter 里剩下的空行也一并清掉。
@@ -571,9 +602,13 @@ function valuePlaceholders(vars: AlbumNoteFields): Record<string, string> {
 export function renderAlbumTemplate(tpl: string, vars: AlbumNoteFields): string {
   const map = valuePlaceholders(vars);
   const lines = { audioFolder: vars.audioFolder ? `audioFolder: "[[${vars.audioFolder}]]"` : '', cover: vars.cover ? `cover: ${vars.cover}` : '' };
-  const out = String(tpl).replace(/\{\{\s*(\w+)\s*\}\}/g, (m, k: string) =>
-    k in map ? map[k] : k in lines ? lines[k as keyof typeof lines] : m
-  );
+  const text = String(tpl);
+  const fmEnd = frontmatterEndIndex(text);
+  const out = text.replace(/\{\{\s*(\w+)\s*\}\}/g, (m: string, k: string, offset: number) => {
+    if (!(k in map)) return k in lines ? lines[k as keyof typeof lines] : m;
+    const value = map[k];
+    return offset < fmEnd ? frontmatterValueAt(text, offset, m.length, value) : value;
+  });
   return out.replace(/^---\r?\n([\s\S]*?)\r?\n---/, (_m, body: string) => {
     const kept = body.split(/\r?\n/).filter((l) => l.trim() !== '');
     return `---\n${kept.join('\n')}\n---`;

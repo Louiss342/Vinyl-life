@@ -75,6 +75,46 @@ test('占位符：值型替换成值本身，行型替换成整行 frontmatter',
   assert.match(out, /^# 叶惠美$/m);
 });
 
+// 值里带引号 / 反斜杠的艺人名（`"Weird Al" Yankovic`）：原样替换进 frontmatter 会让整段 YAML 解析失败
+const WEIRD = '"Weird Al" Yankovic\\Back';
+const fmLine = (out, key) => new RegExp(`^${key}: (.*)$`, 'm').exec(out)?.[1] ?? '';
+
+test('frontmatter 整值位置的值型占位符按 YAML 转义：引号形态与裸值形态写成同一行', () => {
+  const vars = { ...fields, artist: WEIRD };
+  const quoted = renderAlbumTemplate(
+    ['---', 'tags: [album]', 'artist: "{{artist}}"', '---', ''].join('\n'),
+    vars
+  );
+  const bare = renderAlbumTemplate(
+    ['---', 'tags: [album]', 'artist: {{artist}}', '---', ''].join('\n'),
+    vars
+  );
+  assert.equal(fmLine(quoted, 'artist'), fmLine(bare, 'artist'), '两种写法归一：都是合法的 YAML 双引号标量');
+  assert.doesNotMatch(quoted, /artist: """/, '模板自带的引号外不再补一层（否则是 ""名字""）');
+  // YAML 双引号标量是 JSON 转义的超集 → 直接 JSON.parse 能还原原值，说明转义真的对
+  assert.equal(JSON.parse(fmLine(quoted, 'artist')), WEIRD);
+});
+
+test('转义只认 frontmatter 区段与整值位置：正文与嵌在文本里的占位符保持原样', () => {
+  const vars = { ...fields, artist: WEIRD };
+  const out = renderAlbumTemplate(
+    ['---', 'tags: [album]', 'note: {{title}} · {{artist}}', '---', '', '{{title}} —— {{artist}}'].join('\n'),
+    vars
+  );
+  assert.match(out, /^note: 叶惠美 · "Weird Al" Yankovic\\Back$/m, '嵌在文本里套引号会让整行非法：原样替换');
+  assert.match(out, /\n叶惠美 —— "Weird Al" Yankovic\\Back$/, '正文里不转义');
+});
+
+test('端到端：引号形态的模板 + 含引号的艺人名 → 笔记仍带 tags: [album]，值可还原', () => {
+  const vars = { ...fields, artist: WEIRD };
+  const out = fillAlbumFrontmatter(
+    renderAlbumTemplate(['---', 'tags: [album]', 'artist: "{{artist}}"', '---', '', '正文'].join('\n'), vars),
+    vars
+  );
+  assert.match(out, /^tags: \[album\]$/m, 'frontmatter 解析得动，专辑才认得出来');
+  assert.equal(JSON.parse(fmLine(out, 'artist')), WEIRD, '补全步骤不会把已转义的值再动一遍');
+});
+
 test('拿不到值的行型占位符整行消失；未识别的占位符原样保留', () => {
   const out = renderAlbumTemplate(
     ['---', 'tags: [album]', '{{audioFolder}}', '{{cover}}', 'artist: {{artist}}', '---', '{{titel}}'].join('\n'),

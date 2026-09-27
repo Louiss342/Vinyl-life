@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
 const esbuild = require('esbuild');
@@ -69,6 +71,80 @@ test('备份恢复：先保留当前数据，错误格式不覆盖；重启前�
   plugin.settings.stats.totalPlays = 99;
   await plugin.saveSettings();
   assert.equal(saved.stats.totalPlays, 7);
+});
+
+// ============ 历史封面副本的白名单（换设备恢复的最后一段路）============
+// 副本名用的是封面文件的原扩展名，而封面本来就收 avif / bmp；白名单窄一档的后果是：
+// 备份里静默跳过、恢复也写不回 —— 那张已删除专辑的封面在换设备后永久丢失。
+
+test('备份 / 恢复：历史封面副本的白名单与 IMAGE_EXTENSIONS 同源（avif / bmp 不再静默跳过）', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vinyl-backup-'));
+  const cache = path.join(tmp, 'plugins/vinyl-life/.stats-covers');
+  fs.mkdirSync(cache, { recursive: true });
+  fs.writeFileSync(path.join(cache, 'a1.avif'), Buffer.from('avif-bytes'));
+  fs.writeFileSync(path.join(cache, 'b2.bmp'), Buffer.from('bmp-bytes'));
+  fs.writeFileSync(path.join(cache, 'c3.jpg'), Buffer.from('jpg-bytes'));
+  fs.writeFileSync(path.join(cache, 'd4.txt'), Buffer.from('not-an-image'));
+
+  const created = [];
+  const app = {
+    vault: {
+      adapter: { getBasePath: () => tmp },
+      getAbstractFileByPath: () => null,
+      createFolder: async () => {},
+      create: async (name, content) => { created.push({ name, content }); return { path: name }; },
+    },
+    workspace: { getLeavesOfType: () => [] },
+  };
+  const plugin = new mod.exports.default(app, { id: 'vinyl-life', dir: 'plugins/vinyl-life' });
+  let saved = {
+    stats: {
+      totalPlays: 2,
+      tracks: {},
+      events: [],
+      albums: Object.fromEntries(
+        [['A.avif', '.stats-covers/a1.avif'], ['B.bmp', '.stats-covers/b2.bmp'],
+         ['C.jpg', '.stats-covers/c3.jpg'], ['D.txt', '.stats-covers/d4.txt']].map(([name, rel]) => [
+          `${name}.md`,
+          { plays: 1, snapshot: { title: name, cachedCover: rel } },
+        ])
+      ),
+    },
+  };
+  plugin.loadData = async () => saved;
+  plugin.saveData = async (data) => { saved = data; };
+  await plugin.loadSettings();
+
+  await plugin.exportDataBackup();
+  const file = created.find((f) => f.name.includes('Vinyl Life backup'));
+  assert.ok(file, '写了一份备份');
+  const assets = JSON.parse(file.content).coverAssets;
+  assert.equal(
+    Buffer.from(assets['.stats-covers/a1.avif'], 'base64').toString(),
+    'avif-bytes',
+    'avif 封面副本要进备份（封面缓存名就用原扩展名）'
+  );
+  assert.equal(Buffer.from(assets['.stats-covers/b2.bmp'], 'base64').toString(), 'bmp-bytes', 'bmp 同理');
+  assert.equal(Buffer.from(assets['.stats-covers/c3.jpg'], 'base64').toString(), 'jpg-bytes', '原有扩展名照旧');
+  assert.equal(assets['.stats-covers/d4.txt'], undefined, '非图片仍不进备份（白名单不是无脑放开）');
+
+  // 换设备：缓存目录是空的，恢复时要把副本重新落盘
+  fs.rmSync(cache, { recursive: true, force: true });
+  await plugin.restoreDataBackup(
+    JSON.stringify({
+      format: 'vinyl-life-backup',
+      version: 1,
+      settings: { ...saved, stats: { totalPlays: 3, albums: {}, tracks: {}, events: [] } },
+      coverAssets: assets,
+    })
+  );
+  assert.equal(
+    fs.readFileSync(path.join(cache, 'a1.avif')).toString(),
+    'avif-bytes',
+    '恢复要把 avif 副本写回去，否则「恢复专辑」再也补不回封面'
+  );
+  assert.equal(fs.readFileSync(path.join(cache, 'b2.bmp')).toString(), 'bmp-bytes');
+  assert.equal(fs.existsSync(path.join(cache, 'd4.txt')), false, '白名单外的条目照旧不落盘');
 });
 
 // ============ 裁剪前归档（评审意见第 2 条）============

@@ -1,7 +1,8 @@
 // 本地音源读内嵌标签的**接线**（core/audio-tags 的解析在上一个文件里验，这里验它真的被用上）：
 //   ① 库外音频：曲名取标签而不是文件名；标签里有艺人就用它（合辑每首艺人不同），
 //      专辑名仍以笔记为准（笔记是真源）；
-//   ② 曲目顺序：有音轨号按音轨号 —— '01 …' / '02 …' 这种文件名排序在 10 之后会乱；
+//   ② 曲目顺序：先按碟目录聚拢（双碟的 TRCK 都从 1 开始，只按音轨号会交错），
+//      同一目录内按音轨号 —— '01 …' / '02 …' 这种文件名排序在 10 之后会乱；
 //   ③ 读不到标签（没有标签 / 读不动）时安静回退文件名，不抛也不空标题。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -172,6 +173,29 @@ test('曲目顺序：有音轨号的按音轨号排（文件名排序在 10 之�
   );
 });
 
+test('双碟专辑：先按碟目录聚拢再按音轨号（两碟的 TRCK 都从 1 开始，不会交错）', async () => {
+  const cd1 = `${DIR}/CD1`;
+  const cd2 = `${DIR}/CD2`;
+  const files = new Map([
+    [`${cd1}/01.mp3`, taggedMp3({ title: '碟一第一首', track: 1 })],
+    [`${cd1}/02.mp3`, taggedMp3({ title: '碟一第二首', track: 2 })],
+    [`${cd2}/01.mp3`, taggedMp3({ title: '碟二第一首', track: 1 })],
+    [`${cd2}/02.mp3`, taggedMp3({ title: '碟二第二首', track: 2 })],
+  ]);
+  const dirs = new Map([
+    [DIR, ['CD1', 'CD2']],
+    [cd1, ['01.mp3', '02.mp3']],
+    [cd2, ['01.mp3', '02.mp3']],
+  ]);
+  const { src } = makeSource(files, dirs);
+  const tracks = await src.buildTracks(albumRef());
+  assert.deepEqual(
+    plain(tracks.map((t) => t.title)),
+    ['碟一第一首', '碟一第二首', '碟二第一首', '碟二第二首'],
+    '只按音轨号会排成 碟一第一首、碟二第一首、碟一第二首、碟二第二首'
+  );
+});
+
 test('标签读不动（文件打不开）：安静回退文件名，不抛也不空标题', async () => {
   const files = new Map(); // 目录里列得出来，但读不到内容
   const dirs = new Map([[DIR, ['ghost.mp3']]]);
@@ -191,4 +215,23 @@ test('比较器：无音轨号的沉到最后，其余按标题（中文本地�
   assert.ok(cmp(a, c) < 0, '有音轨号的排在没音轨号的前面');
   assert.equal(cmp({ title: '一样' }, { title: '一样' }), 0);
   void src;
+});
+
+test('比较器：不同碟目录之间先比目录（含 CD2 在 CD10 之前），目录内才按音轨号', () => {
+  const { mod } = makeSource(new Map(), new Map());
+  const cmp = mod.exports.compareByTrack;
+  const t = (dir, name, track, title) => ({
+    source: 'local-external',
+    path: `${dir}/${name}`,
+    title,
+    track,
+  });
+  const cd1a = t('D:/A/CD1', '01.mp3', 1, '甲');
+  const cd2a = t('D:/A/CD2', '01.mp3', 1, '乙');
+  const cd2b = t('D:/A/CD2', '02.mp3', 2, '丙');
+  const cd10 = t('D:/A/CD10', '01.mp3', 1, '丁');
+  assert.ok(cmp(cd1a, cd2a) < 0, '同一音轨号：CD1 在 CD2 之前');
+  assert.ok(cmp(cd2a, cd2b) < 0, '同一碟内仍按音轨号');
+  assert.ok(cmp(cd2a, cd10) < 0, '目录名按数字序：CD2 在 CD10 之前');
+  assert.ok(cmp(cd1a, cd10) < 0);
 });

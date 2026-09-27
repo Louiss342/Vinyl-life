@@ -38,9 +38,26 @@ export interface RangeStreamHost {
   allowStreamPaths(paths: string[]): Promise<boolean>;
 }
 
-/** 本地曲目顺序：有音轨号的按音轨号（'01 - x.mp3' 这种文件名排序在 10 之后会乱），
- *  其余的按标题（中文按拼音序）—— 两者混排时无音轨号的沉到最后。 */
+/** 本地曲目所在的目录（= 它属于哪一碟）：Import 保留 CD1/CD2 两层子目录，同一目录就是同一碟。
+ *  Track 上没有碟号字段（内嵌标签只读曲名 / 艺人 / 专辑 / 音轨号），只能按路径的目录段退化 ——
+ *  一张专辑的文件通常都在同一个目录，这一级无差别，结果与只按音轨号一致。 */
+function dirOfTrack(t: Track): string {
+  const p = t.source === 'local-vault' ? t.file.path : t.source === 'local-external' ? t.path : '';
+  const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+  return i > 0 ? p.slice(0, i) : '';
+}
+
+/** 本地曲目顺序：先按目录（双碟专辑每碟的 TRCK 都从 1 开始，只按音轨号会交错成 CD1-1、CD2-1、
+ *  CD1-2…），同一目录内按音轨号（'01 - x.mp3' 这种文件名排序在 10 之后会乱），
+ *  再按标题（中文按拼音序）—— 两者混排时无音轨号的沉到最后。 */
 export function compareByTrack(a: Track, b: Track): number {
+  const ad = dirOfTrack(a);
+  const bd = dirOfTrack(b);
+  if (ad !== bd) {
+    // 数字序：CD2 排在 CD10 之前（纯字典序会反过来）
+    const byDir = ad.localeCompare(bd, 'zh-CN', { numeric: true });
+    if (byDir) return byDir;
+  }
   const at = a.track ?? Number.MAX_SAFE_INTEGER;
   const bt = b.track ?? Number.MAX_SAFE_INTEGER;
   if (at !== bt) return at - bt;

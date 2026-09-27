@@ -60,6 +60,7 @@ import {
   libraryRootHint,
   fmtTime,
   vaultChangeMatters,
+  IMAGE_EXTENSIONS,
 } from './util';
 import {
   ImportContext,
@@ -114,6 +115,14 @@ function albumWikiLink(path: string | undefined, title: string): string {
   if (safePath) return `[[${safePath}]]`;
   return name;
 }
+
+/** 历史封面副本（`.stats-covers/<hash>.<扩展名>`）的文件名判据：扩展名从 util 的 IMAGE_EXTENSIONS
+ *  取（缓存名直接用封面文件的原扩展名）。手抄一份白名单会漏掉 avif / bmp —— 备份里静默跳过副本、
+ *  恢复时也写不回，换设备后那张已删除专辑的封面就永久没了。 */
+const STATS_COVER_NAME_RE = new RegExp(
+  `^\\.stats-covers/[0-9a-f]{1,8}\\.(?:${IMAGE_EXTENSIONS.join('|')})$`,
+  'i'
+);
 
 /** 自动备份：文件名前缀（清理旧份数时只认这个前缀，手动备份 / 裁剪归档不碰）与间隔（一周） */
 const AUTO_BACKUP_PREFIX = 'Vinyl Life auto backup';
@@ -1564,7 +1573,7 @@ export default class VinylLifePlugin extends Plugin {
     const coverAssets: Record<string, string> = {};
     for (const stat of Object.values(stats.albums)) {
       const rel = stat.snapshot?.cachedCover;
-      if (!rel || !/^\.stats-covers\/[0-9a-f]{1,8}\.(?:jpe?g|png|webp|gif)$/i.test(rel)) continue;
+      if (!rel || !STATS_COVER_NAME_RE.test(rel)) continue;
       try { coverAssets[rel] = fs.readFileSync(pluginAbsPath(this, rel)).toString('base64'); }
       catch { /* 图片已不存在：统计元数据仍能备份。 */ }
     }
@@ -1652,7 +1661,7 @@ export default class VinylLifePlugin extends Plugin {
       const cache = pluginAbsPath(this, '.stats-covers');
       fs.mkdirSync(cache, { recursive: true });
       for (const [rel, encoded] of Object.entries(backup.coverAssets)) {
-        if (!/^\.stats-covers\/[0-9a-f]{1,8}\.(?:jpe?g|png|webp|gif)$/i.test(rel) ||
+        if (!STATS_COVER_NAME_RE.test(rel) ||
             typeof encoded !== 'string' || encoded.length > 16_000_000) continue;
         fs.writeFileSync(path.join(cache, path.basename(rel)), Buffer.from(encoded, 'base64'));
       }

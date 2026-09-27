@@ -3,7 +3,7 @@
 // 它们共用的音频目录才不会被误判成「还有别张在用」而留下。
 // 原则（与 import.ts 对称）：
 //   1. 只动 vault 内文件——外链绝对路径音频（link 模式）永不删除，仅提示；
-//   2. 仍被其他专辑引用的音频/封面不删（含「其他专辑文件夹在本文件夹内」的嵌套情形）；
+//   2. 仍被其他专辑引用的音频/封面不删（两种嵌套都算：他人的文件夹在本文件夹内、本专辑的文件在他人文件夹里）；
 //   3. 文件夹内混有非音频文件时，只删音频、文件夹保留（整目录进回收站会连带删掉笔记/PDF 等）；
 //   4. 删除走 app.fileManager.trashFile，尊重 Obsidian「已删除文件」设置（回收站 / 永久删除）。
 import { App, TAbstractFile, TFile, TFolder, normalizePath } from 'obsidian';
@@ -61,32 +61,51 @@ function resolveCoverFile(app: App, album: AlbumInfo): TFile | null {
   return fallback instanceof TFile ? fallback : null;
 }
 
-// 其他专辑占用的 vault 内资源路径集合（alsoRemoving：同一批要删掉的专辑，视同「不存在」）
+/** 其他专辑占用的 vault 内资源。文件夹与文件分开装：文件夹占的是一条**范围**（它底下的一切都算
+ *  他人占用），文件只占它自己 —— 混在一个集合里就没法区分「路径本身被引用」与「落在别人目录下」。 */
+interface OtherAlbumResources {
+  files: Set<string>;
+  folders: Set<string>;
+}
+
+// 他人占用的 vault 内资源（alsoRemoving：同一批要删掉的专辑，视同「不存在」）
 function otherAlbumResourcePaths(
   app: App,
   album: AlbumInfo,
   alsoRemoving?: ReadonlySet<string>
-): Set<string> {
-  const used = new Set<string>();
+): OtherAlbumResources {
+  const files = new Set<string>();
+  const folders = new Set<string>();
   for (const f of findAlbumNotes(app)) {
     if (f.path === album.path || alsoRemoving?.has(f.path)) continue;
     const info = getAlbumInfo(app, f);
     if (!info) continue;
     for (const ref of [info.audioFolderRef, ...info.audioRefs]) {
       const t = resolveVaultRef(app, ref);
-      if (t) used.add(t.path);
+      if (!t) continue;
+      if (t instanceof TFolder) folders.add(t.path);
+      else files.add(t.path);
     }
     const cov = resolveCoverFile(app, info);
-    if (cov) used.add(cov.path);
+    if (cov) files.add(cov.path);
   }
-  return used;
+  return { files, folders };
+}
+
+// 路径是否被他人占用：自身被引用，或落在他人引用的文件夹之下。
+// 后半条必须认——本专辑的音频文件落在别人的音频文件夹里时，只比路径本身会把它当成本专辑资产删掉。
+function claimedByOthers(res: OtherAlbumResources, path: string): boolean {
+  if (res.files.has(path) || res.folders.has(path)) return true;
+  for (const folder of res.folders) if (path.startsWith(folder + '/')) return true;
+  return false;
 }
 
 // 文件夹是否被他人占用（自身命中，或他人资源位于其子目录内）
-function folderClaimedByOthers(folderPath: string, used: Set<string>): boolean {
-  if (used.has(folderPath)) return true;
+function folderClaimedByOthers(folderPath: string, res: OtherAlbumResources): boolean {
+  if (claimedByOthers(res, folderPath)) return true;
   const prefix = folderPath + '/';
-  for (const p of used) if (p.startsWith(prefix)) return true;
+  for (const p of res.files) if (p.startsWith(prefix)) return true;
+  for (const p of res.folders) if (p.startsWith(prefix)) return true;
   return false;
 }
 
@@ -103,6 +122,8 @@ export function collectAlbumDeleteTargets(
   const externalAudioRefs: string[] = [];
   const keptFolders: { path: string; audios: number; others: string[] }[] = [];
   const seen = new Set<string>();
+  // 本专辑自己的音频文件夹：里面的零散文件不另行列进共享提示（文件夹那一档已经说了它是共享的）
+  let ownFolderPath = '';
 
   const folderRef = album.audioFolderRef?.trim();
   if (folderRef) {
@@ -111,6 +132,7 @@ export function collectAlbumDeleteTargets(
     } else {
       const folder = resolveVaultRef(app, folderRef);
       if (folder instanceof TFolder) {
+        ownFolderPath = folder.path;
         if (folderClaimedByOthers(folder.path, used)) sharedAudioPaths.push(folder.path);
         else {
           const { audios, others } = scanFolderContents(folder);
@@ -143,8 +165,11 @@ export function collectAlbumDeleteTargets(
     }
     const f = resolveVaultRef(app, ref);
     if (!(f instanceof TFile) || !isAudioFile(f.name) || seen.has(f.path)) continue;
-    if (used.has(f.path)) sharedAudioPaths.push(f.path);
-    else {
+    // 共享提示不必列本专辑自己的音频文件夹里的文件：文件夹那一档已经把「共享」说清了
+    const inOwnFolder = ownFolderPath !== '' && f.path.startsWith(ownFolderPath + '/');
+    if (claimedByOthers(used, f.path)) {
+      if (!inOwnFolder) sharedAudioPaths.push(f.path);
+    } else {
       audioFiles.push(f);
       seen.add(f.path);
     }
@@ -163,7 +188,7 @@ export function collectAlbumDeleteTargets(
     sharedAudioPaths,
     externalAudioRefs,
     coverFile,
-    coverShared: !!coverFile && used.has(coverFile.path),
+    coverShared: !!coverFile && claimedByOthers(used, coverFile.path),
     keptFolders,
   };
 }

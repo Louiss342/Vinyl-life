@@ -92,10 +92,11 @@ function setup() {
   };
   const app = {
     vault,
-    // importLocalAudio 落库后要写 frontmatter（本地导入用例依赖）
+    // importLocalAudio 落库后要写 frontmatter（本地导入用例依赖）。
+    // 已有 _fm 就当它是笔记现成的 frontmatter（真 processFrontMatter 拿到的就是那一份）。
     fileManager: {
       processFrontMatter: async (file, fn) => {
-        const fm = {};
+        const fm = file._fm || {};
         fn(fm);
         file._fm = fm;
       },
@@ -311,6 +312,31 @@ test('复制落点：库外绝对路径的 audioFolder 不是复制目标（那�
     ['Vinyl Life/audio/B/ok.flac'],
     '绝对路径回退到按标题新建（不往库外写）'
   );
+});
+
+test('复制导入：audioFolder 指向库外 → 复制后引用改写成落点（不然队列零首、文件成孤儿）', async () => {
+  const h = setup();
+  // 「重新定位音频」写进 frontmatter 的就是这种绝对路径
+  const file = { path: 'Vinyl Life/Vinyl Note/B.md', _fm: { audioFolder: 'D:\\Music\\B' } };
+  const album = { title: 'B', file, audioFolderRef: 'D:\\Music\\B' };
+  const res = await h.mod.importLocalAudio(h.ctx, album, [new File(['x'], 'ok.flac')], 'copy');
+
+  assert.deepEqual(Array.from(res.added), ['Vinyl Life/audio/B/ok.flac'], '文件照旧复制进库');
+  assert.equal(
+    file._fm.audioFolder,
+    '[[Vinyl Life/audio/B]]',
+    '引用必须跟着改：还指着库外的话队列零首，复制进来的文件没人引用、再导一次全落「已存在，跳过」'
+  );
+});
+
+test('复制导入：库内引用不动（用户自己写的目录不夺）', async () => {
+  const h = setup();
+  const file = { path: 'Vinyl Life/Vinyl Note/A (Remastered).md', _fm: { audioFolder: '[[Vinyl Life/audio/A]]' } };
+  const album = { title: 'A (Remastered)', file, audioFolderRef: '[[Vinyl Life/audio/A]]' };
+  const res = await h.mod.importLocalAudio(h.ctx, album, [new File(['x'], 'ok.flac')], 'copy');
+
+  assert.deepEqual(Array.from(res.added), ['Vinyl Life/audio/A/ok.flac'], '落点跟已有 audioFolder 走');
+  assert.equal(file._fm.audioFolder, '[[Vinyl Life/audio/A]]', '库内引用原样保留');
 });
 
 test('模板：可用设置指定的模板文件（占位符替换 + 落空行清理）', async () => {

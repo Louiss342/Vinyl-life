@@ -4,7 +4,14 @@
 import { App, FuzzySuggestModal, Modal, TFile } from 'obsidian';
 import type VinylLifePlugin from '../main';
 import type { AlbumInfo } from '../core/album-index';
-import { ensureFolder, isImageFile, markVinylModal, notice, sanitizeFileName } from '../util';
+import {
+  ensureFolder,
+  isImageFile,
+  markVinylModal,
+  notice,
+  sanitizeFileName,
+  stripWikilink,
+} from '../util';
 import { t, tf } from '../core/i18n';
 
 class VaultImageSuggest extends FuzzySuggestModal<TFile> {
@@ -88,7 +95,7 @@ export class SetCoverModal extends Modal {
         const ext = (f.name.split('.').pop() || 'jpg').toLowerCase();
         const dir = this.plugin.settings.coverFolder;
         await ensureFolder(this.app, dir);
-        const path = `${dir}/${sanitizeFileName(this.album.title)}.${ext}`;
+        const path = this.coverDestPath(dir, ext);
         const ab = await f.arrayBuffer();
         const exist = this.app.vault.getAbstractFileByPath(path);
         if (exist instanceof TFile) await this.app.vault.modifyBinary(exist, ab);
@@ -103,6 +110,28 @@ export class SetCoverModal extends Modal {
       void pickLocal();
     });
     removeBtn.addEventListener('click', () => void this.applyCover(null, ''));
+  }
+
+  /** 本地图片的落点：默认「封面目录 / 专辑标题.扩展名」。**只有那个文件确实是本专辑当前的封面时**
+   *  才就地覆盖（换封面的正常路径）；否则往「标题 (2).jpg」这样取一个不冲突的名字 —— 专辑笔记是全库
+   *  扫描，两张同名笔记（Albums/A.md 与 Archive/A.md）各有封面，就地覆盖会让第二张把第一张的图
+   *  盖掉，而第一条笔记的 wikilink 还指着该文件：两张显示同一张图，原图再也找不回来。 */
+  private coverDestPath(dir: string, ext: string): string {
+    const base = sanitizeFileName(this.album.title);
+    let path = `${dir}/${base}.${ext}`;
+    // 命中本专辑自己的那一张就停（沿用「标题 2.jpg」而不是一路堆到 3、4）
+    for (let n = 2; this.app.vault.getAbstractFileByPath(path) && !this.isCurrentCover(path); n++) {
+      path = `${dir}/${base} (${n}).${ext}`;
+    }
+    return path;
+  }
+
+  /** 这个路径是不是本专辑当前 cover 指着的文件（判定口径与删除盘点的共享封面一致） */
+  private isCurrentCover(path: string): boolean {
+    const raw = this.album.coverRaw?.trim();
+    if (!raw || /^https?:\/\//i.test(raw) || /^#[0-9a-fA-F]{3,8}$/.test(raw)) return false;
+    const dest = this.app.metadataCache.getFirstLinkpathDest(stripWikilink(raw), this.album.path);
+    return dest instanceof TFile && dest.path === path;
   }
 
   /** 写回 frontmatter（cover 传 null = 移除）；写成功后就地通知调用方刷新 */
