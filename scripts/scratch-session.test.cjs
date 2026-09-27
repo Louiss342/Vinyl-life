@@ -271,6 +271,9 @@ function makeView(mod, settings = {}) {
     },
     updateScratch: (t) => calls.push(['update', t]),
     endScratch: (t, resume) => calls.push(['end', t, resume]),
+    // 搓碟期间按过媒体键才返回 true / false（覆盖起手时的姿态）；这几条用例没按过，按 null 回落
+    // —— 视图写的是 `?? st.playing`，与旧行为一致（见 player-state 的 scratchResumeIntent）
+    scratchResumeIntent: () => null,
     scratchRate: (r) => calls.push(['rate', r]),
     setScratchLive: (live) => calls.push(['live', live]),
     toggle: () => {},

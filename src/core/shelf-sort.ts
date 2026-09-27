@@ -130,16 +130,16 @@ function missingOf(x: ShelfSortable, sort: ShelfSort, stats: ShelfSortStats): bo
   }
 }
 
-/** 自定义属性比较：两值都是数字串（年份 / 评分这类 frontmatter 数值）按数值比，否则按文本 */
+/** 自定义属性的排序器：中文 + 数字感知 —— 数字段按数值比（'2' 排在 '10' 前），
+ *  文本段按中文序。**一把尺子量到底**才有严格弱序。 */
+const customPropCollator = new Intl.Collator('zh-CN', { numeric: true });
+
+/** 自定义属性比较：每对值都走同一个排序器。
+ *  曾经是「两个都能转数字就按数值比，否则按文本比」—— 那不是全序：
+ *  '10' vs '2' 按数值、'2' vs '1月' 按文本、'1月' vs '10' 又按文本，能拼出环，
+ *  同一组数据只改输入顺序就得到不同结果（刷新 / 筛选后次序莫名变化）。 */
 function compareProp(a: ShelfSortable, b: ShelfSortable, key: string): number {
-  const av = a.displayProps?.[key] ?? '';
-  const bv = b.displayProps?.[key] ?? '';
-  if (av !== '' && bv !== '') {
-    const an = Number(av);
-    const bn = Number(bv);
-    if (Number.isFinite(an) && Number.isFinite(bn)) return an - bn;
-  }
-  return av.localeCompare(bv, 'zh-CN');
+  return customPropCollator.compare(a.displayProps?.[key] ?? '', b.displayProps?.[key] ?? '');
 }
 
 /** 自然序（升序方向）比较：返回负数 = a 在前。缺失值不进这里（见 missingOf） */

@@ -89,7 +89,12 @@ class AudioStub {
   }
 }
 
-const { PlaybackEngine } = loadModule('src/core/player-state.ts', { Audio: AudioStub });
+const { PlaybackEngine } = loadModule('src/core/player-state.ts', {
+  Audio: AudioStub,
+  // 暂停走马达斜坡，斜坡用 window.setInterval 推进曲线。下面那几条只关心「状态与元素」，
+  // 给一对不排帧的桩就够（马达曲线本身另有 motor-engine / motor-view 两组用例盯着）。
+  window: { setInterval: () => 0, clearInterval: () => {}, setTimeout: () => 0, clearTimeout: () => {} },
+});
 
 function albumOf(id, title, extra = {}) {
   const notePath = `06-专辑墙/专辑/${title}.md`;
@@ -190,4 +195,133 @@ test('错误兜底竞态：切歌后旧曲的兜底结果不覆盖当前曲', as
   releaseBlob();
   await sleep(10);
   assert.equal(audio.src, 'vault://x/a2.mp3', '旧曲兜底不得覆盖当前曲');
+});
+
+// ============ 点队列行：加载窗口里的重入与「回到同一首」 ============
+
+/** 三首歌的专辑桩 + 可控取址：netease 的地址来自 deps.netease.songUrl */
+function songsFixture(ids = [10, 11, 12]) {
+  return async () => ({
+    songs: ids.map((id) => ({ id, name: `S${id}`, ar: [], al: {}, dt: 1000 })),
+  });
+}
+const urlOk = (id) => ({ url: `https://cdn/${id}.mp3`, level: '' });
+
+test('点队列行：取址还没回来时再点同一行，不再重入（不然会误报「无法播放」并跳歌）', async () => {
+  let release;
+  const gate = new Promise((r) => (release = r));
+  const played = [];
+  let urlCalls = 0;
+  const { engine } = makeEngine({ neteaseAlbum: songsFixture([10, 11]) });
+  engine.deps.netease.songUrl = async (id) => {
+    urlCalls++;
+    if (id === 10) await gate; // 第一首卡在取址：状态停在 loading
+    return urlOk(id);
+  };
+  engine.deps.onTrackPlay = (t) => played.push(t.id);
+  await engine.loadAlbum(albumOf(1, 'A'));
+
+  const first = engine.playIndex(0);
+  assert.equal(engine.snapshot().status, 'loading', '取址期间就是 loading');
+  await engine.playIndex(0); // 用户觉得没反应，又点了一下同一行（或双击）
+  assert.equal(urlCalls, 1, '第二次点击不该再发一次取址请求（重写 src 会把上一次的 play 打断）');
+  release();
+  await first;
+  assert.equal(engine.snapshot().status, 'playing');
+  assert.equal(engine.snapshot().index, 0, '还在这一首：不许跳走');
+  assert.deepEqual(played, [10], '播放事件只记一次');
+});
+
+test('A→B→A 快速来回点：只认最后那一次，不重复记播放事件', async () => {
+  const played = [];
+  const gates = new Map();
+  const { engine } = makeEngine({ neteaseAlbum: songsFixture([10, 11]) });
+  engine.deps.netease.songUrl = async (id) => {
+    const gate = gates.get(id);
+    if (gate) await gate;
+    return urlOk(id);
+  };
+  engine.deps.onTrackPlay = (t) => played.push(t.id);
+  await engine.loadAlbum(albumOf(1, 'A'));
+
+  let releaseFirst;
+  gates.set(10, new Promise((r) => (releaseFirst = r)));
+  const firstA = engine.playIndex(0); // A：取址卡住
+  gates.delete(10);
+  await engine.playIndex(1); // → B
+  const secondA = engine.playIndex(0); // → 又回 A（这一次取址是快的）
+  releaseFirst(); // 第一次的 A 这时才回来
+  await Promise.all([firstA, secondA]);
+
+  assert.deepEqual(played, [11, 10], '只有 B 与最后那次 A 记了播放事件');
+  assert.equal(engine.snapshot().index, 0, '停在 A');
+  assert.equal(engine.snapshot().status, 'playing');
+});
+
+// ============ 移除一段：暂停中不许自己开播 ============
+
+test('暂停中删掉当前这首：只把新的一首挂上元素，不自己播', async () => {
+  const played = [];
+  const { engine, audio } = makeEngine({ neteaseAlbum: songsFixture([10, 11]) });
+  engine.deps.netease.songUrl = async (id) => urlOk(id);
+  engine.deps.onTrackPlay = (t) => played.push(t.id);
+  await engine.loadAlbum(albumOf(1, 'A'));
+  await engine.playIndex(0);
+  engine.pause();
+  assert.equal(engine.snapshot().status, 'paused');
+
+  engine.removeRange(0, 1); // 把正在播的这首从队列里拿掉
+  await sleep(5); // 顺延那一趟是 void 出去的：等它落地
+  assert.equal(engine.snapshot().status, 'paused', '用户没按播放：引擎不该替他按');
+  assert.equal(audio.paused, true, '不许出声');
+  assert.equal(engine.snapshot().index, 0, '顺延到新的第一首');
+  assert.deepEqual(played, [10], '没有新的播放事件');
+});
+
+test('播放中删掉当前这首：照旧顺延着放下去（这条行为不能丢）', async () => {
+  const { engine, audio } = makeEngine({ neteaseAlbum: songsFixture([10, 11]) });
+  engine.deps.netease.songUrl = async (id) => urlOk(id);
+  await engine.loadAlbum(albumOf(1, 'A'));
+  await engine.playIndex(0);
+
+  engine.removeRange(0, 1);
+  await sleep(5); // 同上一例：顺延的加载是异步的
+  assert.equal(engine.snapshot().index, 0);
+  assert.equal(engine.snapshot().status, 'playing', '在播的时候删掉：接着放下一首');
+  assert.equal(audio.paused, false);
+  assert.match(audio.src, /11\.mp3$/, '元素挂的是新那一首');
+});
+
+test('Blob 回收：留的是**剩下**的那批（移除的那张不该被留下、正在播的那张不该被回收）', async () => {
+  const cleared = [];
+  const { engine } = makeEngine({
+    neteaseAlbum: songsFixture([10, 11, 12]),
+    localOverrides: {
+      keysOf: (tracks) => new Set(tracks.map((t) => `${t.source}:${t.id}`)),
+      clearBlobs: (keep) => cleared.push(Array.from(keep).sort()),
+    },
+  });
+  engine.deps.netease.songUrl = async (id) => urlOk(id);
+  await engine.loadAlbum(albumOf(1, 'A'));
+  await engine.playIndex(0);
+
+  engine.removeRange(1, 1); // 移除中间那首（不是当前曲）
+  assert.deepEqual(cleared[cleared.length - 1], ['netease:10', 'netease:12'], 'keeper 是剩下的两首');
+
+  cleared.length = 0;
+  engine.retainCurrentAlbum(); // 已经是单专辑队列：无事发生
+  assert.deepEqual(cleared, [], '不需要回收时别乱清');
+});
+
+test('随机模式下整段移动：退出随机时不许把用户的调整还原回去', async () => {
+  const { engine } = makeEngine({ neteaseAlbum: songsFixture([10, 11, 12]) });
+  engine.deps.netease.songUrl = async (id) => urlOk(id);
+  await engine.loadAlbum(albumOf(1, 'A'));
+  const ids = () => Array.from(engine.snapshot().queue, (t) => t.id);
+
+  engine.setPlayMode('shuffle'); // 进随机：存下进随机前的顺序
+  engine.moveRange(0, 1, engine.snapshot().queue.length); // 命令面板的「整段下移」
+  const afterMove = ids();
+  engine.setPlayMode('once'); // 退出随机
+  assert.deepEqual(ids(), afterMove, '手动搬过 = 用户认下了这个顺序，别还原');
 });

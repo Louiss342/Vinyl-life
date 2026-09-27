@@ -46,8 +46,12 @@ test('接线：交还用负 animation-delay 续上角度，转盘不跳', () => 
   assert.match(src, /private currentSpinAngle[\s\S]{0,500}?getAnimations\(\)/, '接手时读当前动画角度对齐');
   // 负延迟要一并算进相位：交还旋转时相位就存在那里（只读 currentTime 会漏掉它，接手时跳回 0°）
   assert.match(src, /private currentSpinAngle[\s\S]{0,800}?timing\?\.delay/, '相位 = currentTime − delay');
-  // 交还与定住是两条路：起手前在播 → 续上相位接着转；起手前是暂停 → 就地定住
-  assert.match(src, /if \(st\.playing\) this\.releaseSpin\(st\.angle\);[\s\S]{0,80}?else this\.holdSpin\(st\.angle\)/);
+  // 交还与定住是两条路：接着放 → 续上相位继续转；停在暂停 → 就地定住。
+  // 判据取「松手之后要不要放」而不是起手时的姿态：搓碟期间按过媒体键的话，那次说了算
+  //（起手时记的姿态可能已经和它打架，见 player-state 的 scratchResumeIntent）
+  assert.match(src, /const resume = this\.plugin\.engine\.scratchResumeIntent\(\) \?\? st\.playing;/);
+  assert.match(src, /if \(resume\) this\.releaseSpin\(st\.angle\);[\s\S]{0,80}?else this\.holdSpin\(st\.angle\)/);
+  assert.match(src, /endScratch\(st\.pos, resume\)/, '交给引擎的也是这份姿态');
 });
 
 test('接线：可搓时才给抓取光标（唱机面 + 有曲目 + 不在换曲间隙）', () => {

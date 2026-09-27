@@ -251,7 +251,14 @@ export class VinylShelfView extends ItemView {
   private gridHost: HTMLElement | null = null;
   private shownCount = 0; // 当前筛选结果条数（标题计数与网格共用这一个数）
   // 浮层（陈列 / 添加）：同一时刻最多一个；点外 / Esc 关闭；焦点还给入口按钮
-  private panel: { el: HTMLElement; kind: 'display' | 'add'; anchor: HTMLElement } | null = null;
+  private panel: {
+    el: HTMLElement;
+    kind: 'display' | 'add';
+    anchor: HTMLElement;
+    /** 浮层所在的文档：专辑墙可以被拖进独立窗口，那时锚点属于弹出窗口而 document 是主窗口 ——
+     *  浮层、点外关闭与 Esc 都得跟着锚点走（见 openPanel）。 */
+    doc: Document;
+  } | null = null;
   private displayLayer: 'main' | 'props' = 'main'; // 陈列浮层当前在哪一层
   private propsHost: HTMLElement | null = null; // 属性行（第二层）挂在哪个容器里
   private addPanel: AddPanel | null = null;
@@ -276,6 +283,9 @@ export class VinylShelfView extends ItemView {
   private tutorialRaf = 0; // 教程重绘的合流（见 requestTutorialLayout）
   private tutorialKey = ''; // 上一次画图时的尺寸指纹：没变就不重画（见 layoutTutorial）
   private dirty = false; // 不可见期间有改动：重新可见时补一次渲染（见 render 的开头）
+  /** 下一次 render 强制走「重建」分支：工具栏与卡片的文案是建的时候写死的，
+   *  增量路径补不上 —— 眼下只有切语言用它（见 applyLanguage）。 */
+  private forceRebuild = false;
   private settleTimers: number[] = [];
 
   constructor(leaf: WorkspaceLeaf, plugin: VinylLifePlugin) {
@@ -531,23 +541,19 @@ export class VinylShelfView extends ItemView {
     }, 500);
   }
 
-  // 内容签名：卡片上用到的全部字段 —— 路径 / 已显示属性 / 封面 / 版本 / 四个音源态。
-  // 只签属性是不够的：换封面、拖音频进专辑（音源态变了）都不改属性，卡片会停在旧样子
-  // （提示「已更新」但封面没变；加了音源之后点卡片还是「打开笔记」而不是播放）。
+  // 整墙的内容签名：它是「要不要重画」的闸门。**与卡片那一层共用同一个签名函数** ——
+  // 两处口径曾经分开写，于是「笔记里的 id / 音频目录 / 源偏好改了，四个布尔没变」时
+  // 连 render 都不走，卡片继续握着过期的 AlbumInfo（点下去按旧 id 建队列）。
+  // 排序后拼接 = 只看内容集合，不看顺序（换排序依据走的是另一条路）。
   private shelfSignature(): string {
     const keys = this.plugin.settings.shelfProps;
+    const labels = this.plugin.settings.shelfPropLabels;
     return this.entries
-      .map((e) =>
-        [
-          e.album.path,
-          keys.map((k) => e.album.displayProps[k] ?? '').join('\u0002'),
-          e.album.cover ?? '',
-          e.album.edition ?? '',
-          [e.local, e.netease, e.qq, e.kugou].map((v) => (v ? '1' : '0')).join(''),
-        ].join('\u0001')
-      )
+      .map((e) => cardSignature(e.album, e, keys, labels))
       .sort()
-      .join('\u0003');
+      // 拼接用换行：每一段都是 JSON 串（内部换行已被转义），不会串味，
+      // 源码里也不出现不可见字符
+      .join('\n');
   }
 
   private loadEntries() {
@@ -563,6 +569,15 @@ export class VinylShelfView extends ItemView {
   }
 
   // ============ 渲染 ============
+
+  /** 切语言：整墙重绘一次。工具栏（含搜索框 placeholder 与三枚按钮的 aria-label）与卡片
+   *  菜单的悬停提示都是建的时候写死的，就地重放得一小段一小段对账、还容易漏；语言切换是
+   *  一次性动作，而 render 的「重建」分支本来就在（滚动位置照旧保留，见它的先记后还），
+   *  代价可以接受。main 的 refreshLanguage 调这里。 */
+  applyLanguage() {
+    this.forceRebuild = true;
+    this.render();
+  }
 
   render() {
     // 看不见的时候（后台标签页 / 折叠的侧栏 / 独立窗口已关）不重建整墙：改一个属性就要重建
@@ -586,7 +601,8 @@ export class VinylShelfView extends ItemView {
     this.applyAppearance();
     // 工具栏与网格容器**只建一次**：之后的刷新就地同步。整棵树重建会把滚动位置、焦点、
     // 卡片对象一起丢掉 —— 卡片本身现在按 path 增量更新（见 renderGrid 与 core/shelf-diff）。
-    const fresh = !this.toolbarEl || !this.gridHost || this.toolbarEl.isConnected === false;
+    const fresh = this.forceRebuild || !this.toolbarEl || !this.gridHost || this.toolbarEl.isConnected === false;
+    this.forceRebuild = false;
     if (fresh) {
       this.cancelGridBatch();
       c.empty();
@@ -609,7 +625,9 @@ export class VinylShelfView extends ItemView {
       this.renderToolbar(c);
       this.gridHost = c.createDiv({ cls: 'vinyl-shelf-grid-host' });
     } else {
-      // 增量路径：只有计数与「陈列」按钮的当前态会随刷新变（搜索框、焦点、卡片都留着）
+      // 增量路径：只有计数与「陈列」按钮的当前态会随刷新变（搜索框、焦点、卡片都留着）。
+      // 语言切换是例外，走 forceRebuild 那条路（见 applyLanguage）—— 工具栏与卡片的文案
+      // 都是建的时候写死的，这里补不上。
       this.syncHeading();
       this.syncDisplayButton();
     }
@@ -975,7 +993,7 @@ export class VinylShelfView extends ItemView {
     const keys = this.plugin.settings.shelfProps;
     const next = shown.map((e) => ({
       path: e.album.path,
-      sig: cardSignature(e.album, e, keys),
+      sig: cardSignature(e.album, e, keys, this.plugin.settings.shelfPropLabels),
     }));
     const plan = planCards(this.cardSig, next);
     for (const path of plan.remove) {
@@ -1041,9 +1059,14 @@ export class VinylShelfView extends ItemView {
       let el = this.cardEls.get(action.path) ?? null;
       if (action.action === 'rebuild' && el) {
         // 内容变了：原地换一张（位置不动，列表里其它卡片也不受影响）
+        // 焦点要跟着走：卡片菜单里的动作（评分 / 设置封面 / 设置版本）都会走到这里，
+        // 换了节点却不管焦点的话，键盘用户的方向键网格当场失效（焦点掉回 body）
+        const doc = el.ownerDocument;
+        const hadFocus = !!doc.activeElement && el.contains(doc.activeElement);
         const fresh = this.buildCard(entry);
         el.replaceWith(fresh);
         el = fresh;
+        if (hadFocus && !fresh.contains(doc.activeElement)) fresh.focus();
         this.cardEls.set(action.path, el);
       } else if (!el) {
         el = this.buildCard(entry);
@@ -1068,8 +1091,17 @@ export class VinylShelfView extends ItemView {
       // 这一帧里可能有卡片被重画（重画走 buildCard，带回默认的 tabIndex=-1）——
       // 正好轮到光标卡时，整墙会一张停靠点都不剩，补回来才不会让键盘用户进不来。
       this.syncRoving();
-      if (next < st.shown.length) this.scheduleAppend(st.grid, st.shown, st.plan, next);
-      else this.gridBatch = null;
+      if (next < st.shown.length) {
+        this.scheduleAppend(st.grid, st.shown, st.plan, next);
+        return;
+      }
+      this.gridBatch = null;
+      // 分批到此为止：这一批新建的卡片身上还缺「播放中 / 在队列里 / 已勾选」这些状态 ——
+      // render 里那次 syncBatch / updatePlaying 只覆盖了第一帧就存在的那批（60 张以内看不出来；
+      // 超过之后，正在播的那张若排在后面就永远不离墙，选择模式下也会「看着没勾、删除却带上」）。
+      // 之后每 400ms 的快照不会补：队列引用与当前专辑都没变，updatePlaying 在开头就返回了。
+      this.syncBatch();
+      if (this.lastSnap) this.updatePlaying(this.lastSnap, true);
     });
   }
 
@@ -1363,11 +1395,15 @@ export class VinylShelfView extends ItemView {
   // ============ 浮层：陈列 / 添加 ============
   // 同一时刻最多一个浮层；点外 / Esc 关闭；关闭后焦点还给入口按钮。
   // 浮层挂在 body（position: fixed），但位置夹在专辑墙窗格内 —— 不遮住别的窗格里的播放器。
+  // **挂在锚点所在的 document 上**：专辑墙可以被拖进独立窗口，那时锚点的矩形属于弹出窗口的
+  // 视口，而浮层若建在主窗口里，位置会落在与入口无关的地方，点外 / Esc 也永远收不到
+  //（同一个问题，队列浮层早就按 anchor.ownerDocument 处理了，见 views/queue-panel）。
 
   private openPanel(kind: 'display' | 'add', anchor: HTMLElement): void {
     this.closePanel();
-    const el = document.body.createDiv({ cls: `vinyl-panel vinyl-${kind}-panel` });
-    this.panel = { el, kind, anchor };
+    const doc = anchor.ownerDocument ?? document;
+    const el = doc.body.createDiv({ cls: `vinyl-panel vinyl-${kind}-panel` });
+    this.panel = { el, kind, anchor, doc };
     this.displayLayer = 'main';
     if (kind === 'display') this.renderDisplayPanel(el);
     else this.renderAddPanel(el);
@@ -1388,7 +1424,7 @@ export class VinylShelfView extends ItemView {
       if (p.el.contains(target) || p.anchor.contains(target)) return; // 点入口本身交给切换逻辑
       this.closePanel();
     };
-    document.addEventListener('pointerdown', this.onPanelDocPointer, true);
+    doc.addEventListener('pointerdown', this.onPanelDocPointer, true);
     this.onPanelKey = (ev: KeyboardEvent) => {
       if (ev.key === 'Escape') {
         ev.preventDefault();
@@ -1422,7 +1458,7 @@ export class VinylShelfView extends ItemView {
         first.focus();
       }
     };
-    document.addEventListener('keydown', this.onPanelKey, true);
+    doc.addEventListener('keydown', this.onPanelKey, true);
   }
 
   /** 视图重建后把浮层接回来：锚点换成新的入口按钮、重新摆位（内容与搜索状态原地保留） */
@@ -1447,15 +1483,16 @@ export class VinylShelfView extends ItemView {
   private closePanel(): void {
     const panel = this.panel;
     const addPanel = this.addPanel;
+    const doc = panel?.doc ?? document; // 监听器挂在锚点所在的文档上（见 openPanel）
     this.panel = null;
     this.propsHost = null;
     this.addPanel = null;
     if (this.onPanelDocPointer) {
-      document.removeEventListener('pointerdown', this.onPanelDocPointer, true);
+      doc.removeEventListener('pointerdown', this.onPanelDocPointer, true);
       this.onPanelDocPointer = null;
     }
     if (this.onPanelKey) {
-      document.removeEventListener('keydown', this.onPanelKey, true);
+      doc.removeEventListener('keydown', this.onPanelKey, true);
       this.onPanelKey = null;
     }
     addPanel?.destroy(); // 在途搜索作废：结果回来也不许再往 DOM 上画

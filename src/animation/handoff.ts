@@ -61,10 +61,14 @@ export class HandoffController {
     // 减少动态效果：跳过拾取动画（交接流程照走，只是不做那串位移）
     if (cardEl && discEl && !prefersReducedMotion()) {
       cardEl.addClass('is-handing-off');
-      // 换专辑时 shelf-view 取消这条动画，唱片经 CSS transition 回位
-      animateDiscLiftOff(cardEl, discEl).addEventListener('finish', () =>
-        cardEl.removeClass('is-handing-off')
-      );
+      // 换专辑时 shelf-view 取消这条动画，唱片经 CSS transition 回位。
+      // finish 与 cancel 都要摘类：这个类带着 pointer-events: none（见 styles.css），
+      // 被取消时只挂 finish 的话它会永远留在卡上 —— 那张卡鼠标点不动、悬停也没反应。
+      // 孪生动画 is-returning 修过同一个坑（见 shelf-view 的 playDiscReturn）。
+      const lift = animateDiscLiftOff(cardEl, discEl);
+      const clear = () => cardEl.removeClass('is-handing-off');
+      lift.addEventListener('finish', clear);
+      lift.addEventListener('cancel', clear);
     }
 
     // C 落盘前：先打开/聚焦播放器（未打开时先 revealLeaf）

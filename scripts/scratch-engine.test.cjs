@@ -253,6 +253,39 @@ test('换出声路线：搓碟台中途接手 → 元素让位（倍速复位、
   assert.equal(audio.paused, true, '已经切到搓碟台：不再动元素');
 });
 
+test('搓碟期间按媒体键：松手按那一次的意图收尾（不是起手时的姿态）', async () => {
+  // 播放中按住唱片 → 按一次「暂停」（元素本来就停着，媒体键只改意图）→ 松手：
+  // 不能被起手时的「在播」带回播放（那样状态是暂停、声音却在放），反向同理。
+  const a = await playing();
+  a.engine.beginScratch({ live: true });
+  a.engine.pause();
+  assert.equal(a.engine.snapshot().status, 'paused', '按了暂停：对外就该是暂停');
+  assert.equal(a.engine.scratchResumeIntent(), false, '意图变了：松手不接着放');
+  a.engine.endScratch(20, true); // 视图传的是**起手时**的姿态（true）
+  assert.equal(a.audio.paused, true, '以会话里的意图为准：不许自己响起来');
+  assert.equal(a.engine.snapshot().status, 'paused');
+
+  const b = await playing();
+  b.engine.beginScratch({ live: true });
+  b.engine.pause();
+  await b.engine.play(); // 又按了一次「播放」：意图翻回来
+  assert.equal(b.engine.snapshot().status, 'playing');
+  assert.equal(b.engine.scratchResumeIntent(), true);
+  assert.equal(b.audio.paused, true, '手还在盘上：媒体键不许直接 play 元素');
+  b.engine.endScratch(20, false); // 视图传的还是起手时的姿态（false）
+  assert.equal(b.audio.paused, false, '以会话里的意图为准：松手接着放');
+  assert.equal(b.engine.snapshot().status, 'playing');
+});
+
+test('搓碟期间没按媒体键：一切照旧（起手时的姿态说了算）', async () => {
+  const { engine, audio } = await playing();
+  engine.beginScratch({ live: true });
+  assert.equal(engine.scratchResumeIntent(), null, '没按过：视图按自己的记录来（null = 不覆盖）');
+  engine.endScratch(15, false);
+  assert.equal(audio.paused, true, '传 false 就停着（与旧行为一致）');
+  assert.equal(engine.snapshot().status, 'paused');
+});
+
 test('抬手：位置写回元素，按起手前的姿态回到播放 / 暂停', async () => {
   const a = await playing();
   a.engine.beginScratch({ live: true });

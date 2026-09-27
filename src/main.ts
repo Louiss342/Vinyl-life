@@ -520,8 +520,11 @@ export default class VinylLifePlugin extends Plugin {
   // 语言切换后重绘已打开的专辑墙（工具栏 / 排序筛选 / 空态 / 卡片菜单文案）
   refreshLanguage() {
     for (const leaf of this.app.workspace.getLeavesOfType(SHELF_VIEW_TYPE)) {
-      const v = leaf.view as unknown as { render?: () => void };
-      if (typeof v.render === 'function') v.render();
+      const v = leaf.view as unknown as { applyLanguage?: () => void; render?: () => void };
+      // 专辑墙的工具栏与卡片文案也是建的时候写死的：走 applyLanguage（强制重建一次），
+      // 光调 render 会落到增量分支上 —— 文案停在旧语言（见 shelf-view 的 applyLanguage）
+      if (typeof v.applyLanguage === 'function') v.applyLanguage();
+      else if (typeof v.render === 'function') v.render();
     }
     // 播放器的壳只建一次（见 player-view 的增量渲染）：不能重建 DOM（会打断转盘旋转与入场动画、
     // 丢掉播放进度），改为就地重放文案标签——按钮 aria-label / title 与队列提示随语言切换

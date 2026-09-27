@@ -342,7 +342,13 @@ export class LibraryHealthModal extends Modal {
     const last = p.settings.lastProbeAt;
     progress.setText(last ? tf('health.lastProbe', { time: new Date(last).toLocaleString() }) : t('health.neverProbed'));
     probe.onclick = async () => {
-      const jobs = probeJobs(this.plugin.app, albums, p.settings.sourceFailures, p.settings.probeScope);
+      const jobs = probeJobs(
+        this.plugin.app,
+        albums,
+        p.settings.sourceFailures,
+        p.settings.probeScope,
+        p.settings.defaultSource // 「只试每张实际会用的音源」要按用户设的默认音源算（见 core/library-health）
+      );
       if (!jobs.length) { progress.setText(t('health.probeNothing')); return; }
       this.cancelled = false;
       this.probing = true;

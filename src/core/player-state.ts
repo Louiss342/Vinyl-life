@@ -150,6 +150,9 @@ export class PlaybackEngine {
   private lastTimeEmit = 0;
   // 加载代次：快速连点两张专辑时，先发起的在线队列构建可能后返回，须丢弃以免覆盖新选择
   private loadSeq = 0;
+  /** 单曲加载代次（与队列构建的 loadSeq 分开）：每次 playIndex 进一轮，A→B→A 来回点时
+   *  让先发起的那一趟作废（否则两趟一起写 src、一起记播放事件）。 */
+  private trackSeq = 0;
   /** 搓碟会话（null = 没在搓）：搓碟期间元素暂停、位置由视图逐帧喂进来（见 beginScratch）。
    *  状态字段在搓碟期间不跟着元素的 play / pause 事件抖（见构造函数里的两个监听）。
    *  pitchFollow = 本会话把元素的「保音高」关掉了（松手要还回去，见 setPitchFollow）。 */
@@ -158,6 +161,9 @@ export class PlaybackEngine {
     resumePlaying: boolean;
     time: number;
     pitchFollow: boolean;
+    /** 搓碟期间用户按过媒体键（播 / 停）：这时松手以会话里的意图为准，
+     *  而不是视图记下的「起手那一刻」的姿态 —— 两个会打架，见 endScratch。 */
+    intentChanged: boolean;
   } | null = null;
 
   constructor(private deps: EngineDeps) {
@@ -404,8 +410,9 @@ export class PlaybackEngine {
     if (!albumPath) return;
     const kept = this.queue.filter((track) => (track.albumNotePath || this.albumNotePath) === albumPath);
     if (!kept.length || kept.length === this.queue.length) return;
-    const removed = this.queue.filter((track) => (track.albumNotePath || this.albumNotePath) !== albumPath);
-    this.deps.local.clearBlobs(this.deps.local.keysOf(removed));
+    // clearBlobs 的参数是「要留的」（见 local-source）：传被移除的那批会把**正在播的**
+    // 那份 Blob 一起回收掉 —— 元素手里的 src 变成废 URL，之后再取流要整文件重读一遍
+    this.deps.local.clearBlobs(this.deps.local.keysOf(kept));
     this.queue = kept;
     this.index = current ? kept.indexOf(current) : -1;
     this.albumNotePath = albumPath;
@@ -413,16 +420,19 @@ export class PlaybackEngine {
     this.emit();
   }
 
-  /** 移除队列里的一段（整张专辑）。正在播的曲目落在这一段里时，顺延到同位置剩下的那一首
-   *  （删的是队尾段就往前退一首）；队列空了就复位成「没在播」。 */
+  /** 移除队列里的一段（整张专辑）。正在播（或在加载）的曲目落在这一段里时，顺延到同位置
+   *  剩下的那一首（删的是队尾段就往前退一首）；队列空了就复位成「没在播」。 */
   removeRange(start: number, count: number) {
     if (start < 0 || count <= 0 || start >= this.queue.length) return;
     const end = Math.min(this.queue.length, start + count);
-    const removed = this.queue.slice(start, end);
     const wasCurrent = this.index >= start && this.index < end;
+    // 暂停中删掉当前这首 = 用户只是要把它拿掉，不是「那就放下一首」——
+    // 引擎不该替他按播放键（原来无条件顺延播放，暂停的播放器会自己响起来）
+    const wasPlaying = this.status === 'playing' || this.status === 'loading';
     const currentKey = this.index >= 0 ? trackKey(this.queue[this.index]) : '';
-    this.deps.local.clearBlobs(this.deps.local.keysOf(removed));
     const nextQueue = [...this.queue.slice(0, start), ...this.queue.slice(end)];
+    // 要留的是**剩下的**那批（见 local-source 的 clearBlobs 契约）
+    this.deps.local.clearBlobs(this.deps.local.keysOf(nextQueue));
     this.queue = nextQueue;
     if (!nextQueue.length) {
       this.unloadAudio();
@@ -436,7 +446,8 @@ export class PlaybackEngine {
       this.unloadAudio();
       this.index = Math.min(start, nextQueue.length - 1);
       this.status = 'paused';
-      void this.playIndex(this.index, { retry: true });
+      // 暂停中只把新的当前曲挂上元素（不出声、不记播放事件），等用户按播放
+      void this.playIndex(this.index, { retry: true, silent: !wasPlaying });
     } else {
       const i = nextQueue.findIndex((tr) => trackKey(tr) === currentKey);
       if (i >= 0) this.index = i;
@@ -457,6 +468,9 @@ export class PlaybackEngine {
       const i = this.queue.findIndex((tr) => trackKey(tr) === currentKey);
       if (i >= 0) this.index = i;
     }
+    // 与 moveTrack 同一条口径：手动搬过 = 用户自己认下了这个顺序，
+    // 进随机前存的那份不再算数（否则退出随机时这次调整会被静默还原）
+    this.orderBeforeShuffle = null;
     this.emit();
   }
 
@@ -525,13 +539,23 @@ export class PlaybackEngine {
   }
 
   // —— 控制 ——
-  async playIndex(i: number, opts?: { retry?: boolean }) {
+  async playIndex(i: number, opts?: { retry?: boolean; silent?: boolean }) {
     if (i < 0 || i >= this.queue.length) return;
     // 已在播的这一首不重起（点队列里正在放的那一行不该从头开始）。
     // retry 例外：兜底链要重新取址、重新起播 —— 元素出错时引擎不一定收过 pause 事件，
     // 状态还停在 playing，按这条守卫会让「重取一次」变成空操作（旧写法就是这样：出错后
     // 界面还在转、却没有声音，也没有任何下文）。
-    if (!opts?.retry && this.index === i && this.status === 'playing') return;
+    // loading 也归这条守卫管：从点下到出声之间（在线源要整趟取址 + 缓冲）再点同一行会重入，
+    // 第二次重写 audio.src 会被浏览器的加载算法当成换源 —— 上一次还挂着的 play() 以
+    // AbortError 被拒，下面的 catch 把「被自己打断」读成「这首放不出来」→ 跳下一首 + 谎报故障，
+    // 统计里记的也成了下一首。用户侧的表现就是「双击队列里的一行 = 无缘无故跳歌」。
+    if (
+      !opts?.retry &&
+      this.index === i &&
+      (this.status === 'playing' || this.status === 'loading')
+    ) {
+      return;
+    }
     this.abortScratch(); // 点队列切歌 / 媒体键下一首：手里的那张碟换掉了
     // 马达同理：换曲不做斜坡（真实唱机上换曲时转盘一直在转，只有「开始 / 停止」才动马达），
     // 但上一条留下的斜坡必须收干净 —— 否则旧曲线会接着写新曲子的倍速与音量
@@ -545,7 +569,12 @@ export class PlaybackEngine {
     const track = this.queue[i];
     // 「还在等这一首吗」按下标判定会在拖拽重排后误判（下标变了、曲子没变）→ 卡在 loading。
     // 判据用「当前曲目还是不是这一首」：切走 / 换专辑照样丢弃，重排不打断加载。
-    const stillCurrent = () => this.queue[this.index] === track;
+    // 再加上这一轮的代次：A→B→A 这样快速来回点，第一次的 A 会被「当前曲目还是 A」判成
+    // 仍然有效，两趟加载一起写 src、一起记播放事件 —— 代次一变，旧的那趟就作废。
+    // 用独立的计数器而不是 loadSeq（那是**专辑队列构建**的代次，借用它会让「点一下队列行」
+    // 把正在载入的那张专辑给取消掉）。
+    const seq = ++this.trackSeq;
+    const stillCurrent = () => this.trackSeq === seq && this.queue[this.index] === track;
     // 取址失败是**语义**问题（会员 / 未绑定音源 / 平台拒绝）：如实报错就停在这儿 ——
     // 一张会员专辑不该一首首跳过去刷一屏提示，用户要看到的是「为什么放不了」。
     let url: string;
@@ -563,6 +592,13 @@ export class PlaybackEngine {
     // 能跳就跳到下一首（见 skipBrokenTrack），跳不动才落 error。
     try {
       this.audio.src = url;
+      // silent：只把这一首挂到元素上，不出声、不记播放事件（删除暂停中的当前曲目时用 ——
+      // 用户没按播放，引擎就不该自己开播；元素备好，他按播放能立刻接上）。
+      if (opts?.silent) {
+        this.status = 'paused';
+        this.emit();
+        return;
+      }
       await this.audio.play();
       this.status = 'playing';
       this.emit();
@@ -636,6 +672,17 @@ export class PlaybackEngine {
   }
 
   async toggle() {
+    // 手还按在盘上：媒体键的播 / 停只改「松手之后接不接着放」的意图 —— 声音与元素都归手势，
+    // 这里碰不得。不挡的话，按住搓碟时按暂停会变成「松手有声、状态却是暂停」，
+    // 按住时按播放则相反（状态在播、元素被松手时的收尾停住，成了没声）。
+    if (this.scratch) {
+      const want = this.status !== 'playing';
+      this.scratch.resumePlaying = want;
+      this.scratch.intentChanged = true;
+      this.status = want ? 'playing' : 'paused';
+      this.emit();
+      return;
+    }
     if (this.status === 'playing') {
       this.pauseWithMotor();
       return;
@@ -665,8 +712,17 @@ export class PlaybackEngine {
   /** 暂停：断电滑停。元素那边的收尾（停声、归位）都在 motorEnd ——
    *  这里先把状态翻掉，再让转速滑下去。 */
   private pauseWithMotor() {
-    // 减少动态效果：不做斜坡（与旧行为一致，盘面本来就不转）；手在盘上时也不插手，交给手势收尾
-    const ramp = !this.scratch && !prefersReducedMotion() && this.index >= 0 && !!this.queue[this.index];
+    // 手在盘上：只改意图（元素本来就停着，声音归手势）—— 与 toggle 同一口径，
+    // 松手时 endScratch 按这份意图收尾，不会出现「状态暂停、元素却被重新 play()」
+    if (this.scratch) {
+      this.scratch.resumePlaying = false;
+      this.scratch.intentChanged = true;
+      this.status = 'paused';
+      this.emit();
+      return;
+    }
+    // 减少动态效果：不做斜坡（与旧行为一致，盘面本来就不转）
+    const ramp = !prefersReducedMotion() && this.index >= 0 && !!this.queue[this.index];
     this.status = 'paused';
     if (ramp) this.motorBegin('stopping', this.motor ? this.motor.rate : 1);
     else {
@@ -844,7 +900,13 @@ export class PlaybackEngine {
     // 后面那三件套才是在干净的底子上做的
     this.motorAbort();
     // 先立会话再暂停：pause 事件（异步）回来时看到 scratch 已经存在，就不会把状态写成暂停
-    this.scratch = { live: opts.live, resumePlaying: playing, time, pitchFollow: false };
+    this.scratch = {
+      live: opts.live,
+      resumePlaying: playing,
+      time,
+      pitchFollow: false,
+      intentChanged: false,
+    };
     // 元素还在出声就得停（含滑停未完的情形 —— 那会儿对外已经是暂停，声音却还响着）：
     // 手指一按下去，声音就归手势
     if (!this.audio.paused) this.audio.pause();
@@ -941,9 +1003,20 @@ export class PlaybackEngine {
     void a.play().catch(() => undefined);
   }
 
+  /** 松手之后要不要接着放：搓碟期间按过媒体键就返回那次的结果，否则 null（调用方用起手时的姿态）。
+   *  视图的盘面动画要跟着这个走 —— 它记的是**起手那一刻**的姿态，而搓碟期间用户可能按过媒体键，
+   *  拿旧姿态去放 / 停盘面就和声音对不上了。 */
+  scratchResumeIntent(): boolean | null {
+    const s = this.scratch;
+    return s && s.intentChanged ? s.resumePlaying : null;
+  }
+
   /** 抬手：把最终位置写回元素，并按起手前的姿态回到播放 / 暂停 */
   endScratch(time: number, resume: boolean) {
     if (!this.scratch) return;
+    // 搓碟期间按过媒体键的话，那次意图说了算：视图传进来的是**起手那一刻**的姿态，
+    // 按它收尾就会出现「状态暂停、元素却被重新 play()」（或反过来：状态在播、元素停着）
+    const wantResume = this.scratch.intentChanged ? this.scratch.resumePlaying : resume;
     this.applyPitchFollow(false); // 交还元素：保音高还回去（要在清掉会话之前）
     this.scratch = null;
     const d = this.audioDuration();
@@ -960,11 +1033,14 @@ export class PlaybackEngine {
       }
     }
     this.audio.playbackRate = 1;
-    if (resume) {
+    if (wantResume) {
       if (this.audio.paused) void this.audio.play().catch(() => void this.onAudioError());
     } else if (!this.audio.paused) {
       this.audio.pause();
     }
+    // 状态在这里显式落定：元素那边的事件是**异步**的，而且「元素本来就停着」时压根不会来
+    //（轻量路手停住时元素就是暂停的）—— 只靠它推断，会留下「对外在播、元素却停着」的窗口
+    this.status = wantResume ? 'playing' : 'paused';
     this.emit();
   }
 

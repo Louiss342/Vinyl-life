@@ -35,7 +35,7 @@ test('快照：播放器只写变化的那两行，不再全量遍历队列行',
   );
   assert.match(
     src,
-    /const indexChanged = s\.index !== this\.lastIndex;[\s\S]{0,300}?if \(indexChanged \|\| queueRebuilt\)/,
+    /const indexChanged = s\.index !== prevIndex;[\s\S]{0,300}?if \(indexChanged \|\| queueRebuilt\)/,
     '只在「换曲」或「队列刚重建」时写高亮'
   );
 });
@@ -44,8 +44,15 @@ test('快照：定位跟随只在换曲时量矩形（currentRowVisible 会强�
   const src = read('src/views/player-view.ts');
   assert.match(
     src,
-    /const wasVisible = indexChanged \? this\.currentRowVisible\(\) : false;/,
+    /const wasVisible = indexChanged \? this\.currentRowVisible\(prevIndex\) : false;/,
     'getBoundingClientRect 是强制回流，不能每次快照都问'
+  );
+  // 量的必须是**上一行**：lastIndex 紧接着就改写成新行，量成新行时跟随播放滚动会整条失效
+  assert.match(src, /const prevIndex = this\.lastIndex;/, '先把上一行的下标记下来');
+  assert.match(
+    src,
+    /private currentRowVisible\(index: number\): boolean \{\n\s*const row = this\.queueRows\[index\];/,
+    '下标由调用方给，别读 this.lastIndex'
   );
 });
 
@@ -104,9 +111,10 @@ test('工具栏与网格跨渲染复用：render 只在首次（或 DOM 掉了�
   const src = read('src/views/shelf-view.ts');
   assert.match(
     src,
-    /const fresh = !this\.toolbarEl \|\| !this\.gridHost \|\| this\.toolbarEl\.isConnected === false;/,
+    /const fresh = this\.forceRebuild \|\| !this\.toolbarEl \|\| !this\.gridHost \|\| this\.toolbarEl\.isConnected === false;/,
     '判据要认「首次 / 容器没了」，别每次刷新都走整套重建'
   );
+  assert.match(src, /this\.forceRebuild = false;/, '用完就复位：只在被要求的那一次重建');
   assert.match(
     src,
     /\} else \{[\s\S]{0,300}?this\.syncHeading\(\);[\s\S]{0,120}?this\.syncDisplayButton\(\);/,
@@ -139,4 +147,24 @@ test('vault 事件：两处（插件层缓存作废 / 专辑墙刷新）共用�
       `${name}：别再退回「不看路径一律作废」`
     );
   }
+});
+
+test('分批追加收尾：把播放态与勾选态补到新卡片上（它们只在第一帧那批上铺过）', () => {
+  const src = read('src/views/shelf-view.ts');
+  assert.match(
+    src,
+    /this\.gridBatch = null;[\s\S]{0,400}?this\.syncBatch\(\);[\s\S]{0,140}?if \(this\.lastSnap\) this\.updatePlaying\(this\.lastSnap, true\);/,
+    '分帧追加结束后要补一次：否则 60 名之后的卡片永远拿不到 is-playing / is-batched-selected'
+  );
+});
+
+test('切语言：走 applyLanguage 强制重建（增量分支补不上工具栏与卡片的文案）', () => {
+  const view = read('src/views/shelf-view.ts');
+  assert.match(view, /applyLanguage\(\) \{\n\s*this\.forceRebuild = true;\n\s*this\.render\(\);/, '视图侧：标一次强制重建');
+  const main = read('src/main.ts');
+  assert.match(
+    main,
+    /typeof v\.applyLanguage === 'function'\) v\.applyLanguage\(\)/,
+    'main 的 refreshLanguage 要调它 —— 只调 render 会落到增量分支上，文案停在旧语言'
+  );
 });

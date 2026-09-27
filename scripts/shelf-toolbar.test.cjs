@@ -424,7 +424,11 @@ test('接线：陈列浮层 —— 来源 / 依据 + 方向两个下拉 / 显示
 test('接线：浮层单开、点外关闭、Esc 关闭且焦点回到入口', () => {
   assert.match(VIEW, /private openPanel\(kind: 'display' \| 'add', anchor: HTMLElement\)[\s\S]{0,80}?this\.closePanel\(\);/, '开新浮层先收旧的（同时最多一个）');
   assert.match(VIEW, /p\.el\.contains\(target\) \|\| p\.anchor\.contains\(target\)/, '点浮层内 / 点入口本身：不关');
-  assert.match(VIEW, /document\.addEventListener\('pointerdown', this\.onPanelDocPointer, true\)/, '点外关闭走 pointerdown 捕获');
+  // 监听挂在**锚点所在的文档**上：专辑墙可以被拖进独立窗口，那时主 document 收不到
+  // 弹出窗口里的点击，浮层就成了「点外面也关不掉」（见 openPanel 的注释）
+  assert.match(VIEW, /doc\.addEventListener\('pointerdown', this\.onPanelDocPointer, true\)/, '点外关闭走 pointerdown 捕获');
+  assert.match(VIEW, /const doc = anchor\.ownerDocument \?\? document;/, '浮层与监听都跟着锚点所在的文档');
+  assert.match(VIEW, /const doc = panel\?\.doc \?\? document;/, '关闭时从同一个文档上摘监听');
   assert.match(VIEW, /ev\.key === 'Escape'[\s\S]{0,200}?anchorEl\?\.focus\(\)/, 'Esc 关闭后焦点还给入口');
   assert.match(VIEW, /private placePanel[\s\S]{0,1400}?pane\.left \+ 8/, '位置夹在专辑墙窗格内');
   // 宽度：优先收在窗格里，窗格太窄时保底一个可读下限（搜索结果「封面 + 标题 + 操作」三栏挤不下）

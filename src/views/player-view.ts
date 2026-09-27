@@ -1126,10 +1126,14 @@ export class VinylPlayerView extends ItemView {
     // 只有类名的话，读屏用户翻队列时不知道现在放到哪儿了。
     // 只写变化的那两行：快照每 400ms 一次，几百行的队列全量 toggle 纯属白干；
     // 队列刚重建过则必须补写（新行上没有这个类）。
-    const indexChanged = s.index !== this.lastIndex;
+    const prevIndex = this.lastIndex;
+    const indexChanged = s.index !== prevIndex;
+    // 量的是**上一行**：下标显式传（lastIndex 下面就要改写；依赖先后顺序在这儿翻过车）
+    // 「看得见吗」要量两个元素的矩形（强制回流）：只在真的换了曲目时才问
+    const wasVisible = indexChanged ? this.currentRowVisible(prevIndex) : false;
     if (indexChanged || queueRebuilt) {
       if (indexChanged && !queueRebuilt) {
-        const prevRow = this.queueRows[this.lastIndex];
+        const prevRow = this.queueRows[prevIndex];
         prevRow?.classList.remove('is-current');
         prevRow?.setAttribute('aria-current', 'false');
       }
@@ -1141,8 +1145,6 @@ export class VinylPlayerView extends ItemView {
 
     // 定位正在播的那首：打开时定位一次；之后跟随播放走，但只在「上一条还看得见」时才跟 ——
     // 自己往上翻看队列了就别把人拽回来（翻远了从队列菜单定位回来）。
-    // 「看得见吗」要量两个元素的矩形（强制回流）：只在真的换了曲目时才问
-    const wasVisible = indexChanged ? this.currentRowVisible() : false;
     if (s.index >= 0 && (this.pendingLocate || (indexChanged && wasVisible))) {
       this.pendingLocate = false;
       this.locateCurrentRow();
@@ -1253,9 +1255,10 @@ export class VinylPlayerView extends ItemView {
     els.labelEmpty.addClass('vinyl-hidden');
   }
 
-  /** 正在播的那一行此刻在不在队列的视野里（跟随播放的判据：切歌前还看得见才跟） */
-  private currentRowVisible(): boolean {
-    const row = this.queueRows[this.lastIndex];
+  /** 指定的那一行此刻在不在队列的视野里（跟随播放的判据：切歌前还看得见才跟）。
+   *  下标由调用方给：它要问的是「**上一行**」，而 lastIndex 在同一个函数里就被改写了。 */
+  private currentRowVisible(index: number): boolean {
+    const row = this.queueRows[index];
     const box = this.els?.queueBox;
     if (!row || !box) return true; // 判不了就当可见：保持旧行为（跟随）
     const r = row.getBoundingClientRect();
@@ -2267,7 +2270,8 @@ export class VinylPlayerView extends ItemView {
   private scratchRelease() {
     const st = this.scratch;
     if (!st || st.phase === 'settle') return;
-    if (!st.playing) {
+    // 松手后要不要转起来：搓碟期间按过媒体键就以那次为准（见 engine.scratchResumeIntent）
+    if (!(this.plugin.engine.scratchResumeIntent() ?? st.playing)) {
       this.scratchFinish(); // 盘本来就是停的：不回转，位置留在松手处（＝手动定位）
       return;
     }
@@ -2287,18 +2291,21 @@ export class VinylPlayerView extends ItemView {
       index: this.lastSnapshot?.index ?? st.index,
       until: Date.now() + SEEK_HOLD_MS,
     };
+    // 交还给谁：搓碟期间按过媒体键的话，那次姿态说了算（引擎按同一份意图写元素）——
+    // 只认起手时的姿态会出现「盘面定住、声音却在放」这种两边打架
+    const resume = this.plugin.engine.scratchResumeIntent() ?? st.playing;
     const els = this.els;
     if (els) {
-      // 交还旋转：起手前在播 → 盘面从当前角度接着转（负延迟续相位）；
-      // 起手前是暂停 → 就地定住（暂停中搓碟 = 手动定位，松手就停在那儿）。两处都不跳
-      if (st.playing) this.releaseSpin(st.angle);
+      // 交还旋转：接回播放 → 盘面从当前角度接着转（负延迟续相位）；
+      // 停在暂停 → 就地定住（暂停中搓碟 = 手动定位，松手就停在那儿）。两处都不跳
+      if (resume) this.releaseSpin(st.angle);
       else this.holdSpin(st.angle);
       els.vinyl.removeClass('is-scratching');
       els.turntable.removeClass('is-scratching');
     }
     // 顺序有意为之：先把元素接回去（seek + play 都要几十毫秒才出声），再让搓碟台按它的收尾包络
     // 淡出 —— 两个声音叠一点点，比中间空一拍好。反过来写就是一个听得见的窟窿。
-    this.plugin.engine.endScratch(st.pos, st.playing);
+    this.plugin.engine.endScratch(st.pos, resume);
     this.scratchDeck?.end();
     this.scratchTracker.reset();
   }

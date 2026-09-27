@@ -349,7 +349,7 @@ test('接线：定位与跟随 —— 打开定位一次，切歌只在「上一
   assert.match(src, /this\.pendingLocate = true;/, 'onOpen 里定位一次');
   assert.match(
     src,
-    /const wasVisible = indexChanged \? this\.currentRowVisible\(\) : false;[\s\S]{0,600}?this\.pendingLocate \|\| \(indexChanged && wasVisible\)/,
+    /const wasVisible = indexChanged \? this\.currentRowVisible\(prevIndex\) : false;[\s\S]{0,600}?this\.pendingLocate \|\| \(indexChanged && wasVisible\)/,
     '跟随的判据：自己翻远了就别把人拽回来；「看得见吗」要量两个矩形（强制回流），只在真换了曲目时才问'
   );
   assert.match(

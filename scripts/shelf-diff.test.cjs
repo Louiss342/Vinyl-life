@@ -181,3 +181,48 @@ test('计划：笔记改名 = 旧的撤 + 新的建（不去猜是不是同一�
     ['create']
   );
 });
+
+test('签名：笔记里的 id / 音频目录 / 源偏好变了，卡片必须重画', () => {
+  // 这些字段不画在卡片上，但**点击闭包握着的那份 AlbumInfo 里有**：签名不含它们的话，
+  // 在笔记里改了 neteaseId（或走「切换音源」把 source 写回笔记）之后卡片被复用，
+  // 点下去按旧 id / 旧目录建队列 —— 播的是另一张专辑，且要等这张卡因别的原因重画才自愈。
+  const base = {
+    path: 'A.md',
+    displayProps: {},
+    cover: '',
+    edition: '',
+    neteaseId: 1,
+    qqId: '',
+    kugouId: '',
+    audioFolderRef: '',
+    audioRefs: [],
+    sourcePref: 'auto',
+  };
+  const flags = { local: false, netease: true, qq: false, kugou: false };
+  const sig = (over, labels) => cardSignature({ ...base, ...over }, flags, ['year'], labels);
+  const plain = sig({});
+
+  assert.notEqual(sig({ neteaseId: 2 }), plain, 'neteaseId 改了');
+  assert.notEqual(sig({ qqId: 'mid' }), plain, 'qqId 改了');
+  assert.notEqual(sig({ kugouId: '42' }), plain, 'kugouId 改了');
+  assert.notEqual(sig({ audioFolderRef: 'Vinyl Life/Audio/B' }), plain, '音频目录改了');
+  assert.notEqual(sig({ audioRefs: ['Vinyl Life/Audio/B/01.mp3'] }), plain, 'audio 列表改了');
+  assert.notEqual(sig({ sourcePref: 'qq' }), plain, '笔记指定了音源');
+  assert.notEqual(sig({}, { year: '发行年' }), plain, '属性显示名改了（卡片上的 aria-label 用它）');
+  assert.equal(sig({}), plain, '内容一样就一样：别每次刷新都白重画');
+});
+
+test('签名：只变「有没有音源」这四个布尔时仍然重画（旧口径不能丢）', () => {
+  const album = {
+    path: 'A.md',
+    displayProps: {},
+    cover: '',
+    edition: '',
+    neteaseId: 1,
+    audioRefs: [],
+    sourcePref: 'auto',
+  };
+  const off = { local: false, netease: false, qq: false, kugou: false };
+  const on = { local: true, netease: false, qq: false, kugou: false };
+  assert.notEqual(cardSignature(album, off, []), cardSignature(album, on, []), '拖音频进专辑：角标与点击行为都变');
+});

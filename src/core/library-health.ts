@@ -103,22 +103,33 @@ export interface ProbeJob {
   source: OnlineSource;
 }
 
-/** 每张专辑「实际会用」的音源：笔记里指定了就按它，否则按自动选源的优先级
- *  （本地 > 网易云 > QQ > 酷狗，与 buildAlbumQueue 同一套口径）。纯本地或没音源的返回 null。 */
-function effectiveSource(album: AlbumInfo, sources: AlbumSources): ActiveSource | null {
-  if (album.sourcePref !== 'auto') return sources[album.sourcePref] ? album.sourcePref : null;
+/** 每张专辑「实际会用」的音源：笔记里指定了就按它，否则用**用户设的**默认音源；
+ *  默认音源本身是 auto 时才走自动优先级（本地 > 网易云 > QQ > 酷狗）—— 与 buildAlbumQueue
+ *  的 policy 同一套口径（见 core/queue）。少了 defaultSource 这一半，设置里选「仅 QQ」之后
+ *  健康检查试播的还是本地 / 网易云，结论与实际播放对不上。纯本地或没音源的返回 null。 */
+function effectiveSource(
+  album: AlbumInfo,
+  sources: AlbumSources,
+  defaultSource: ActiveSource | 'auto' = 'auto'
+): ActiveSource | null {
+  const policy: ActiveSource | 'auto' =
+    album.sourcePref !== 'auto' ? album.sourcePref : defaultSource;
+  if (policy !== 'auto') return sources[policy] ? policy : null;
   for (const source of ['local', 'netease', 'qq', 'kugou'] as ActiveSource[]) {
     if (sources[source]) return source;
   }
   return null;
 }
 
-/** 试播清单：只列在线音源（本地音轨由静态检查负责，不用试播）。 */
+/** 试播清单：只列在线音源（本地音轨由静态检查负责，不用试播）。
+ *  defaultSource 是设置里的「默认音源」：scope = 'current'（只试每张实际会用的那个源）
+ *  要按它来算，否则选的源与实际播放不是同一个。 */
 export function probeJobs(
   app: App,
   albums: AlbumInfo[],
   failures: Record<string, SourceFailure>,
-  scope: ProbeScope = 'all'
+  scope: ProbeScope = 'all',
+  defaultSource: ActiveSource | 'auto' = 'auto'
 ): ProbeJob[] {
   const jobs: ProbeJob[] = [];
   for (const album of albums) {
@@ -130,7 +141,7 @@ export function probeJobs(
       continue;
     }
     if (scope === 'current') {
-      const source = effectiveSource(album, sources);
+      const source = effectiveSource(album, sources, defaultSource);
       if (source && source !== 'local') jobs.push({ album, source });
       continue;
     }
