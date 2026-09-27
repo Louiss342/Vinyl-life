@@ -389,6 +389,21 @@ const randomHex = (n) => crypto.randomBytes(n / 2).toString('hex');
 
 // 网关日志：控制台 + 落盘（VINYL_LOG_FILE 由主进程传入绝对路径）
 const LOG_FILE = process.env.VINYL_LOG_FILE || '';
+
+/** 每行前面挂本地时间。为什么非有不可：这份文件的用途是用户报障时贴进 issue，而没有时间戳
+ *  就没法把一条失败放回它发生的时刻 —— 一次启动会写十几行，多次启动的日志又首尾相接
+ *  （网关每次随 Obsidian 起一份），光看内容分不清哪条属于哪一次。
+ *  格式取 `YYYY-MM-DD HH:mm:ss`（本地时间，与用户看到的时钟一致）；不含 5 位以上数字串，
+ *  也不会被下面的路径 / 查询串规则误伤（见 redact.js）。 */
+function logStamp() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return (
+    `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
+    `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+  );
+}
+
 function serverLog(...args) {
   console.log(...args);
   if (!LOG_FILE) return;
@@ -406,13 +421,30 @@ function serverLog(...args) {
       fs.renameSync(LOG_FILE, LOG_FILE + '.1');
       args = [`[vinyl-server] 日志超过 ${Math.round(MAX_LOG_BYTES / 1024)} KB，上一份已滚到 gateway.log.1`];
     }
-    fs.appendFileSync(LOG_FILE, redactLogText(renderLogArgs(args)) + '\n');
+    fs.appendFileSync(LOG_FILE, logStamp() + ' ' + redactLogText(renderLogArgs(args)) + '\n');
   } catch (_) {}
 }
 
 /** 参数拼成一行：字符串原样、其余 JSON（与从前同一口径，只是多过一道脱敏） */
 function renderLogArgs(args) {
   return args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
+}
+
+/** 启动时把**已经存在**的日志就地净化一遍：脱敏只作用于新写入的行，而升级前那份文件里
+ *  可能已经留下了个人标识（老版本的 qq 登录日志里就是完整的 QQ 号），它会一直留到下次
+ *  512 KB 轮转 —— 而这份文件正是用户报障时要贴进 issue 的那一份。
+ *  只在这一处做一次（网关每次启动一份，不是热路径）；内容没变就不回写，免得白动 mtime。 */
+function sanitizeExistingLog() {
+  if (!LOG_FILE) return;
+  for (const file of [LOG_FILE, LOG_FILE + '.1']) {
+    try {
+      const before = fs.readFileSync(file, 'utf8');
+      const after = redactLogText(before);
+      if (after !== before) fs.writeFileSync(file, after);
+    } catch (_) {
+      // 文件不存在 / 读不了：本来就没有需要净化的内容
+    }
+  }
 }
 
 // ==================== 出站代理 ====================
@@ -1031,6 +1063,11 @@ function sendStreamFile(req, res, file) {
       // 响应已经结束：无处可收，忽略
     }
   });
+  // 客户端中断必须销毁读流：<audio> 拖进度条 / 切曲 / 换 src 都会中断上一次请求，
+  // 这走的是 res 的 close（不是读流的 error）。只 pipe 的话 Node 把它 unpipe 掉就完了，
+  // fs.ReadStream 不 destroy 就一直攥着 fd —— 每次中断漏一个，几百次之后
+  // 进程的 fd 预算见底，之后所有供流 / 写凭据 / 建连一起失败，而进程还活着（自愈只看进程退出）。
+  res.on('close', () => stream.destroy());
   res.writeHead(range ? 206 : 200, headers);
   stream.pipe(res);
 }
@@ -1122,6 +1159,8 @@ const server = http.createServer(async (req, res) => {
 // 莫名其妙不可用」。改成网关自己 bind(0) 再回报真实端口，这条缝就不存在了。
 // 回报格式固定在下面这一行上，插件侧按它解析（改格式要同步改 server-manager 的 PORT_RE）。
 const port = Number(process.env.VINYL_PORT || 0);
+// 先净化历史日志（见 sanitizeExistingLog），再开始写新行 —— 顺序反了会把刚写的那行也当历史读进来
+sanitizeExistingLog();
 server.listen(port, '127.0.0.1', () => {
   serverLog('[vinyl-server] listening on 127.0.0.1:' + server.address().port);
 });

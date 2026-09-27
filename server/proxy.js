@@ -22,17 +22,27 @@ function proxyError(msgFn, key, params) {
   return err;
 }
 
-/** 单个地址（'http://user:pass@host:port' / 'host:port'）→ http 代理配置 */
+/** 单个地址（'http://user:pass@host:port' / 'host:port' / 'user:pass@host:port'）→ http 代理配置 */
 function httpProxyFrom(value, source, raw) {
   const isUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(value);
-  // 裸形态先过一道形状检查：认不出的值（配置写错）显式标记，别当成国际化主机名去连
-  if (!isUrl && !/^[A-Za-z0-9.\-_]+(:\d+)?$/.test(value)) {
+  // 裸形态先过一道形状检查：认不出的值（配置写错）显式标记，别当成国际化主机名去连。
+  // 两种裸形态都认：`host:port` 与 `user:pass@host:port` —— 后者是 curl 系工具的常规写法
+  //（不支持它的话，用户配了代理却一路走 direct，还会被当成「配置写错」记进日志）。
+  const bareHost = /^[A-Za-z0-9.\-_]+(:\d+)?$/;
+  const bareWithAuth = /^[^@\s/]+@[A-Za-z0-9.\-_]+(:\d+)?$/;
+  if (!isUrl && !bareHost.test(value) && !bareWithAuth.test(value)) {
     return { mode: 'unsupported', source, raw };
   }
   let url;
   try {
     url = isUrl ? new URL(value) : new URL('http://' + value);
   } catch (_) {
+    return { mode: 'unsupported', source, raw };
+  }
+  // 只认 http/https：隧道（CONNECT）那套实现只对这两种协议成立。SOCKS 一律按不支持处理 ——
+  // 不支持 = 直连，用户立刻看得出「代理没生效」；照 HTTP 代理解析则会把所有请求都往一个
+  // SOCKS 端口发 CONNECT，全线失败，而日志还写着「经代理」，把排查带偏。
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     return { mode: 'unsupported', source, raw };
   }
   const port = Number(url.port || (url.protocol === 'https:' ? 443 : 80));

@@ -99,8 +99,8 @@ test('loadUtilityProcess：两条路都拿不到 → null（调用方报明确�
 
 // ---- 2) ServerManager 内嵌分支端到端 ----
 
-function makeUtilityProcessStub({ failFork = false, withStdout = true } = {}) {
-  const calls = { env: null, serviceName: '', stdio: null, forks: 0 };
+function makeUtilityProcessStub({ failFork = false, withStdout = true, silentStdout = false } = {}) {
+  const calls = { env: null, serviceName: '', stdio: null, forks: 0, pids: [] };
   return {
     calls,
     fork(modulePath, _args, options) {
@@ -112,14 +112,16 @@ function makeUtilityProcessStub({ failFork = false, withStdout = true } = {}) {
       // 测试环境没有 Electron：用真 Node 起同一个网关文件，模拟 utility fork 的进程语义。
       // withStdout = true 按 stdio:'pipe' 起并把子进程 stdout 透出去 —— 端口交接
       //（网关 bind(0) → 回报真实端口 → 父进程读它）因此被真实跑到，而不是只走退回路径。
+      // silentStdout：有流但永不回报端口（旧 Electron / remote 那种拿不到内容的通道）。
       const child = spawn(process.execPath, [modulePath], {
         env: options && options.env,
         stdio: withStdout ? ['ignore', 'pipe', 'ignore'] : 'ignore',
       });
+      calls.pids.push(child.pid);
       return {
         pid: child.pid,
         kill: () => child.kill(),
-        stdout: withStdout ? child.stdout : undefined,
+        stdout: withStdout ? (silentStdout ? { on() {} } : child.stdout) : undefined,
         on: (event, cb) => {
           if (event === 'exit') child.on('exit', (code) => cb(code));
         },
@@ -228,6 +230,71 @@ test('应用内网关：拿不到 stdout 的通道退回「预探测端口」，
     assert.equal(good.status, 200);
   } finally {
     manager.stop();
+  }
+});
+
+// ---- 2b) 崩溃自愈 与 卸载闸门（后者是它们的边界）----
+
+test('自愈：网关进程自己没了 → 重启一次', async () => {
+  const utility = makeUtilityProcessStub();
+  const { manager } = loadManager({ utility });
+  try {
+    assert.equal(await manager.ensure(), true);
+    process.kill(utility.calls.pids[0]); // 模拟网关自己崩了
+    for (let i = 0; i < 60 && !(utility.calls.forks >= 2 && manager.state === 'running'); i++) {
+      await sleep(50);
+    }
+    assert.equal(utility.calls.forks, 2, '崩一次重启一次');
+    assert.equal(manager.state, 'running');
+    assert.notEqual(utility.calls.pids[1], utility.calls.pids[0], '起来的是新进程，不是旧的');
+  } finally {
+    manager.dispose();
+  }
+});
+
+test('卸载闸门：网关崩在卸载前一瞬，自愈的定时器要被撤掉（否则卸载后还会 fork 出新网关）', async () => {
+  const utility = makeUtilityProcessStub();
+  const { manager } = loadManager({ utility });
+  try {
+    assert.equal(await manager.ensure(), true);
+    process.kill(utility.calls.pids[0]);
+    // 等自愈把那次重启排上（500ms 后才执行）—— 用户恰好在这一瞬禁用 / 重载插件
+    for (let i = 0; i < 30 && manager.restarts === 0; i++) await sleep(50);
+    assert.equal(manager.restarts, 1, '探针：自愈已经排好了一次重启');
+    manager.dispose();
+    await sleep(900); // 越过那次 500ms 的重启
+    assert.equal(utility.calls.forks, 1, '卸载之后不许再 fork：新网关没人再持有引用去回收它');
+    assert.equal(manager.utility, null);
+    assert.equal(manager.state, 'stopped');
+  } finally {
+    manager.dispose();
+  }
+});
+
+test('卸载闸门：卡在「等网关回报端口」时卸载 → 不退回预探测再 fork 一次', async () => {
+  const utility = makeUtilityProcessStub({ silentStdout: true });
+  const { manager } = loadManager({ utility });
+  try {
+    const pending = manager.ensure(); // 第一轮 fork 拿不到端口，卡在 15s 等待里
+    for (let i = 0; i < 40 && utility.calls.forks === 0; i++) await sleep(25);
+    await sleep(80);
+    manager.dispose();
+    assert.equal(await pending, false, '这一轮如实失败，不猜端口');
+    await sleep(200);
+    assert.equal(utility.calls.forks, 1, '卸了就不该有第二次 fork');
+    const pid = utility.calls.pids[0];
+    let alive = true;
+    for (let i = 0; i < 20 && alive; i++) {
+      await sleep(100);
+      try {
+        process.kill(pid, 0);
+      } catch {
+        alive = false;
+      }
+    }
+    assert.equal(alive, false, '那一轮 fork 出来的进程也要收干净');
+  } finally {
+    manager.dispose();
   }
 });
 

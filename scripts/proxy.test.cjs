@@ -121,6 +121,31 @@ test('parseProxySpec：DIRECT / PROXY 链 / URL（含认证）/ host:port / SOCK
   assert.equal(parseProxySpec('', 'X'), null);
 });
 
+test('parseProxySpec：SOCKS 的 URL 形态同样按不支持处理（别当成 HTTP 代理去发 CONNECT）', () => {
+  // 空格形态（PROXY 链里）本来就认成 unsupported；URL 形态以前会落进 httpProxyFrom ——
+  // 于是所有请求都往一个 SOCKS 端口发 CONNECT、全线失败，而日志还写着「经代理 host:port」，
+  // 把排查方向带偏（Clash / v2ray 用户在 ALL_PROXY 里常这么写）。不支持 = 直连。
+  for (const spec of [
+    'socks5://127.0.0.1:1080',
+    'socks://127.0.0.1:1080',
+    'socks5h://127.0.0.1:1080',
+    'socks4://10.0.0.2:1080',
+  ]) {
+    assert.equal(parseProxySpec(spec, 'ALL_PROXY').mode, 'unsupported', spec);
+  }
+  assert.equal(parseProxySpec('ftp://10.0.0.2:21', 'ALL_PROXY').mode, 'unsupported', '只有 http/https 走得通隧道');
+});
+
+test('parseProxySpec：裸形态带认证（user:pass@host:port）要认，别当成「配置写错」', () => {
+  // curl 系的 HTTPS_PROXY 常这么写（不带 scheme）。以前它落在形状检查外 → unsupported
+  //（代理静默失效，还把那串连同口令一起写进日志），现在按 http 代理解析。
+  const bare = parseProxySpec('user:pass@10.0.0.2:8080', 'HTTPS_PROXY');
+  assert.equal(bare.mode, 'http');
+  assert.equal(bare.host, '10.0.0.2');
+  assert.equal(bare.port, 8080);
+  assert.equal(bare.auth, 'Basic ' + Buffer.from('user:pass').toString('base64'));
+});
+
 test('resolveProxyConfig：VINYL_PROXY 优先于环境变量；DIRECT 是明确结论；NO_PROXY 原样带出', () => {
   assert.equal(resolveProxyConfig({}).mode, 'direct');
   const prefer = resolveProxyConfig({

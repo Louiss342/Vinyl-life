@@ -15,7 +15,7 @@ const { redactLogText, MAX_LOG_BYTES } = require('../server/redact.js');
 
 // ============ A. 脱敏规则（纯函数） ============
 
-test('脱敏：长数字串（uin / cookie 名里的账号）抹掉，长度与端口留着', () => {
+test('脱敏：账号数字串（uin / cookie 名里的账号）抹掉，端口与 URL 里的 id 留着', () => {
   assert.equal(
     redactLogText('[vinyl-server] qq qr/check code: 803（已校验并保存，uin 1149716682）'),
     '[vinyl-server] qq qr/check code: 803（已校验并保存，uin ***）'
@@ -30,7 +30,34 @@ test('脱敏：长数字串（uin / cookie 名里的账号）抹掉，长度与�
     '[vinyl-server] cookie 已写入 .qq-cookie 1630 bytes',
     '长度是 4 位以内：不受影响'
   );
+  // 端口与 URL 路径里的 id **不是**个人标识，而是报障时最需要的坐标。判据因此不是长度
+  //（bind(0) 给的临时端口常是 5 位），而是「前面紧挨着的是不是 `:` 或 `/`」。
   assert.match(redactLogText('出站网络: 经代理 127.0.0.1:7993'), /127\.0\.0\.1:7993/, '端口保留');
+  assert.equal(
+    redactLogText('[vinyl-server] listening on 127.0.0.1:10171'),
+    '[vinyl-server] listening on 127.0.0.1:10171',
+    '5 位临时端口也要留着：升级前它会被打码，日志里只剩 ***'
+  );
+  assert.equal(
+    redactLogText('netease set-cookie 数量: 0 | url: https://music.163.com/weapi/v1/album/1967971'),
+    'netease set-cookie 数量: 0 | url: https://music.163.com/weapi/v1/album/1967971',
+    '专辑 / 曲目 id 是排查「这张专辑放不出来」的钥匙，同样留着'
+  );
+  assert.equal(redactLogText('曲目 id 1967971 也没了'), '曲目 id *** 也没了', '没有 : / 前缀的数字串照旧抹掉');
+});
+
+test('脱敏：代理串里的 user:pass 不写进日志（带 scheme 与裸形态都算）', () => {
+  assert.equal(
+    redactLogText('出站网络: 代理配置无法使用（user:pw@127.0.0.1:8080），按直连处理'),
+    '出站网络: 代理配置无法使用（***@127.0.0.1:8080），按直连处理',
+    '裸形态（HTTPS_PROXY 常这么写）：口令抹掉，host 留着'
+  );
+  assert.match(
+    redactLogText('HTTPS_PROXY=http://alice:s3cret@proxy.corp:3128 不可用'),
+    /\*\*\*@proxy\.corp:3128/,
+    '带 scheme 的形态同理'
+  );
+  assert.doesNotMatch(redactLogText('联系 alice@example.com'), /\*\*\*/i, '邮箱没有冒号：不该被误伤');
 });
 
 test('脱敏：绝对路径只留最后一段（库名与系统用户名不进日志）', () => {
@@ -56,15 +83,21 @@ test('脱敏：URL 的查询串不写进日志（封面直链常带签名）', (
 
 // ============ B. 接线（真实网关：进程内起一份，fs 只换掉盘面） ============
 
-function gatewayWith(logSize = 0) {
+function gatewayWith(logSize = 0, opts = {}) {
   const filename = path.resolve(__dirname, '../server/gateway.js');
   const requireFromGateway = createRequire(filename);
   const appended = [];
   const renamed = [];
   const removed = [];
+  const writes = [];
   let serverHandler = null;
   let logOnDisk = true; // 盘上已经有旧日志；滚动（rename）之后就没有了 —— statSync 照实报 ENOENT
   const files = new Map([['/test/.cookie', 'MUSIC_U=existing-account']]);
+  // 盘上先放一份旧日志：启动时的「净化既有内容」是模块顶层跑的，只能这样喂给它
+  if (opts.logContent !== undefined) {
+    files.set('/test/gateway.log', opts.logContent);
+    logOnDisk = true;
+  }
   const context = {
     require(name) {
       if (name === 'fs') {
@@ -74,6 +107,7 @@ function gatewayWith(logSize = 0) {
             return files.get(file);
           },
           writeFileSync(file, value) {
+            writes.push([file, value]);
             files.set(file, value);
           },
           appendFileSync(file, text) {
@@ -121,6 +155,8 @@ function gatewayWith(logSize = 0) {
     appended,
     renamed,
     removed,
+    writes,
+    files,
     call(method, url, query = {}) {
       const route = context.testRoutes.find((r) => r.method === method && r.pattern.test(url));
       assert.ok(route, `${method} ${url} exists`);
@@ -140,8 +176,46 @@ test('接线：写进文件的是脱敏后的行（封面失败那条最典型�
   assert.doesNotMatch(coverLine, /1149716682|sign=/, 'QQ 号与签名都不进文件');
   assert.match(coverLine, /p\.jpg\?…/);
   for (const line of g.appended) {
-    assert.doesNotMatch(line, /\d{5,}/, `日志里不该出现长数字串：${line.trim()}`);
+    assert.doesNotMatch(line, /uin \d|ptnick_\d|:\/\/[^@\s/]+@/, `日志里不该出现账号或口令：${line.trim()}`);
   }
+});
+
+test('接线：每行前面有时间戳（否则贴进 issue 的日志对不上时刻）', async () => {
+  const g = gatewayWith();
+  await assert.rejects(() =>
+    g.call('GET', '/api/cover', { url: 'https://cdn.example.com/p.jpg' })
+  );
+  assert.ok(g.appended.length > 0);
+  for (const line of g.appended) {
+    assert.match(
+      line,
+      /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \[vinyl-server\] /,
+      `每行都要带本地时间戳：${line.trim()}`
+    );
+  }
+});
+
+test('接线：启动时净化已存在的日志（升级前那份里可能留着个人标识）', () => {
+  // 脱敏只作用于新写入的行；老版本写进文件的 QQ 号会一直留到下次轮转 —— 而这份文件
+  // 正是用户报障时要贴出去的那一份。所以每次启动先把既有内容过一遍。
+  const g = gatewayWith(0, {
+    logContent: [
+      '2026-09-01 10:00:00 [vinyl-server] qq qr/check code: 803（已校验并保存，uin 1149716682）',
+      '2026-09-01 10:00:01 [vinyl-server] qq-login 取到 Cookie 键名: ptnick_1149716682',
+    ].join('\n'),
+  });
+  const cleaned = g.files.get('/test/gateway.log');
+  assert.doesNotMatch(cleaned, /1149716682/, '历史里的账号数字串要抹掉');
+  assert.match(cleaned, /uin \*\*\*/);
+  assert.match(cleaned, /ptnick_\*\*\*/);
+  assert.match(cleaned, /2026-09-01 10:00:00/, '时间戳这些诊断信息原样留着');
+});
+
+test('接线：日志已经干净就不回写（别白动 mtime）', () => {
+  const clean = '2026-09-01 10:00:00 [vinyl-server] listening on 127.0.0.1:10171\n';
+  const g = gatewayWith(0, { logContent: clean });
+  assert.equal(g.files.get('/test/gateway.log'), clean);
+  assert.equal(g.writes.length, 0, '内容没变就不该有写盘动作');
 });
 
 test('接线：超过上限先滚成 .1 再写，只留一代', async () => {

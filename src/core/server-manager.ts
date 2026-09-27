@@ -68,6 +68,12 @@ export class ServerManager {
   private stopping = false;
   private restarts = 0;
   private maxRestarts = 2;
+  /** 插件已卸载：此后一律不再拉起网关（见 dispose）。 */
+  private disposed = false;
+  /** 自愈那次重启的定时器；stop / dispose 必须能撤掉它，否则它会在这之后把网关拉起来。 */
+  private restartTimer: number | null = null;
+  /** 正在等网关回报端口时的「提前收手」回调（dispose 用：不必再等满 15s）。 */
+  private abortPortWait: (() => void) | null = null;
 
   constructor(private plugin: Plugin) {}
 
@@ -121,6 +127,7 @@ export class ServerManager {
 
   // —— 生命周期 ——
   async ensure(): Promise<boolean> {
+    if (this.disposed) return false;
     if (this.state === 'running') {
       try {
         // 就绪探测也要有超时：端口被占却没人应答时，这一句会一直吊着（见 request-error）
@@ -143,6 +150,7 @@ export class ServerManager {
   }
 
   private async start(): Promise<boolean> {
+    if (this.disposed) return false;
     this.state = 'starting';
     this.lastError = '';
     this.stopping = false;
@@ -160,6 +168,7 @@ export class ServerManager {
   // 用 Electron 自带的 Node（utilityProcess.fork）跑网关产物：扫码登录 / 导入 / 播放
   // 等在线能力不要求用户安装 Node.js（发布形态只带 main.js，网关源码内联其中）。
   private async startInApp(): Promise<boolean> {
+    if (this.disposed) return false;
     const up = loadUtilityProcess();
     if (!up) {
       this.state = 'error';
@@ -190,6 +199,9 @@ export class ServerManager {
     // 退回：拿不到 stdout 的通道（旧 Electron / remote 不给流）只能预探测一个端口显式传进去。
     // 那条老路仍有 TOCTOU，但网关现在会把「监听失败」写进日志并退出（见 gateway.js 的
     // server.on('error')），父进程的自愈会换一个端口重来 —— 不再是无声无息地死掉。
+    // 这一步之前再问一次：第一轮 fork 与等端口可能耗掉十几秒，期间插件可能已经卸载了 ——
+    // 那一轮 fork 会留下一个没人回收的网关（见 dispose）。
+    if (this.disposed) return false;
     try {
       this.port = await this.findFreePort();
     } catch (e) {
@@ -232,6 +244,11 @@ export class ServerManager {
     }
     if (opts.handoff) {
       const port = await this.waitReportedPort(proc, 15_000);
+      // 卸载发生在这一轮等待期间：这轮 fork 出来的进程就此收掉，绝不再换端口重来
+      if (this.disposed) {
+        this.stop();
+        return { ok: false, forked: true };
+      }
       // 没回报端口：要么进程没起来（原因写在 gateway.log），要么这条通道不给流。
       // 两种都不猜端口 —— 交给调用方决定是退回预探测还是报失败。
       if (!port) {
@@ -242,6 +259,10 @@ export class ServerManager {
     }
     // 就绪等待（最多 15s，与独立进程同一节奏；网关自身的报错写在 gateway.log）
     for (let i = 0; i < 100; i++) {
+      if (this.disposed) {
+        this.stop();
+        return { ok: false, forked: true };
+      }
       try {
         const r = await withRequestTimeout(
           requestUrl({ url: `${this.base}/api/ping`, headers: { 'x-vinyl-token': this.token }, throw: false }),
@@ -271,10 +292,13 @@ export class ServerManager {
       const finish = (port: number) => {
         if (done) return;
         done = true;
+        this.abortPortWait = null;
         window.clearTimeout(timer);
         resolve(port);
       };
       const timer = window.setTimeout(() => finish(0), timeoutMs);
+      // dispose 时提前收手：不必等满 15s 才知道这一轮已经作废
+      this.abortPortWait = () => finish(0);
       try {
         stream.on('data', (chunk: { toString(): string }) => {
           const m = PORT_RE.exec(String(chunk?.toString?.() ?? ''));
@@ -302,11 +326,16 @@ export class ServerManager {
     }
   }
 
-  /** 网关退出后的自愈：限次重启；超过上限进入 error（独立进程与应用内共用同一策略）。 */
+  /** 网关退出后的自愈：限次重启；超过上限进入 error（独立进程与应用内共用同一策略）。
+   *  定时器存句柄：stop / dispose 要能撤掉它 —— 网关崩在卸载前一瞬的话，
+   *  500ms 后那次重启会把网关拉到一个已经没人管得着它的世界里（见 dispose）。 */
   private scheduleRestart(code: number | undefined): void {
+    if (this.disposed) return;
     if (this.restarts < this.maxRestarts) {
       this.restarts++;
-      window.setTimeout(() => {
+      this.restartTimer = window.setTimeout(() => {
+        this.restartTimer = null;
+        if (this.disposed) return; // 这 500ms 里插件卸载了
         void this.ensure();
       }, 500);
     } else {
@@ -392,8 +421,23 @@ export class ServerManager {
     };
   }
 
+  /** 插件卸载时调用（onunload）：先关闸，再停进程。**顺序反了就有缝** ——
+   *  网关恰好在卸载前一瞬崩掉时，scheduleRestart 已经挂好了 500ms 后的那次重启，
+   *  而卸载之后没有任何人再持有这个 manager 去 stop 它：那个网关会活到 Obsidian 退出
+   *  （监听 127.0.0.1、继续写日志、按需读凭据文件），重载插件则新旧两个网关并存。
+   *  注释里那句「应用内网关随插件卸载一起回收」靠的就是这道闸。 */
+  dispose() {
+    this.disposed = true;
+    this.abortPortWait?.();
+    this.stop();
+  }
+
   stop() {
     this.stopping = true;
+    if (this.restartTimer !== null) {
+      window.clearTimeout(this.restartTimer);
+      this.restartTimer = null;
+    }
     if (this.utility) {
       try {
         this.utility.kill();
