@@ -31,7 +31,7 @@ import {
 import { DISC_DIRECTIONS, discTransform } from '../core/disc-motion';
 import { albumSourceLinks } from '../core/source-link';
 import { queuedAlbumPaths } from '../core/queue';
-import type { Track } from '../core/track';
+import { sourceShortName, type Track } from '../core/track';
 import { CardPlan, cardSignature, planCards } from '../core/shelf-diff';
 import { animateDiscLiftOff } from '../animation/handoff';
 import {
@@ -136,21 +136,21 @@ const filterOptions = (): [SourceFilter, string][] => [
   ['collect', t('filter.collect')],
 ];
 
-/** 分段控件里的短标签（窄浮层里放得下）：完整名字挂在 aria-label 上，不丢语义 */
+/** 分段控件里的短标签（窄浮层里放得下）：完整名字挂在 aria-label 上，不丢语义。
+ *  三个平台来源走 sourceShortName（与添加浮层的「搜索来源」共用一份）—— 两处是同一个控件。 */
 const sourceShortLabel = (key: SourceFilter): string => {
   switch (key) {
     case 'all':
       return t('filter.all');
     case 'local':
       return t('src.local');
-    case 'netease':
-      return t('src.netease');
-    case 'qq':
-      return t('src.qq');
-    case 'kugou':
-      return t('src.kugou');
     case 'collect':
       return t('filter.collectShort');
+    // 三个平台来源：与添加浮层的「搜索来源」同一份短名（穷尽列出，加了新来源这里会编译报错）
+    case 'netease':
+    case 'qq':
+    case 'kugou':
+      return sourceShortName(key);
   }
 };
 
@@ -747,7 +747,7 @@ export class VinylShelfView extends ItemView {
     display.addEventListener('click', () => this.toggleDisplayPanel(display));
     const add = mk('plus', t('toolbar.add'), 'vinyl-toolbar-add');
     this.addBtnEl = add;
-    add.addEventListener('click', () => this.toggleAddPanel(add));
+    add.addEventListener('click', () => { this.closePanel(); this.plugin.openAlbumImport(); });
     const more = mk('more-horizontal', t('toolbar.more'));
     more.addEventListener('click', () => this.showMoreMenu(more));
     this.syncDisplayButton();
@@ -1000,6 +1000,10 @@ export class VinylShelfView extends ItemView {
    *  拖拽落点只挂一次（重建网格时才会重挂）。 */
   private ensureGrid(): HTMLElement {
     if (!this.gridEl || this.gridEl.isConnected === false) {
+      // 上一次可能停在「筛选无结果」的空态：空态与网格是两套互斥的 DOM，都直接挂在 gridHost 下
+      // （见 dropGrid）。dropGrid 只管「有结果 → 无结果」那一程，从空态回来这一程得在这里清
+      // —— 少了这一句，点「全部」之后卡片和「没有符合条件的专辑」会一起挂在墙上（用户实测）。
+      this.gridHost.empty();
       this.gridEl = this.gridHost.createDiv({ cls: 'vinyl-shelf-grid' });
       this.gridWired = false;
     }
@@ -1440,14 +1444,6 @@ export class VinylShelfView extends ItemView {
     this.openPanel('display', anchor);
   }
 
-  private toggleAddPanel(anchor: HTMLElement): void {
-    if (this.panel?.kind === 'add') {
-      this.closePanel();
-      return;
-    }
-    this.openPanel('add', anchor);
-  }
-
   private closePanel(): void {
     const panel = this.panel;
     const addPanel = this.addPanel;
@@ -1660,7 +1656,7 @@ export class VinylShelfView extends ItemView {
   private showMoreMenu(anchor: HTMLElement) {
     const rect = anchor.getBoundingClientRect();
     const menu = new Menu();
-    markVinylMenu(menu); // 全直角：菜单壳与悬停底一起收（见 styles.css「全直角」段）
+    markVinylMenu(menu);
     menu.addItem((it) =>
       it
         .setTitle(t('more.select'))
@@ -1707,8 +1703,8 @@ export class VinylShelfView extends ItemView {
   private openAddPanelWith(query: string): void {
     const anchor = this.addBtnEl;
     if (!anchor) return;
-    this.openPanel('add', anchor);
-    this.addPanel?.prefill(query);
+    this.closePanel();
+    this.plugin.openAlbumImport(query);
   }
 
   /** 刚入库的专辑：在当前视野里就描边闪一下；不可见时导入本身已有回执，不再打扰 */
@@ -2106,7 +2102,7 @@ export class VinylShelfView extends ItemView {
   private showMenu(e: ShelfEntry, pos: { x: number; y: number }) {
     const { album } = e;
     const menu = new Menu();
-    markVinylMenu(menu); // 全直角：菜单壳与悬停底一起收（见 styles.css「全直角」段）
+    markVinylMenu(menu);
     // 这里没有「播放」：左键点卡片就是播放（用户 2026-09-26 定稿）。
     // 菜单里再放一条只会和左键重复 —— 打开菜单要的是「左键做不到的那些事」。
     menu.addItem((it) =>

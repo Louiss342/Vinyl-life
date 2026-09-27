@@ -287,11 +287,8 @@ test('导入搜索：已在库中的专辑不出现，隐去的条数写在状�
     .filter((e) => e.classes.has('vinyl-import-result-title'))
     .map((e) => e.textContent);
   assert.deepEqual(titles, ['晨光', '晨光 精选 2020'], '两张都照常出现（不再隐去）');
-  // 已在收藏的那张：按钮变成不可点的「已在收藏」，另一张照常可添加
-  const ownedButtons = collect(modal.contentEl)
-    .filter((e) => e.tag === 'button' && e.textContent === '已在收藏')
-    .map((e) => ({ disabled: e.disabled }));
-  assert.deepEqual(ownedButtons, [{ disabled: true }], '同平台同 id：一张已在收藏且不可点');
+  const owned = collect(modal.contentEl).filter((e) => e.classes.has('vinyl-import-owned'));
+  assert.equal(owned.length, 1, '已有专辑原位标记，选择后只允许打开');
   assert.equal(String(statusLine(modal.contentEl).textContent), '找到 2 张专辑（其中 1 张已在收藏）');
 });
 
@@ -307,6 +304,8 @@ test('导入搜索：搜到的全都在库里 → 逐条标「已在收藏」，
 
   assert.equal(cardsOf(modal.contentEl).length, 1, '照常画出来');
   assert.match(String(statusLine(modal.contentEl).textContent), /1 张已在收藏/);
-  const owned = collect(modal.contentEl).find((e) => e.tag === 'button' && e.textContent === '已在收藏');
-  assert.ok(owned && owned.disabled, '这条不给「添加」按钮（点了只会多一张重复笔记）');
+  const owned = collect(modal.contentEl).find((e) => e.classes.has('vinyl-import-owned'));
+  assert.ok(owned, '这条标成已在收藏');
+  const actions = collect(modal.contentEl).find((e) => e.classes.has('vinyl-import-preview-actions'));
+  assert.equal(actions.children[1].textContent, '打开', '已收藏的专辑只能打开，不能重复添加');
 });

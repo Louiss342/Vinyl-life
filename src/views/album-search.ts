@@ -19,6 +19,11 @@ import {
   normalizeSearchScope,
 } from '../core/album-discovery';
 import { t, tf } from '../core/i18n';
+import { sourceShortName } from '../core/track';
+import { findAlbumNotes, getAlbumInfo } from '../core/album-index';
+import { fmtTime } from '../util';
+import { fetchAlbumPreview } from './album-preview';
+import type { AlbumPreview } from './album-preview';
 import { LinkSourceModal } from './link-source-modal';
 
 /** 首屏画多少条 / 每次「显示更多」多画多少条。
@@ -57,6 +62,19 @@ export class AlbumSearchPane {
   private resultsEl!: HTMLElement;
   private moreBar!: HTMLElement;
   private moreBtn!: HTMLButtonElement;
+  private detailed = false;
+  private linkOnly = false;
+  private selected: AlbumSearchCandidate | null = null;
+  private previewEl: HTMLElement | null = null;
+  private previewStatus: HTMLElement | null = null;
+  private previewAction: HTMLButtonElement | null = null;
+  private previewLink: HTMLButtonElement | null = null;
+  private previewRequest = 0;
+  private previews = new Map<string, AlbumPreview>();
+  private rowStates = new Map<string, { text: string; failed: boolean }>();
+  private importing = new Set<string>();
+  private selectionRows = new Map<string, HTMLElement>();
+  private destroyed = false;
 
   constructor(
     private ctx: ImportContext,
@@ -69,8 +87,24 @@ export class AlbumSearchPane {
    *  结果区 → 展开 / 翻页入口（在滚动区外，列表再长也点得到） */
   mount(
     container: HTMLElement,
-    opts: { withButton: boolean; placeholder?: string } = { withButton: true }
+    opts: { withButton: boolean; placeholder?: string; detailed?: boolean; linkOnly?: boolean } = { withButton: true }
   ): void {
+    this.detailed = !!opts.detailed;
+    this.linkOnly = !!opts.linkOnly;
+    if (this.detailed) {
+      const workspace = container.createDiv({ cls: 'vinyl-import-workspace' });
+      const results = workspace.createDiv({ cls: 'vinyl-import-workspace-results' });
+      this.previewEl = workspace.createDiv({ cls: 'vinyl-import-preview' });
+      const footer = container.createDiv({ cls: 'vinyl-import-workspace-footer' });
+      this.previewStatus = footer.createDiv({ cls: 'vinyl-muted vinyl-import-preview-status', attr: { role: 'status' } });
+      const actions = footer.createDiv({ cls: 'vinyl-import-preview-actions' });
+      this.previewLink = actions.createEl('button', { text: t('link.action') });
+      this.previewLink.addEventListener('click', () => this.linkSelected());
+      this.previewAction = actions.createEl('button', { text: t('import.action'), cls: 'mod-cta' });
+      this.previewAction.addEventListener('click', () => void this.importSelected());
+      container = results;
+      this.renderPreview();
+    }
     const searchRow = container.createDiv({ cls: 'vinyl-import-search-row' });
     this.inputEl = searchRow.createEl('input', {
       attr: {
@@ -81,7 +115,7 @@ export class AlbumSearchPane {
       cls: 'vinyl-import-input',
     });
     if (opts.withButton) {
-      this.searchBtn = searchRow.createEl('button', { text: t('import.searchAction'), cls: 'mod-cta' });
+      this.searchBtn = searchRow.createEl('button', { text: t(this.linkOnly ? 'import.parseLink' : 'import.searchAction'), cls: 'mod-cta' });
       this.searchBtn.addEventListener('click', () => void this.runSearch());
     }
     // 搜索来源：聚合 / 仅网易云 / 仅 QQ —— 搜索前先选；换档立即按新范围重搜（已有关键词时）
@@ -112,7 +146,7 @@ export class AlbumSearchPane {
 
     this.inputEl.addEventListener('input', () => {
       if (this.searchTimer != null) window.clearTimeout(this.searchTimer);
-      this.searchTimer = window.setTimeout(() => void this.runSearch(), 350);
+      if (!this.linkOnly) this.searchTimer = window.setTimeout(() => void this.runSearch(), 350);
     });
     this.inputEl.addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter') {
@@ -164,6 +198,8 @@ export class AlbumSearchPane {
   destroy(): void {
     this.cancelPending();
     this.latestRequestId++;
+    this.previewRequest++;
+    this.destroyed = true;
   }
 
   private cancelPending(): void {
@@ -181,8 +217,11 @@ export class AlbumSearchPane {
   private resetResults(): void {
     this.pool = [];
     this.shown = 0;
+    this.selected = null;
+    this.selectionRows.clear();
+    this.previewRequest++;
+    this.renderPreview();
     this.hasMore = false;
-    this.importedPaths.clear();
     this.resultsEl.empty();
     this.resultsEl.removeClass('is-loading');
     this.renderMore();
@@ -219,14 +258,28 @@ export class AlbumSearchPane {
   private renderList(): void {
     const keepScroll = this.resultsEl.scrollTop;
     this.resultsEl.empty();
+    this.selectionRows.clear();
     this.renderCards(this.pool.slice(0, this.shown));
     this.renderMore();
     this.resultsEl.scrollTop = keepScroll;
+    if (this.detailed && this.pool.length && !this.selected) void this.selectCandidate(this.pool[0]);
   }
 
   private renderCards(items: AlbumSearchCandidate[]): void {
     for (const candidate of items) {
       const card = this.resultsEl.createDiv({ cls: 'vinyl-import-result' });
+      if (this.detailed) {
+        this.selectionRows.set(candidate.key, card);
+        card.setAttribute('role', 'button');
+        card.setAttribute('tabindex', '0');
+        card.setAttribute('aria-label', candidate.title);
+        card.setAttribute('aria-pressed', String(this.selected?.key === candidate.key));
+        card.toggleClass('is-selected', this.selected?.key === candidate.key);
+        card.addEventListener('click', () => void this.selectCandidate(candidate));
+        card.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); ev.stopPropagation(); void this.selectCandidate(candidate); }
+        });
+      }
       if (candidate.coverUrl) {
         const img = card.createEl('img', {
           attr: { src: candidate.coverUrl, alt: '', loading: 'lazy' },
@@ -261,6 +314,12 @@ export class AlbumSearchPane {
       const rowStatus = body.createDiv({ cls: 'vinyl-muted vinyl-import-result-state' });
       const side = card.createDiv({ cls: 'vinyl-import-result-side' });
       const isImported = this.importedPaths.has(candidate.key);
+      if (this.detailed) {
+        side.createSpan({ cls: candidate.inLibrary || isImported ? 'vinyl-import-owned' : 'vinyl-muted', text: candidate.inLibrary || isImported ? t('import.owned') : scopeName(candidate.source) });
+        const state = this.rowStates.get(candidate.key);
+        if (state) { rowStatus.setText(state.text); rowStatus.toggleClass('is-error', state.failed); }
+        continue;
+      }
       if (candidate.inLibrary) {
         // 已在收藏：不给可点的「添加」（点了只会多出一张重复笔记），也不报成失败
         const owned = side.createEl('button', { text: t('import.owned') });
@@ -335,6 +394,139 @@ export class AlbumSearchPane {
     }
   }
 
+  private candidateRef(candidate: AlbumSearchCandidate) {
+    return candidate.source === 'qq' ? { source: 'qq' as const, mid: candidate.sourceAlbumId }
+      : candidate.source === 'kugou' ? { source: 'kugou' as const, id: candidate.sourceAlbumId }
+        : { source: 'netease' as const, id: Number(candidate.sourceAlbumId) };
+  }
+
+  private async selectCandidate(candidate: AlbumSearchCandidate): Promise<void> {
+    this.selected = candidate;
+    for (const [key, row] of this.selectionRows) {
+      row.toggleClass('is-selected', key === candidate.key);
+      row.setAttribute('aria-pressed', String(key === candidate.key));
+    }
+    const request = ++this.previewRequest;
+    this.renderPreview();
+    if (this.previews.has(candidate.key)) return;
+    try {
+      const preview = await fetchAlbumPreview(this.ctx, this.candidateRef(candidate));
+      if (this.destroyed) return;
+      this.previews.set(candidate.key, preview);
+      if (request === this.previewRequest) this.renderPreview();
+    } catch (e) {
+      if (request !== this.previewRequest || this.destroyed) return;
+      this.previewEl?.createDiv({ cls: 'vinyl-import-preview-error', text: String((e as Error).message || e) });
+      const retry = this.previewEl?.createEl('button', { text: t('import.retry') });
+      retry?.addEventListener('click', () => void this.selectCandidate(candidate));
+    }
+  }
+
+  private existingFile(candidate: AlbumSearchCandidate): TFile | null {
+    const path = this.importedPaths.get(candidate.key);
+    const saved = path ? this.ctx.app.vault.getAbstractFileByPath(path) : null;
+    if (saved instanceof TFile) return saved;
+    if (!candidate.inLibrary) return null;
+    const field = candidate.source === 'netease' ? 'neteaseId' : candidate.source === 'qq' ? 'qqId' : 'kugouId';
+    return findAlbumNotes(this.ctx.app).find((file) => String(getAlbumInfo(this.ctx.app, file)?.[field] || '') === candidate.sourceAlbumId) || null;
+  }
+
+  private renderPreview(): void {
+    const el = this.previewEl;
+    if (!el) return;
+    el.empty();
+    const candidate = this.selected;
+    if (!candidate) {
+      el.createDiv({ cls: 'vinyl-muted vinyl-import-preview-empty', text: t('import.selectPreview') });
+      this.syncPreviewAction();
+      return;
+    }
+    const preview = this.previews.get(candidate.key);
+    const info = preview?.candidate || candidate;
+    const identity = el.createDiv({ cls: 'vinyl-import-preview-identity' });
+    if (info.coverUrl) {
+      const img = identity.createEl('img', { attr: { src: info.coverUrl, alt: info.title } });
+      img.referrerPolicy = 'no-referrer';
+      img.addEventListener('error', () => img.addClass('vinyl-hidden'));
+    }
+    const text = identity.createDiv();
+    text.createEl('h3', { text: info.title });
+    text.createDiv({ cls: 'vinyl-muted', text: info.artists.join(' / ') });
+    text.createDiv({ cls: 'vinyl-muted', text: [info.releaseDate, info.trackCount ? tf('import.trackCount', { n: info.trackCount }) : ''].filter(Boolean).join(' · ') });
+    text.createSpan({ cls: 'vinyl-import-preview-source', text: scopeName(info.source) });
+    if (candidate.nameInLibrary) el.createDiv({ cls: 'vinyl-muted', text: t('import.sameNameHint') });
+    const tracks = el.createDiv({ cls: 'vinyl-import-preview-tracks' });
+    tracks.createEl('h4', { text: t('import.trackPreview') });
+    if (preview) {
+      for (const [index, track] of preview.tracks.entries()) {
+        const row = tracks.createDiv({ cls: 'vinyl-import-preview-track' });
+        row.createSpan({ cls: 'vinyl-muted', text: String(index + 1).padStart(2, '0') });
+        row.createSpan({ text: track.title });
+        row.createSpan({ cls: 'vinyl-muted', text: track.seconds > 0 ? fmtTime(track.seconds) : '' });
+      }
+      if (!preview.tracks.length) tracks.createDiv({ cls: 'vinyl-muted', text: t('import.previewNoTracks') });
+    } else tracks.createDiv({ cls: 'vinyl-muted', text: t('import.fetchingShort') });
+    const destination = el.createDiv({ cls: 'vinyl-import-preview-destination' });
+    destination.createDiv({ cls: 'vinyl-muted', text: t('import.noteDestination') });
+    destination.createDiv({ text: this.ctx.settings().albumFolder });
+    this.syncPreviewAction();
+  }
+
+  private syncPreviewAction(): void {
+    const candidate = this.selected;
+    const state = candidate ? this.rowStates.get(candidate.key) : undefined;
+    const busy = !!candidate && this.importing.has(candidate.key);
+    const owned = !!candidate && (candidate.inLibrary || this.importedPaths.has(candidate.key));
+    if (this.previewAction) {
+      this.previewAction.disabled = !candidate || busy;
+      this.previewAction.setText(t(busy ? 'import.adding' : owned ? 'import.openExisting' : state?.failed ? 'import.retry' : 'import.action'));
+    }
+    if (this.previewLink) this.previewLink.disabled = !candidate || busy || owned;
+    this.previewStatus?.setText(busy ? t('import.fetchingShort') : state?.text || (owned ? t('import.owned') : ''));
+    this.previewStatus?.toggleClass('is-error', !!state?.failed);
+  }
+
+  private async importSelected(): Promise<void> {
+    const candidate = this.selected;
+    if (!candidate || this.importing.has(candidate.key)) return;
+    const file = this.existingFile(candidate);
+    if (file) { await this.host.openFile(file); return; }
+    if (candidate.inLibrary) {
+      candidate.inLibrary = false;
+      this.renderList();
+    }
+    this.importing.add(candidate.key);
+    this.syncPreviewAction();
+    try {
+      const result = await importAlbumRef(this.ctx, this.candidateRef(candidate));
+      const failed = result.status === 'failed' || !(result.file instanceof TFile);
+      this.rowStates.set(candidate.key, { text: result.detail, failed });
+      if (!failed && result.file instanceof TFile) {
+        this.importedPaths.set(candidate.key, result.file.path);
+        if (result.status === 'created') {
+          this.importedCount++;
+          this.host.onImported?.(result.file);
+          if (!this.destroyed) this.setStatus(tf('import.batchProgress', { n: this.importedCount }));
+        }
+      }
+    } catch (e) {
+      this.rowStates.set(candidate.key, { text: `${t('import.failed')}${String((e as Error).message || e)}`, failed: true });
+    } finally {
+      this.importing.delete(candidate.key);
+      if (!this.destroyed) { this.renderList(); this.syncPreviewAction(); }
+    }
+  }
+
+  private linkSelected(): void {
+    const candidate = this.selected;
+    if (!candidate || this.importing.has(candidate.key)) return;
+    new LinkSourceModal(this.ctx.app, candidate, (file) => {
+      this.importedPaths.set(candidate.key, file.path);
+      this.host.onImported?.(file);
+      if (!this.destroyed) { this.renderList(); this.syncPreviewAction(); }
+    }).open();
+  }
+
   /** 状态行：上游的告警（限流 / 拒绝）优先说原因，其次报数量；有已在收藏的如实带一句 */
   private reportOutcome(result: AlbumSearchResult): void {
     const warned = result.warnings.length > 0;
@@ -393,7 +585,27 @@ export class AlbumSearchPane {
 
   private async runSearch(): Promise<void> {
     const query = this.inputEl.value.trim();
-    if (parseAlbumInput(query)) {
+    const ref = parseAlbumInput(query);
+    if (this.detailed && (ref || this.linkOnly)) {
+      if (!ref) { this.setStatus(t('import.badLink'), true); return; }
+      const requestId = ++this.latestRequestId;
+      this.resetResults();
+      this.setSearchBusy(true);
+      this.setStatus(t('import.fetching'));
+      try {
+        const preview = await fetchAlbumPreview(this.ctx, ref);
+        if (requestId !== this.latestRequestId || this.destroyed) return;
+        this.previews.set(preview.candidate.key, preview);
+        this.pool = [preview.candidate];
+        this.shown = 1;
+        this.renderList();
+        this.setStatus('');
+      } catch (e) {
+        if (requestId === this.latestRequestId && !this.destroyed) this.setStatus(String((e as Error).message || e), true);
+      } finally { if (requestId === this.latestRequestId && !this.destroyed) this.setSearchBusy(false); }
+      return;
+    }
+    if (ref) {
       await this.runDirect(query);
       return;
     }
@@ -468,9 +680,11 @@ export class AlbumSearchPane {
   }
 }
 
-/** 分段控件上的短名：聚合 / 网易云 / QQ 音乐 / 酷狗音乐（与结果里的来源徽章同一套名字） */
+/** 分段控件上的短名：聚合 / 网易云 / QQ / 酷狗。
+ *  三个平台来源走 sourceShortName（与陈列浮层「来源」那一排共用一份）—— 两处是同一个控件、同一个叫法；
+ *  结果徽章与状态行仍走 scopeName 的全名（QQ 音乐 / 酷狗音乐），那里空间够。 */
 function scopeLabel(scope: SearchScope): string {
-  return scope === 'all' ? t('import.scopeAll') : scopeName(scope);
+  return scope === 'all' ? t('import.scopeAll') : sourceShortName(scope);
 }
 
 /** 单源范围的来源名（网易云 / QQ 音乐 / 酷狗音乐） */

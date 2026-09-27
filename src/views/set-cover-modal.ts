@@ -13,7 +13,7 @@ class VaultImageSuggest extends FuzzySuggestModal<TFile> {
     private onPick: (f: TFile) => void
   ) {
     super(app);
-    markVinylModal(this); // 全直角：弹窗壳收掉圆角（见 styles.css「全直角」段）
+    markVinylModal(this);
     this.setPlaceholder(t('cover.pickInVault'));
   }
 
@@ -43,7 +43,8 @@ export class SetCoverModal extends Modal {
     private onSaved?: () => void
   ) {
     super(app);
-    markVinylModal(this); // 全直角：弹窗壳收掉圆角（见 styles.css「全直角」段）
+    markVinylModal(this);
+    this.modalEl.addClass('vinyl-dialog-compact', 'vinyl-dialog-actions');
     this.titleEl.setText(tf('cover.title', { title: album.title }));
   }
 

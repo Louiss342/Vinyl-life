@@ -28,7 +28,7 @@ export class DeleteBatchModal extends Modal {
     private onDeleted?: () => void
   ) {
     super(app);
-    markVinylModal(this); // 全直角：弹窗壳收掉圆角（见 styles.css「全直角」段）
+    markVinylModal(this);
     this.titleEl.setText(t('batchDelete.title'));
     this.targets = collectAlbumBatchDeleteTargets(app, albums);
   }

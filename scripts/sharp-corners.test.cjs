@@ -1,9 +1,11 @@
-// 全直角（用户要求）：插件 UI 不再出现圆角矩形 —— 与专辑墙上的专辑一致。
+// 页面内保持直角；功能弹窗与菜单统一使用圆角（用户 2026-09-27 的新口径）。
 // 本文件放「整份 styles.css 都成立」的样式纪律。纯文本扫描，不需要 Obsidian：
-//   1) styles.css 里每一处 border-radius 只能是 0（直角）/ 50%（圆形对象）/ inherit；
+//   1) styles.css 里每一处 border-radius 只能是 0（直角）/ 50%（圆形对象）/ inherit，
+//      外加弹层里那一组明确登记的圆角（弹窗 14 / 浮层与菜单 12 / 分段轨道 10 / 控件 7）；
 //   2) 50% 只允许出现在「本来就是圆的」白名单选择器上（唱片 / 圆钮 / 圆勾 …）；
 //   3) 不出现 :has（审核口径：宽泛选择器失效）＝ 与本条同一性质的全局约束，也放在这里；
-//   4) 用户点名的几处必须是 0：专辑架（.vinyl-pick）、专辑墙封面、设置页三件套、工具栏 / 动作条；
+//   4) 用户点名的几处必须是 0：专辑架（.vinyl-pick）、专辑墙封面、设置页三件套（工具栏不在此列 ——
+//      它是浮在墙上的操作面，跟陈列 / 添加浮层同一档，见 3 里那条）；
 //   5) 宿主控件与弹层的兜底段在位：.modal.vinyl-modal / .menu.vinyl-menu + 各处接线。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -41,11 +43,31 @@ const CIRCLES = [
   '.vinyl-pick-mark {', // 专辑架多选的小圆勾
 ];
 
-test('样式：全插件的 border-radius 只有 0 / 50% / inherit，没有圆角矩形', () => {
+// 弹层里那一组：具体档位（弹窗 14 / 浮层与菜单 12 / 分段轨道 10 / 输入框与按钮 7）由「功能弹层」段
+// 统一登记，这里只放行；页面内的自绘 UI 仍一律直角。'.vinyl-panel {' 用全等比对 ——
+// 换成 includes 会把页面内的 .vinyl-panel-icon 之类也一并放行。
+const PANEL_ROUNDED = [
+  '.vinyl-panel {',
+  '.modal.vinyl-modal',
+  '.menu.vinyl-menu',
+  'vinyl-queue-panel',
+  'vinyl-import-dialog',
+  'vinyl-import-workspace',
+  'vinyl-import-search-row', // 弹层里的搜索行（输入框与搜索键）
+  'vinyl-segment', // 来源 / 搜索来源的药丸轨道
+  'vinyl-shelf-toolbar', // 专辑墙工具栏：浮在墙上的操作面，按浮层那一档算（用户口径 2026-09-27 第二轮）
+  'vinyl-shelf-search-box', // 工具栏里展开的搜索框：与弹层输入框同款
+  'vinyl-toolbar-textbtn', // 选择模式的文本钮：与弹层按钮同款
+];
+const isPanelScoped = (selector) =>
+  PANEL_ROUNDED.some((s) => (s.endsWith(' {') ? selector === s : selector.includes(s)));
+
+test('样式：页面内保持直角，圆角仅作用于功能弹层', () => {
   const decls = radiusDeclarations(CSS);
   assert.ok(decls.length > 40, `styles.css 的 border-radius 声明应有几十处，实际 ${decls.length}`);
 
   for (const [selector, value] of decls) {
+    if (isPanelScoped(selector)) continue; // 功能弹层统一使用圆角，页面内保持直角
     assert.ok(
       value === '0' || value === '50%' || value === 'inherit',
       `${selector} 的 border-radius 是 ${value}：全直角口径下只允许 0 / 50% / inherit`
@@ -75,7 +97,7 @@ test('样式：styles.css 里不出现 :has（审核口径：宽泛选择器失�
   assert.doesNotMatch(selectorsOnly, /:has\s*\(/, 'styles.css 里出现 :has —— 状态该由 JS 写在父元素上');
 });
 
-test('样式：用户点名的几处是直角（专辑架 / 专辑墙封面 / 设置页 / 工具栏与动作条）', () => {
+test('样式：用户点名的几处是直角（专辑架 / 专辑墙封面 / 设置页），浮层与工具栏是圆角', () => {
   const decls = radiusDeclarations(CSS);
   const valueOf = (selector) => {
     const hit = decls.find(([sel]) => sel === selector);
@@ -90,16 +112,19 @@ test('样式：用户点名的几处是直角（专辑架 / 专辑墙封面 / �
   assert.equal(valueOf('.vinyl-settings-body {'), '0', '设置面板：直角');
   assert.equal(valueOf('.vinyl-settings-section {'), '0', '设置卡片：直角');
   assert.equal(valueOf('.vinyl-settings-tabs .vinyl-settings-tab {'), '0', '设置标签页：直角');
-  // 专辑墙浮层（陈列 / 添加）：工具栏本身已无边框圆角（单行贴顶、不是盒子），改验这两处
-  assert.equal(valueOf('.vinyl-panel {'), '0', '陈列 / 添加浮层：直角');
-  assert.equal(valueOf('.vinyl-segment {'), '0', '来源分段控件：直角');
-  assert.equal(valueOf('.vinyl-toolbar-textbtn {'), '0', '选择模式的文本按钮：直角');
+  // 专辑墙浮层（陈列 / 添加）与工具栏：同一档浮层表面
+  assert.equal(valueOf('.vinyl-panel {'), '12px', '陈列 / 添加浮层：统一圆角');
+  assert.equal(valueOf('.vinyl-shelf-toolbar {'), '12px', '工具栏：与浮层同一档（用户口径 2026-09-27 第二轮）');
+  // 分段控件（来源 / 搜索来源）：弹层里的药丸轨道 —— 轨道比段面大一档（10 − 3px 内边距 = 7，同心）
+  assert.equal(valueOf('.vinyl-segments {'), '10px', '分段控件的轨道：与弹层同一档圆角');
+  assert.equal(valueOf('.vinyl-segment {'), '7px', '分段控件的段面：与输入框 / 按钮同一档圆角');
+  assert.equal(valueOf('.vinyl-toolbar-textbtn {'), '7px', '选择模式的文本按钮：与弹层按钮同一档圆角');
 });
 
 test('样式：宿主控件与弹层的兜底段在位（弹窗壳 / 菜单 / 输入框与按钮）', () => {
-  assert.match(CSS, /\.modal\.vinyl-modal\s*\{[^}]*border-radius:\s*0/, '插件弹窗壳：直角');
-  assert.match(CSS, /\.modal\.vinyl-modal[\s\S]{0,700}?border-radius:\s*0/, '弹窗里的宿主控件：直角');
-  assert.match(CSS, /\.menu\.vinyl-menu[\s\S]{0,120}?border-radius:\s*0/, '插件菜单：直角');
+  assert.match(CSS, /\.modal\.vinyl-modal\s*\{[^}]*border-radius:\s*14px/, '插件弹窗壳：统一圆角');
+  assert.match(CSS, /\.modal\.vinyl-modal button:where[^}]*border-radius:\s*7px/, '弹窗里的宿主按钮：统一圆角');
+  assert.match(CSS, /\.menu\.vinyl-menu\s*\{[^}]*border-radius:\s*12px/, '插件菜单：统一圆角');
   // 宿主控件那一组是多行选择器表：截到规则体（`}` 之前）再验，别依赖两处之间的距离
   const hostAt = CSS.indexOf('.vinyl-settings button:not(.checkbox-container),');
   assert.ok(hostAt !== -1, '宿主控件兜底段缺少设置页按钮那一条');

@@ -281,6 +281,7 @@ test('翻转：翻到歌词页会挂 is-lyrics、把歌词键点亮，翻回来�
     flip: fakeEl(),
     pickBtn: fakeEl('button'),
     lyricsBtn: fakeEl('button'),
+    playerBtn: fakeEl('button'),
     turntable: fakeEl(),
   };
   v.face = 'player';

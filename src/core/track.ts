@@ -94,6 +94,16 @@ export function sourceName(s: 'local' | 'netease' | 'qq' | 'kugou'): string {
   return t('src.local');
 }
 
+/** 分段控件里的来源短名（陈列浮层的「来源」与添加浮层的「搜索来源」共用这一份 ——
+ *  两处是同一个控件、同一个叫法）。比全名短一档：窄浮层里六段并排也放得下。
+ *  「QQ」中英同形，不走词典（i18n 的全量自检把 zh === en 的键判为漏翻，品牌名不建键）；
+ *  网易云中英都够短，直接用全名。 */
+export function sourceShortName(s: 'netease' | 'qq' | 'kugou'): string {
+  if (s === 'qq') return 'QQ';
+  if (s === 'kugou') return t('filter.kugouShort');
+  return t('src.netease');
+}
+
 export function trackSourceLabel(t: Track): string {
   if (t.source === 'netease') return sourceName('netease');
   if (t.source === 'qq') return sourceName('qq');

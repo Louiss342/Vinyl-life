@@ -30,6 +30,7 @@ export class LinkSourceModal extends Modal {
   constructor(app: App, private candidate: AlbumSearchCandidate, private onLinked: (file: TFile) => void) {
     super(app);
     markVinylModal(this);
+    this.modalEl.addClass('vinyl-dialog-wide');
     this.titleEl.setText(t('link.title'));
     this.idField = candidate.source === 'netease' ? 'neteaseId' : candidate.source === 'qq' ? 'qqId' : 'kugouId';
   }

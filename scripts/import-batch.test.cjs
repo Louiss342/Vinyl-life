@@ -237,66 +237,77 @@ async function search(modal, query) {
   await flush();
 }
 
-test('搜索结果导入：留在搜索页、就地变「打开」，可以接着导下一张', async () => {
+const previewAction = (modal) => {
+  const actions = collect(modal.contentEl).find((el) => el.classes.has('vinyl-import-preview-actions'));
+  return actions.children[1];
+};
+async function choose(modal, index) {
+  fire(cardsOf(modal.contentEl)[index], 'click');
+  await flush(5);
+}
+
+test('分栏导入：选择只预览，确认后写笔记，连续添加保留窗口，打开时才离开', async () => {
   const { mod, TFile } = loadModal();
   const h = makeHarness();
-  h.TFile = TFile; // vault.create 要交出真实的 TFile 实例（面板用 instanceof 判断）
-
+  h.TFile = TFile;
   const modal = new mod.AlbumImportModal(h.app, h.ctx);
   await modal.onOpen();
   await search(modal, '周杰伦');
-
-  const cards = cardsOf(modal.contentEl);
-  assert.equal(cards.length, 2, '两个搜索结果');
-
-  // 导第一张
-  fire(sideButton(cards[0]), 'click');
+  assert.equal(cardsOf(modal.contentEl).length, 2);
+  assert.equal(h.created.length, 0, '预览不能写入笔记');
+  fire(previewAction(modal), 'click');
   await flush(10);
-  assert.equal(h.created.length, 1, '笔记建了');
   assert.equal(h.created[0].path, 'Albums/叶惠美.md');
-  assert.match(String(h.created[0].content), /neteaseId: 1/);
-  assert.deepEqual(h.leaves, [], '导入后不得跳转（跳转就没法批量了）');
-  assert.equal(modal.closed, false, '导入后不得关窗');
-  assert.equal(sideButton(cards[0]).textContent, '打开', '这张卡片就地变成「打开」');
-  assert.equal(sideButton(cards[0]).classes.has('mod-cta'), false, '不再强调「导入」');
-  assert.ok(
-    String(statusLine(modal.contentEl).textContent).includes('已导入 1 张'),
-    '状态行要报批量进度：' + statusLine(modal.contentEl).textContent
-  );
-
-  // 接着导第二张 —— 批量导入的核心
-  fire(sideButton(cards[1]), 'click');
+  assert.deepEqual(h.leaves, []);
+  assert.equal(modal.closed, false);
+  assert.equal(previewAction(modal).textContent, '打开');
+  assert.match(statusLine(modal.contentEl).textContent, /已导入 1 张/);
+  await choose(modal, 1);
+  fire(previewAction(modal), 'click');
   await flush(10);
-  assert.equal(h.created.length, 2, '第二张也导进去了');
+  assert.equal(h.created.length, 2);
   assert.equal(h.created[1].path, 'Albums/七里香.md');
-  assert.deepEqual(h.leaves, [], '导第二张同样不跳转');
-  assert.ok(String(statusLine(modal.contentEl).textContent).includes('已导入 2 张'));
-  assert.equal(sideButton(cards[1]).textContent, '打开');
-
-  // 想立刻看笔记：点「打开」才离开（语义不变）
-  fire(sideButton(cards[0]), 'click');
+  assert.match(statusLine(modal.contentEl).textContent, /已导入 2 张/);
+  await choose(modal, 0);
+  fire(previewAction(modal), 'click');
   await flush(5);
-  assert.deepEqual(h.leaves.length, 1, '点「打开」才打开笔记');
   assert.deepEqual(h.opened, ['Albums/叶惠美.md']);
-  assert.equal(modal.closed, true, '「打开」= 明确要去看，这时才关窗');
+  assert.equal(modal.closed, true);
 });
 
-test('搜索结果导入：失败原位变「重试」，也不会把窗口关掉', async () => {
-  const { mod, TFile: FileClass } = loadModal();
+test('分栏导入：失败原位重试，不关闭窗口；重试成功后才能打开笔记', async () => {
+  const { mod, TFile } = loadModal();
   const h = makeHarness();
-  h.TFile = FileClass;
-  h.ctx.client.album = async () => {
-    throw new Error('上游挂了');
-  };
+  h.TFile = TFile;
+  const album = h.ctx.client.album;
+  h.ctx.client.album = async () => { throw new Error('上游挂了'); };
   const modal = new mod.AlbumImportModal(h.app, h.ctx);
   await modal.onOpen();
   await search(modal, '周杰伦');
-
-  const cards = cardsOf(modal.contentEl);
-  fire(sideButton(cards[0]), 'click');
+  fire(previewAction(modal), 'click');
   await flush(10);
-  assert.equal(modal.closed, false, '失败也不能关窗（用户还要接着试）');
-  assert.equal(sideButton(cards[0]).textContent, '重试', '失败原位重试（工具栏方案 §5）');
-  assert.equal(sideButton(cards[0]).disabled, false, '失败后按钮要能再点');
-  assert.match(String(rowStatus(cards[0]).textContent), /失败|❌/);
+  assert.equal(modal.closed, false);
+  assert.equal(previewAction(modal).textContent, '重试');
+  assert.equal(previewAction(modal).disabled, false);
+  assert.match(rowStatus(cardsOf(modal.contentEl)[0]).textContent, /失败/);
+  h.ctx.client.album = album;
+  fire(previewAction(modal), 'click');
+  await flush(10);
+  assert.equal(h.created.length, 1);
+  assert.equal(previewAction(modal).textContent, '打开');
+});
+
+test('链接导入：解析后只展示资料，确认添加才写笔记', async () => {
+  const { mod, TFile } = loadModal();
+  const h = makeHarness();
+  h.TFile = TFile;
+  const modal = new mod.AlbumImportModal(h.app, h.ctx);
+  await modal.onOpen();
+  await search(modal, 'https://music.163.com/#/album?id=1');
+  assert.equal(h.created.length, 0);
+  assert.equal(cardsOf(modal.contentEl).length, 1);
+  fire(previewAction(modal), 'click');
+  await flush(10);
+  assert.equal(h.created.length, 1);
+  assert.equal(modal.closed, false);
 });

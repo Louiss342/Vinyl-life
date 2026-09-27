@@ -365,14 +365,12 @@ export function sanitizeFileName(name: string): string {
   return cleaned || 'untitled';
 }
 
-/** 给插件弹窗挂「全直角」类名：壳（宿主的 .modal）的圆角由 styles.css 的「全直角」段收掉。
- *  只挂在自己的 modalEl 上 —— 只有插件开的这几个弹窗变直角，别处不受影响。 */
+/** 统一弹窗样式只挂在插件自己的 modalEl 上，避免影响 Obsidian 和其他插件。 */
 export function markVinylModal(modal: Modal): void {
   modal.modalEl.addClass('vinyl-modal');
 }
 
-/** 给插件自己的菜单挂「全直角」类名（排序 / 筛选）。Menu.dom 没进公开类型，但运行时就是
- *  菜单根元素；取不到就跳过 —— 只是菜单那圈圆角收不掉，不影响任何功能。 */
+/** 只给插件自己的菜单应用统一弹层样式。Menu.dom 没进公开类型，取不到时保留宿主菜单。 */
 export function markVinylMenu(menu: Menu): void {
   (menu as Menu & { dom?: HTMLElement }).dom?.addClass('vinyl-menu');
 }

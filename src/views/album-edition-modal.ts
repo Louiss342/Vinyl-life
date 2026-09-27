@@ -7,6 +7,7 @@ export class AlbumEditionModal extends Modal {
   constructor(app: App, private album: AlbumInfo, private onSaved: () => void) {
     super(app);
     markVinylModal(this);
+    this.modalEl.addClass('vinyl-dialog-compact');
     this.titleEl.setText(t('edition.set'));
   }
 

@@ -40,7 +40,7 @@ function rule(css, selector) {
 
 // ============ A. 样式真值 ============
 
-test('样式：工具栏是「内容多长就多长」的紧凑浮卡（居中、毛玻璃、直角）', () => {
+test('样式：工具栏是「内容多长就多长」的紧凑浮卡（居中、浮层表面、圆角）', () => {
   const bar = rule(CSS, '.vinyl-shelf-toolbar');
   assert.match(bar, /flex-wrap:\s*nowrap/, '单行是硬约定（方案 §7：窄窗也不分两行）');
   assert.match(bar, /position:\s*sticky/, '滚动时钉在窗格顶部');
@@ -50,11 +50,29 @@ test('样式：工具栏是「内容多长就多长」的紧凑浮卡（居中�
   // 摆位（align-self / order / top / bottom / 外侧留白）不在这条里 —— 归「工具栏位置」六档那组，
   // 默认那档（顶部居中）与它同值，读设置之前不跳（见上面那条位置用例）
   assert.doesNotMatch(bar, /align-self/, '基础规则只管长相，摆位归位置组');
+  // 表面走「浮层」那一档（用户口径 2026-09-27 第二轮）：不透明的主题面 + 发丝边 + 12px 圆角，
+  // 与陈列 / 添加浮层、菜单同值 —— 与专辑墙上的卡片（直角）刻意分开
   assert.match(bar, /border:\s*1px solid var\(--background-modifier-border\)/, '1px 发丝边');
-  assert.match(bar, /border-radius:\s*0/, '直角（用户口径）');
-  assert.match(bar, /box-shadow:[\s\S]{0,80}?0 4px 14px/, '轻投影（视觉上收着）');
-  assert.match(bar, /backdrop-filter:\s*blur\(18px\)/, '毛玻璃：封面从卡片下滚过时被虚化');
-  assert.match(bar, /background:\s*color-mix\(in srgb, var\(--background-primary\) 86%, transparent\)/, '半透明底（毛玻璃的另一半）');
+  assert.match(bar, /background:\s*var\(--background-primary\)/, '不透明的主题面（与浮层同款，不再走毛玻璃）');
+  assert.match(bar, /border-radius:\s*12px/, '浮层那一档圆角');
+  assert.doesNotMatch(bar, /backdrop-filter/, '不再用毛玻璃：浮层这一族都是实底');
+  assert.match(bar, /box-shadow:[\s\S]{0,80}?0 10px 30px/, '与浮层同族的投影（比浮层收敛一档，它是常驻的）');
+
+  // 里面的控件：与弹层里的输入框 / 按钮同一档（7px）
+  assert.match(CSS, /\.vinyl-shelf \.vinyl-shelf-toolbar \.clickable-icon\s*\{[^}]*border-radius:\s*7px/, '工具栏里的图标钮：7px');
+  assert.match(rule(CSS, '.vinyl-shelf-search-box'), /border-radius:\s*7px/, '展开的搜索框：7px');
+  assert.match(rule(CSS, '.vinyl-toolbar-textbtn'), /border-radius:\s*7px/, '选择模式的文本钮：7px');
+  assert.match(
+    CSS,
+    /\.vinyl-shelf-toolbar \.vinyl-toolbar-icon\.has-filter\s*\{[^}]*border-radius:\s*7px/,
+    '筛了来源的那枚 chip：7px'
+  );
+  // 键盘走到工具栏按钮时的焦点圈与弹层同款
+  assert.match(
+    CSS,
+    /\.vinyl-shelf \.vinyl-shelf-toolbar \.vinyl-toolbar-icon:focus-visible,[\s\S]{0,120}?outline:\s*2px solid var\(--interactive-accent\)/,
+    '工具栏按钮的焦点圈：强调色，与弹层一致'
+  );
 
   const shelf = rule(CSS, '.vinyl-shelf');
   assert.match(shelf, /container-type:\s*inline-size/, '窗格是容器查询的宿主（窄窗规则要用）');
@@ -218,9 +236,9 @@ test('样式：选择模式的勾选圈（常态不显示 / 选中点亮）', ()
   );
 });
 
-test('样式：浮层（陈列 / 添加）直角、轻边框、短动效、限高滚动', () => {
+test('样式：浮层（陈列 / 添加）统一圆角、轻边框、短动效、限高滚动', () => {
   const panel = rule(CSS, '.vinyl-panel');
-  assert.match(panel, /border-radius:\s*0/, '全直角');
+  assert.match(panel, /border-radius:\s*12px/, '与功能菜单统一圆角');
   assert.match(panel, /border:\s*1px solid var\(--background-modifier-border\)/, '轻边框');
   assert.match(panel, /box-shadow:[\s\S]{0,60}?0 24px 60px/, '大而柔的投影');
   assert.match(panel, /animation:\s*vinyl-panel-in 0\.14s/, '短促动效（不弹跳）');
@@ -232,22 +250,22 @@ test('样式：浮层（陈列 / 添加）直角、轻边框、短动效、限�
   );
 });
 
-test('样式：浮层学设置页的分区块（标题栏 + 图标芯片 + 行分隔线 / 悬停）', () => {
+test('样式：浮层统一菜单表面、图标与悬停，不使用芯片与行分隔线', () => {
   const head = rule(CSS, '.vinyl-panel-head');
   assert.match(
     head,
-    /background:\s*color-mix\(in srgb, var\(--background-secondary\) 86%, transparent\)/,
-    '浅色标题栏（与设置页分区标题同款，毛玻璃半透明）'
+    /background:\s*transparent/,
+    '标题栏与菜单共用表面'
   );
-  assert.match(head, /border-bottom:\s*1px solid var\(--background-modifier-border\)/, '标题栏下一条发丝线');
+  assert.match(head, /border-bottom:\s*none/, '标题栏不另加分隔线');
   assert.match(head, /min-height:\s*44px/, '与设置页标题栏同一档高度');
   const icon = rule(CSS, '.vinyl-panel-icon');
-  assert.match(icon, /width:\s*26px/, '26px 图标芯片（设置页那枚收一号）');
-  assert.match(icon, /border:\s*1px solid var\(--background-modifier-border\)/, '芯片边框');
-  assert.match(icon, /background:\s*var\(--background-primary\)/, '芯片浅底');
+  assert.match(icon, /width:\s*16px/, '统一 16px 图标');
+  assert.match(icon, /border:\s*none/, '图标无额外边框');
+  assert.match(icon, /background:\s*transparent/, '图标无额外底色');
 
   const row = rule(CSS, '.vinyl-panel-row');
-  assert.match(row, /border-top:\s*1px solid var\(--background-modifier-border\)/, '行与行之间发丝线');
+  assert.match(row, /border-top:\s*none/, '菜单行不额外分区');
   assert.match(row, /min-height:\s*42px/, '行高与设置行同档');
   assert.match(CSS, /\.vinyl-panel-row:hover\s*\{[^}]*background:\s*var\(--background-modifier-hover\)/, '悬停淡底');
   assert.match(
@@ -255,10 +273,23 @@ test('样式：浮层学设置页的分区块（标题栏 + 图标芯片 + 行�
     /\.vinyl-panel-section \+ \.vinyl-panel-row\s*\{[^}]*border-top:\s*none/,
     '小节标题下面不画线（标题自己开一组）'
   );
+  // 来源 / 搜索来源是同一个控件（药丸轨道 + 浮起的选中段）：轨道一圈淡底、段高 28px（含内边距 34，
+  // 与弹窗按钮同档），选中段靠「primary 底 + 细阴影」浮起来 —— 不再用强调色淡底 + 直角连体格子。
   const seg = rule(CSS, '.vinyl-segment');
-  assert.match(seg, /height:\s*30px/, '分段控件 30px');
-  assert.match(CSS, /\.vinyl-segments\s*\{[^}]*border:\s*1px solid var\(--background-modifier-border\)/, '分段控件外框');
-  assert.match(CSS, /\.vinyl-segment\.is-on\s*\{[^}]*interactive-accent/, '选中那一段才用强调色');
+  assert.match(seg, /height:\s*28px/, '分段控件的段 28px（轨道含内边距共 34，与弹窗按钮同档）');
+  assert.match(seg, /flex:\s*1 1 auto/, '段宽按内容分配（长标签拿得多，不再等分到人人截断）');
+  assert.match(rule(CSS, '.vinyl-segments'), /background:\s*var\(--background-secondary\)/, '分段控件是一圈淡底轨道');
+  assert.match(CSS, /\.vinyl-segment\.is-on\s*\{[^}]*background:\s*var\(--background-primary\)/, '选中的那一段浮起来（primary 底）');
+  assert.match(
+    CSS,
+    /\.modal\.vinyl-modal \.vinyl-segment\s*\{[^}]*font-size:\s*var\(--font-ui-smaller\)/,
+    '段的字号自己钉住（弹层兜底会灌 12px，六段并排时「酷狗音乐」被切成省略号）'
+  );
+  assert.match(
+    CSS,
+    /@container \(max-width: \d+px\)[\s\S]{0,80}?\.vinyl-segment\s*\{[^}]*flex:\s*1 1 calc\(/,
+    '窄浮层：一行摆不下六段时按三列铺两行（不成孤行）'
+  );
   // 「封面下的信息」：同一套行，但整行不是按钮 —— 右边一小枚按键可点（用户口径）
   assert.match(
     CSS,
@@ -291,7 +322,7 @@ test('样式：浮层学设置页的分区块（标题栏 + 图标芯片 + 行�
   assert.match(rule(CSS, '.vinyl-panel-value'), /text-align:\s*right/, '值右对齐');
   assert.match(rule(CSS, '.vinyl-panel-value'), /appearance:\s*none/, '值行不带宿主输入框的样子');
   assert.match(rule(CSS, '.vinyl-panel-row-chevron'), /pointer-events:\s*none/, '箭头不吃点击');
-  assert.match(rule(CSS, '.vinyl-panel'), /backdrop-filter:\s*blur\(24px\)/, '浮层也是毛玻璃材质');
+  assert.match(rule(CSS, '.vinyl-panel'), /background:\s*var\(--background-primary\)/, '浮层统一使用主题表面');
 });
 
 test('样式：本地导入层（添加浮层第二层）', () => {
@@ -317,7 +348,7 @@ test('样式：本地导入层（添加浮层第二层）', () => {
 });
 
 test('样式：来源分段 / 新卡片描边 / 空态出路', () => {
-  assert.match(rule(CSS, '.vinyl-segment.is-on'), /interactive-accent/, '选中才用强调色');
+  assert.match(rule(CSS, '.vinyl-segment.is-on'), /font-weight:\s*var\(--font-medium\)/, '只有选中的那一段加粗');
   assert.match(
     CSS,
     /\.vinyl-add-local\.is-drag-over\s*\{[^}]*outline:\s*2px dashed var\(--interactive-accent\)/,
@@ -436,14 +467,14 @@ test('接线：添加浮层两层 —— 在线搜索 + 本地导入（不再另
   assert.match(VIEW, /new AddPanel\(this\.plugin\.importCtx\(\), albums/, '视图挂载 AddPanel（带上本地导入的目标列表）');
   assert.match(VIEW, /onLocalDone: \(path\) => this\.flashAlbum\(path\)/, '本地入库后给新卡片描边');
   assert.match(VIEW, /tf\('shelf\.searchOnline', \{ q \}\)/, '空态：在线查找「词」');
-  assert.match(VIEW, /private openAddPanelWith[\s\S]{0,220}?this\.addPanel\?\.prefill\(query\)/, '带入关键词立刻搜');
+  assert.match(VIEW, /private openAddPanelWith[\s\S]{0,220}?this\.plugin\.openAlbumImport\(query\)/, '带入关键词立刻搜');
 });
 
 test('接线：本地导入面板与弹窗共用一份实现（弹窗只剩薄壳）', () => {
   const PANE = read('src/views/local-import-pane.ts');
   const MODAL = read('src/views/import-modal.ts');
   assert.match(PANE, /export class LocalImportPane/, '面板本体');
-  assert.match(PANE, /t\('import\.step1'\)[\s\S]{0,4000}?t\('import\.step3'\)/, '三步流程都在面板里');
+  for (const step of ['import.step1', 'import.step2', 'import.step3']) assert.ok(PANE.includes(`'${step}'`), `${step} 流程仍在面板里`);
   assert.match(PANE, /this\.host\.onDone\(\{ imported: res\.added\.length, album, created \}\)/, '收尾交给宿主（弹窗关窗 / 浮层描边）');
   // 「导完一批接着导下一批」的真实行为在 scripts/local-import-reset.test.cjs（驱动真面板 + 假 DOM）；
   // 这里只锁接线，顺带钉住那个坑：别再退回给 applyFiles 喂空列表 —— 它开头 `if (!files.length) return;`，

@@ -367,3 +367,20 @@ test('播报归属：跨段播放时，上报的是曲目自己那张专辑', as
   assert.equal(engine.snapshot().albumTitle, 'B 专辑', '快照里的专辑名也跟着当前曲目走');
   assert.equal(engine.snapshot().sourceLabel.length > 0, true, '来源标签仍可用');
 });
+
+test('直接选择播放模式：循环回顺序不打乱，随机退出还原，再选随机不重复洗牌', () => {
+  const { engine } = makeEngine({ random: () => 0 });
+  engine.setQueue([tr(1, A), tr(2, A), tr(3, A)], A, 'A 专辑', 'netease');
+  const original = Array.from(engine.snapshot().queue, trackKey);
+  engine.setPlayMode('loop');
+  engine.setPlayMode('once');
+  assert.deepEqual(Array.from(engine.snapshot().queue, trackKey), original);
+  engine.setPlayMode('shuffle');
+  const shuffled = Array.from(engine.snapshot().queue, trackKey);
+  assert.notDeepEqual(shuffled, original);
+  engine.setPlayMode('shuffle');
+  assert.deepEqual(Array.from(engine.snapshot().queue, trackKey), shuffled);
+  engine.setPlayMode('loop');
+  assert.deepEqual(Array.from(engine.snapshot().queue, trackKey), original);
+  assert.equal(engine.snapshot().playMode, 'loop');
+});

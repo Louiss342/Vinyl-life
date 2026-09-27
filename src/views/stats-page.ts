@@ -40,7 +40,7 @@ class RestoreAlbumModal extends Modal {
     private onRestored: () => void
   ) {
     super(plugin.app);
-    markVinylModal(this); // 全直角：弹窗壳收掉圆角（见 styles.css「全直角」段）
+    markVinylModal(this);
     this.titleEl.setText(t('stats.removedTitle'));
   }
 

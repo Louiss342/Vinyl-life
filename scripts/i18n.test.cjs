@@ -141,6 +141,7 @@ function srcTsFiles(dir = path.join(__dirname, '../src'), out = []) {
 // 扫描范围含 scripts/ 自身：只在测试里按名字引用的键也算「有引用」，不会被误报。
 // 例外只有动态拼接的键族：modeLabelKey 用 `player.mode${name}${scope}` 现拼，源码里没有整串字面量。
 const DYNAMIC_KEY_PATTERNS = [
+  /^player\.playMode\.(once|loop|shuffle)$/, // 播放器下拉菜单与状态文字按模式拼接
   /^player\.mode(Once|Loop|Shuffle)(Album|List)$/,
   /^health\.(external|cover|source|playback)$/, // library-health.ts 的问题类型动态查词典
   /^health\.scope\.(all|current|failing)$/, // 健康检查试播范围（PROBE_SCOPES 逐个查词典）
@@ -632,7 +633,7 @@ test('播放器：切语言后 applyLanguage 就地更新按钮提示与头部�
   const noteBtn = all.find((e) => e.getAttribute('aria-label') === '给「A」写点什么吧:)');
   assert.ok(noteBtn, '「写点什么吧」的提示应为中文（在专辑名那一栏的最后）');
   assert.equal(noteBtn.getAttribute('title'), null, '追加感想钮不得再设 title');
-  assert.ok(hasLabel('选取专辑'), '「选取专辑」钮（翻到页面 2）');
+  assert.ok(hasLabel('唱片架'), '「选取专辑」钮（翻到页面 2）');
   assert.ok(hasLabel('播放 / 暂停'), '唱盘上的播放键提示（⏮ ⏭ 已按设计稿删除）');
   assert.ok(hasLabel('单次播放整张专辑'), '播放模式钮提示就是当前模式名（不再缀「点击切换」）');
   assert.equal(hasText('♪ 正在取碟…'), false, '唱盘上的读数区已按用户要求撤掉（不再有取碟中文案）');
@@ -643,7 +644,7 @@ test('播放器：切语言后 applyLanguage 就地更新按钮提示与头部�
   mod.setLanguage('en');
   view.applyLanguage();
 
-  assert.ok(hasLabel('Pick an album'), '选取专辑 → Pick an album');
+  assert.ok(hasLabel('Record shelf'), '选取专辑 → Pick an album');
   assert.ok(hasLabel('Play / pause'), '播放键提示跟着语言换');
   assert.ok(hasLabel('Play the album once'), '模式钮提示跟着语言换');
   assert.equal(noteBtn.getAttribute('aria-label'), 'Write something for “A” :)');

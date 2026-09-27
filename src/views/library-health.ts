@@ -34,6 +34,7 @@ export class SourceSwitchModal extends Modal {
   constructor(private plugin: VinylLifePlugin, private albumPath: string, private exclude?: ActiveSource) {
     super(plugin.app);
     markVinylModal(this);
+    this.modalEl.addClass('vinyl-dialog-compact', 'vinyl-dialog-actions');
     this.titleEl.setText(t('health.switch'));
   }
 
@@ -89,15 +90,15 @@ export class RelocateAudioModal extends Modal {
       this.value = dir;
       if (this.input) this.input.value = dir;
     };
-    const actions = c.createDiv({ cls: 'modal-button-container' });
-    actions.createEl('button', { text: t('health.relocatePick') }).onclick = () => picker.click();
-    actions.createEl('button', { text: t('common.cancel') }).onclick = () => this.close();
-    const apply = actions.createEl('button', { text: t('health.relocateApply'), cls: 'mod-cta' });
-    const error = c.createEl('p', { cls: 'vinyl-muted' });
     this.input = c.createEl('input', {
       attr: { type: 'text', placeholder: t('health.relocatePlaceholder') },
     });
     this.input.oninput = () => { this.value = this.input?.value ?? ''; };
+    const error = c.createEl('p', { cls: 'vinyl-muted', attr: { role: 'status' } });
+    const actions = c.createDiv({ cls: 'modal-button-container' });
+    actions.createEl('button', { text: t('health.relocatePick') }).onclick = () => picker.click();
+    actions.createEl('button', { text: t('common.cancel') }).onclick = () => this.close();
+    const apply = actions.createEl('button', { text: t('health.relocateApply'), cls: 'mod-cta' });
     apply.onclick = () => void this.apply(error, apply);
   }
 
@@ -153,6 +154,7 @@ export class LibraryHealthModal extends Modal {
   constructor(private plugin: VinylLifePlugin) {
     super(plugin.app);
     markVinylModal(this);
+    this.modalEl.addClass('vinyl-dialog-wide');
     this.titleEl.setText(t('health.title'));
   }
 

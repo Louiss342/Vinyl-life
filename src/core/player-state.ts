@@ -1061,8 +1061,13 @@ export class PlaybackEngine {
    *  离开随机时把进随机之前的顺序还回去（随机可逆，见 orderBeforeShuffle）。 */
   cyclePlayMode(): PlayMode {
     const order: PlayMode[] = ['once', 'loop', 'shuffle'];
+    return this.setPlayMode(order[(order.indexOf(this.playMode) + 1) % order.length]);
+  }
+
+  /** 菜单直接选目标模式，避免途经随机时无意打乱队列。 */
+  setPlayMode(next: PlayMode): PlayMode {
     const prev = this.playMode;
-    const next = order[(order.indexOf(prev) + 1) % order.length];
+    if (prev === next) return next;
     this.playMode = next;
     if (next === 'shuffle') this.shuffleQueue();
     else if (prev === 'shuffle') this.restoreShuffledOrder();

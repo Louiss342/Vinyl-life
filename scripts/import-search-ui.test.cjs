@@ -25,11 +25,13 @@ test('导入搜索：来源和操作收在同一行，按钮文字不换行不�
 });
 
 test('导入搜索：来源分段控件在弹窗与浮层里各收进自家留白', () => {
-  assert.match(rule('.vinyl-add-body .vinyl-import-scope'), /padding:\s*0 14px/, '浮层：两侧对齐 14px');
+  // 浮层：这一层不补内边距 —— 分段控件自带左右 14px（与陈列浮层同一个口径）。
+  // 两边都补会叠成 28px，与陈列那边看着不像同一个控件（用户反馈）。
+  assert.match(rule('.vinyl-add-body .vinyl-import-scope'), /padding:\s*0/, '浮层：这一层不补内边距');
   assert.match(
-    rule('.vinyl-add-body .vinyl-import-scope .vinyl-segments'),
-    /margin-top:\s*8px/,
-    '浮层：与搜索行 / 状态行同一节奏'
+    rule('.vinyl-segments'),
+    /margin:\s*8px 14px 14px/,
+    '分段控件自带左右 14px（浮层里直接用这一档）'
   );
   // 基础规则（弹窗）直接扫全文：.vinyl-add-body 的覆盖规则在文件里排在前面，
   // rule() 取的是第一次匹配，会先撞上它

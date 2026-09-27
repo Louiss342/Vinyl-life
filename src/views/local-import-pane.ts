@@ -58,14 +58,20 @@ export class LocalImportPane {
     private host: LocalImportHost
   ) {}
 
-  mount(container: HTMLElement): void {
-    const c = container.createDiv({ cls: 'vinyl-local-import' });
+  mount(container: HTMLElement, opts: { detailed?: boolean } = {}): void {
+    const detailed = !!opts.detailed;
+    const c = container.createDiv({ cls: `vinyl-local-import${detailed ? ' vinyl-local-workspace' : ''}` });
+    const workspace = detailed ? c.createDiv({ cls: 'vinyl-import-workspace' }) : null;
+    const filesPane = workspace?.createDiv({ cls: 'vinyl-import-workspace-results vinyl-local-files-pane' }) || c;
+    const settingsPane = workspace?.createDiv({ cls: 'vinyl-import-preview vinyl-local-settings-pane' }) || c;
 
     // —— ① 文件 / 文件夹 ——
-    const fileSec = c.createDiv({ cls: 'vinyl-import-section' });
-    fileSec.createDiv({ text: t('import.step1'), cls: 'vinyl-import-step' });
-    const pickRow = fileSec.createDiv({ cls: 'vinyl-import-actions' });
-    const pickBtn = pickRow.createEl('button', { text: t('import.pickFiles'), cls: 'mod-cta' });
+    const fileSec = filesPane.createDiv({ cls: 'vinyl-import-section vinyl-local-files-section' });
+    fileSec.createDiv({ text: t(detailed ? 'import.localFiles' : 'import.step1'), cls: 'vinyl-import-step' });
+    const picker = detailed ? fileSec.createDiv({ cls: 'vinyl-local-picker' }) : fileSec;
+    if (detailed) picker.createDiv({ text: t('import.localDropHint'), cls: 'vinyl-muted' });
+    const pickRow = picker.createDiv({ cls: 'vinyl-import-actions' });
+    const pickBtn = pickRow.createEl('button', { text: t('import.pickFiles'), cls: detailed ? '' : 'mod-cta' });
     const pickDirBtn = pickRow.createEl('button', { text: t('import.pickFolder') });
     const fileInput = pickRow.createEl('input', {
       attr: { type: 'file', accept: 'audio/*', multiple: '' },
@@ -78,20 +84,36 @@ export class LocalImportPane {
     this.fileInput = fileInput;
     this.dirInput = dirInput;
     const fileSummary = fileSec.createDiv({ cls: 'vinyl-muted vinyl-import-files' });
+    const fileList = detailed ? fileSec.createDiv({ cls: 'vinyl-local-file-list' }) : null;
+    const renderFiles = () => {
+      if (!fileList) return;
+      fileList.empty();
+      if (!this.picked.length) {
+        fileList.createDiv({ text: t('import.localFilesEmpty'), cls: 'vinyl-muted vinyl-local-file-empty' });
+        return;
+      }
+      for (const [index, file] of this.picked.entries()) {
+        const row = fileList.createDiv({ cls: 'vinyl-local-file-row' });
+        row.createSpan({ text: String(index + 1).padStart(2, '0'), cls: 'vinyl-muted' });
+        row.createSpan({ text: relPathOf(file) || file.name });
+      }
+    };
+    renderFiles();
 
     // —— ② 目标：新建 / 已有 ——
-    const targetSec = c.createDiv({ cls: 'vinyl-import-section' });
-    targetSec.createDiv({ text: t('import.step2'), cls: 'vinyl-import-step' });
+    const targetSec = settingsPane.createDiv({ cls: 'vinyl-import-section' });
+    targetSec.createDiv({ text: t(detailed ? 'import.localTarget' : 'import.step2'), cls: 'vinyl-import-step' });
+    const targetOptions = detailed ? targetSec.createDiv({ cls: 'vinyl-local-target-options' }) : targetSec;
 
-    const newRow = targetSec.createEl('label', { cls: 'vinyl-import-choice' });
+    const newRow = targetOptions.createEl('label', { cls: 'vinyl-import-choice' });
     const newRadio = newRow.createEl('input', { attr: { type: 'radio', name: 'vinyl-target' } });
     newRow.createSpan({ text: t('import.targetNew') });
     const nameInput = targetSec.createEl('input', {
-      attr: { type: 'text', placeholder: t('import.namePlaceholder') },
+      attr: { type: 'text', placeholder: t('import.namePlaceholder'), 'aria-label': t('import.targetNew') },
       cls: 'vinyl-import-input',
     });
 
-    const existRow = targetSec.createEl('label', { cls: 'vinyl-import-choice' });
+    const existRow = targetOptions.createEl('label', { cls: 'vinyl-import-choice' });
     const existRadio = existRow.createEl('input', { attr: { type: 'radio', name: 'vinyl-target' } });
     existRow.createSpan({ text: t('import.targetExisting') });
     const sel = targetSec.createEl('select', { cls: 'vinyl-import-album' });
@@ -104,6 +126,7 @@ export class LocalImportPane {
       if (a.path === this.presetAlbum?.path) o.selected = true;
     }
     if (!this.albums.length) {
+      existRadio.disabled = true;
       existRow.addClass('is-disabled');
       existRow.createSpan({ text: t('import.noAlbumNotes'), cls: 'vinyl-muted' });
     }
@@ -112,18 +135,28 @@ export class LocalImportPane {
     const batchHost = targetSec.createDiv({ cls: 'vinyl-import-batch' });
 
     // —— ③ 落库方式 ——
-    const modeSec = c.createDiv({ cls: 'vinyl-import-section' });
-    modeSec.createDiv({ text: t('import.step3'), cls: 'vinyl-import-step' });
+    const modeSec = settingsPane.createDiv({ cls: 'vinyl-import-section' });
+    modeSec.createDiv({ text: t(detailed ? 'import.localStorage' : 'import.step3'), cls: 'vinyl-import-step' });
     const modeRow = modeSec.createDiv({ cls: 'vinyl-import-row' });
-    const modeSel = modeRow.createEl('select');
-    modeSel.createEl('option', { text: t('import.modeCopyLong'), value: 'copy' });
-    modeSel.createEl('option', { text: t('import.modeLinkLong'), value: 'link' });
+    const modeSel = modeRow.createEl('select', { attr: { 'aria-label': t('import.localStorage') } });
+    modeSel.createEl('option', { text: t(detailed ? 'import.localCopy' : 'import.modeCopyLong'), value: 'copy' });
+    modeSel.createEl('option', { text: t(detailed ? 'import.localLink' : 'import.modeLinkLong'), value: 'link' });
     modeSel.value = this.ctx.settings().importMode;
+    if (detailed) {
+      const hint = modeSec.createDiv({ cls: 'vinyl-muted vinyl-local-storage-hint' });
+      const syncHint = () => hint.setText(t(modeSel.value === 'link' ? 'import.localLinkHint' : 'import.localCopyHint'));
+      modeSel.addEventListener('change', syncHint);
+      syncHint();
+      const destination = settingsPane.createDiv({ cls: 'vinyl-import-preview-destination' });
+      destination.createDiv({ text: t('import.noteDestination'), cls: 'vinyl-muted' });
+      destination.createDiv({ text: this.ctx.settings().albumFolder });
+    }
 
     // —— 操作区 ——
     // 状态行：导入进度（逐张专辑的名字与序号）与失败原因都写在这里 —— 标成 status 让读屏软件播报
-    const status = c.createDiv({ cls: 'vinyl-muted vinyl-import-status', attr: { role: 'status' } });
-    const btnRow = c.createDiv({ cls: 'vinyl-import-actions' });
+    const footer = detailed ? c.createDiv({ cls: 'vinyl-import-workspace-footer' }) : c;
+    const status = footer.createDiv({ cls: 'vinyl-muted vinyl-import-status', attr: { role: 'status' } });
+    const btnRow = footer.createDiv({ cls: 'vinyl-import-actions' });
     const btn = btnRow.createEl('button', { text: t('import.start'), cls: 'mod-cta' });
 
     const setMode = (isNew: boolean) => {
@@ -131,6 +164,10 @@ export class LocalImportPane {
       existRadio.checked = !isNew;
       nameInput.disabled = !isNew;
       sel.disabled = isNew;
+      if (detailed) {
+        nameInput.toggleClass('vinyl-hidden', !isNew);
+        sel.toggleClass('vinyl-hidden', isNew);
+      }
     };
     newRadio.addEventListener('change', () => setMode(true));
     existRadio.addEventListener('change', () => setMode(false));
@@ -139,6 +176,7 @@ export class LocalImportPane {
     });
 
     const refreshFiles = () => {
+      renderFiles();
       const names = this.picked.map((f) => f.name);
       if (!names.length) {
         fileSummary.setText('');
@@ -165,7 +203,7 @@ export class LocalImportPane {
             other
         );
       } else {
-        fileSummary.setText(
+        fileSummary.setText(detailed ? tf('import.localFileCount', { n: names.length }) :
           tf('import.filesSelected', {
             n: names.length,
             names:
@@ -201,6 +239,7 @@ export class LocalImportPane {
         btn.setText(tf('import.importNAlbums', { n: cands.length }));
       } else {
         btn.setText(t('import.start'));
+        setMode(newRadio.checked);
       }
       status.setText(isLib && this.scan ? libraryRootHint(this.scan) : '');
     };
@@ -230,11 +269,13 @@ export class LocalImportPane {
       fileInput.value = '';
       dirInput.value = '';
       fileSummary.setText('');
+      renderFiles();
       fileSummary.setAttr('title', '');
       nameInput.value = '';
       batchHost.empty();
       // 上一批可能是音乐库根目录（目标区被整块藏起来、按钮写着「导入 N 张专辑」）：铺回单选与按钮文案
       for (const el of targetFormEls) el.toggleClass('vinyl-hidden', false);
+      setMode(newRadio.checked);
       btn.setText(t('import.start'));
       status.setText('');
       window.setTimeout(() => pickBtn.focus(), 50); // 光标落回「选择文件」：接着导下一批

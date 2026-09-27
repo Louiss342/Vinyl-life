@@ -1,10 +1,9 @@
 /* Vinyl Life — 样式：专辑墙 + 黑胶转盘播放器 + 登录弹窗 + 设置面板 */
 
-/* 全直角（用户要求）：插件自绘的 UI 一律直角 —— 与专辑墙上的专辑一致，不再出现圆角矩形。
+/* 页面内的自绘 UI 保持直角，与专辑墙上的专辑一致。
  * 例外只有「本来就是圆的」：唱片 / 转盘 / 中心标签 / 中心轴 / 进度滑块 / 金属圆钮 /
  * 勾选圈 / 状态圆点 —— 那些是圆，不是圆角（各自的规则里都留了说明）。
- * 宿主（Obsidian / 主题）画在插件页面里的控件与弹层也统一收掉圆角，见文件尾部
- * 「全直角：宿主控件与弹层」段。 */
+ * 功能弹窗与菜单使用统一的圆角表面，见「功能弹层」段；不改页面内的唱片与卡片。 */
 
 /* ============ 通用 ============ */
 
@@ -152,8 +151,11 @@
 /* 工具栏（工具栏方案 2026-09-18 + 用户口径 2026-09-18 第二轮）：一行、贴顶、居中的紧凑浮卡 ——
  * 「内容多长就多长」：标题 + 计数 + 四枚字形按钮（搜索 / 陈列 / 添加 / 更多），中间不留空白；
  * 点搜索，输入框在标题与按钮之间长出来（卡片跟着变长），清空 / 失焦收回（卡片缩回）。
- * 视觉上刻意收着：无边框的图标按钮（悬停才给淡底）、28px 按钮、小一号的字、更轻的投影；
- * 毛玻璃底让封面从卡片下滚过时被虚化。窄窗格时先省计数、再缩标题（见文末容器查询）。 */
+ * 视觉上刻意收着：无边框的图标按钮（悬停才给淡底）、28px 按钮、小一号的字。
+ * 表面走「浮层」那一档（用户口径 2026-09-27 第二轮）：不透明的主题面 + 发丝边 +
+ * 12px 圆角（与陈列 / 添加浮层、菜单同值），里面控件 7px（与弹层里的输入框按钮同值）
+ * —— 与专辑墙上的卡片（直角）刻意分开：它是浮在墙上的操作面，不是墙的一部分。
+ * 窄窗格时先省计数、再缩标题（见文末容器查询）。 */
 .vinyl-shelf-toolbar {
   display: flex;
   align-items: center;
@@ -166,16 +168,28 @@
   width: fit-content;
   max-width: calc(100% - 32px);
   margin: 10px 0 0;
-  background: color-mix(in srgb, var(--background-primary) 86%, transparent);
-  backdrop-filter: blur(18px) saturate(1.5);
-  -webkit-backdrop-filter: blur(18px) saturate(1.5);
+  background: var(--background-primary);
   border: 1px solid var(--background-modifier-border);
-  border-radius: 0; /* 全直角（用户口径） */
+  border-radius: 12px;
   box-shadow:
-    0 4px 14px rgba(0, 0, 0, 0.08),
-    0 1px 2px rgba(0, 0, 0, 0.04);
+    0 10px 30px rgba(0, 0, 0, 0.12),
+    0 1px 3px rgba(0, 0, 0, 0.06);
   flex-wrap: nowrap; /* 单行是硬约定（方案 §7：窄窗也不分两行） */
   box-sizing: border-box;
+}
+
+/* 工具栏里的按钮与搜索框：与弹层里的输入框 / 按钮同一档圆角。
+ * 挂三级压过文件尾那条「页面内保持直角」的兜底（.vinyl-shelf .clickable-icon）——
+ * 那条管的是墙上的卡片与控件，工具栏这一块按浮层算。 */
+.vinyl-shelf .vinyl-shelf-toolbar .clickable-icon {
+  border-radius: 7px;
+}
+
+/* 键盘走到工具栏按钮时给与弹层同款的强调色焦点圈（搜索框不吃这条：它自己有 focus-within 的描边） */
+.vinyl-shelf .vinyl-shelf-toolbar .vinyl-toolbar-icon:focus-visible,
+.vinyl-shelf .vinyl-shelf-toolbar .vinyl-shelf-search-toggle:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
 }
 
 .vinyl-shelf-heading {
@@ -199,7 +213,7 @@
   color: var(--text-muted);
 }
 
-/* 搜索：收起 = 一枚图标；展开 = 填充式搜索框在标题与按钮之间长出来（卡片跟着变长） */
+/* 搜索：收起 = 一枚图标；展开 = 搜索框在标题与按钮之间长出来（卡片跟着变长） */
 .vinyl-shelf-search {
   flex: 0 1 auto;
   min-width: 0;
@@ -207,6 +221,8 @@
   align-items: center;
 }
 
+/* 展开的搜索框：与弹层里的输入框同款（主题面 + 发丝边 + 7px 圆角）。
+ * 原来是一块 hover 色的填充底：清除键的悬停底也是同一个灰，等于没有反馈（截图对比过）。 */
 .vinyl-shelf-search-box {
   display: none;
   align-items: center;
@@ -214,9 +230,9 @@
   min-width: 0;
   height: 28px;
   padding: 0 3px 0 9px;
-  background: var(--background-modifier-hover);
-  border: 1px solid transparent;
-  border-radius: 0;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 7px;
 }
 
 .vinyl-shelf-search.is-open .vinyl-shelf-search-toggle {
@@ -313,6 +329,7 @@
   width: auto;
   padding: 0 8px 0 4px;
   gap: 4px;
+  border-radius: 7px;
   background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
   color: var(--text-normal);
 }
@@ -349,7 +366,7 @@
   height: 28px;
   padding: 0 10px;
   border: 1px solid var(--background-modifier-border);
-  border-radius: 0;
+  border-radius: 7px;
   background: var(--background-primary);
   color: var(--text-normal);
   font-size: 0.82em;
@@ -1020,11 +1037,12 @@
   flex-direction: column;
   overflow: hidden;
   transform-origin: top right; /* 入场从右上角缩出来（浮层都是右对齐挂着的） */
-  background: color-mix(in srgb, var(--background-primary) 92%, transparent);
-  backdrop-filter: blur(24px) saturate(1.5);
-  -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  background: var(--background-primary);
   border: 1px solid var(--background-modifier-border);
-  border-radius: 0;
+  border-radius: 12px;
+  font-family: var(--font-interface);
+  font-size: var(--font-ui-small);
+  text-align: left;
   box-shadow:
     0 24px 60px rgba(0, 0, 0, 0.24),
     0 2px 8px rgba(0, 0, 0, 0.08);
@@ -1050,8 +1068,8 @@
   gap: 10px;
   min-height: 44px;
   padding: 7px 8px 7px 14px;
-  background: color-mix(in srgb, var(--background-secondary) 86%, transparent);
-  border-bottom: 1px solid var(--background-modifier-border);
+  background: transparent;
+  border-bottom: none;
 }
 
 .vinyl-panel-title {
@@ -1069,12 +1087,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 16px;
+  height: 16px;
   flex: none;
   color: var(--text-muted);
-  background: var(--background-primary);
-  border: 1px solid var(--background-modifier-border);
+  background: transparent;
+  border: none;
   border-radius: 0;
 }
 
@@ -1144,7 +1162,7 @@
   gap: 12px;
   min-height: 42px;
   padding: 5px 14px;
-  border-top: 1px solid var(--background-modifier-border);
+  border-top: none;
 }
 
 .vinyl-panel-body > .vinyl-panel-row:first-child,
@@ -1218,36 +1236,47 @@
   height: 14px;
 }
 
-/* —— 来源：分段控件（直角；选中一段用强调色淡底 + 中粗字） —— */
+/* —— 来源 / 搜索来源：药丸轨道上的单选段（陈列浮层、添加浮层、导入弹窗共用这一套） ——
+ * 一圈淡底当轨道、选中段浮起来 —— 与弹层的圆角语言同一档（轨道 10 / 段 7，7px 就是输入框与按钮那一档）。
+ * 段宽按内容分配余量（flex: 1 1 auto）：Kugou Music 这种长标签拿得多、QQ 拿得少，
+ * 不再等分到人人都放不下自己的名字、末尾切出省略号。
+ * container-type 只为下面那条窄浮层的三列规则服务（自身尺寸不受影响：宽度本来由外层定）。 */
 .vinyl-segments {
   display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
   margin: 8px 14px 14px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 0;
-  overflow: hidden;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--background-secondary);
+  /* 主题里 secondary 与 primary 贴得近时也要看得出轨道：内描一圈发丝线，不占布局尺寸 */
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--background-modifier-border) 45%, transparent);
+  container-type: inline-size;
 }
 
 .vinyl-segment {
-  flex: 1 1 0;
-  min-width: 0;
-  height: 30px;
-  padding: 0 4px;
+  flex: 1 1 auto;
+  height: 28px;
+  padding: 0 9px;
   border: none;
-  border-left: 1px solid var(--background-modifier-border);
-  border-radius: 0;
+  border-radius: 7px;
   background: transparent;
   box-shadow: none;
   color: var(--text-muted);
-  font-size: 0.8em;
   line-height: 1;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   cursor: pointer;
 }
 
-.vinyl-segment:first-child {
-  border-left: none;
+/* 字号与对齐单独挂两级祖先：单类选择器（0,1,0）压不过弹层那条「控件统一字体」——
+ * .vinyl-panel :is(button…) 是 0,1,1、.modal.vinyl-modal :is(button…) 是 0,2,1，
+ * 它们给宿主画的控件兜底，顺手把 12px 灌进段里：六段并排时「酷狗音乐」当场被切成省略号。
+ * 分段控件只在弹层里用（陈列 / 添加浮层、导入弹窗），挂上祖先正好把 11px 居中钉死 ——
+ * 两处的字号也不再各随自家容器漂。 */
+.vinyl-panel .vinyl-segment,
+.modal.vinyl-modal .vinyl-segment {
+  font-size: var(--font-ui-smaller);
+  text-align: center;
 }
 
 .vinyl-segment:hover {
@@ -1256,9 +1285,26 @@
 }
 
 .vinyl-segment.is-on {
-  background: color-mix(in srgb, var(--interactive-accent) 14%, transparent);
+  background: var(--background-primary);
   color: var(--text-normal);
   font-weight: var(--font-medium);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.12),
+    0 0 0 1px color-mix(in srgb, var(--background-modifier-border) 40%, transparent);
+}
+
+.vinyl-segment:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 0;
+}
+
+/* 侧边栏拖窄、浮层跟着收窄到一行摆不下六段时：与其挤成「前五段 + 末尾一段」的孤行
+ * （那一行还会被拉满整个宽度），不如按三列铺两行 —— 每段反而更宽更好点。
+ * 只对陈列的来源有用：添加浮层最窄 340px、导入弹窗更宽，都够一行。 */
+@container (max-width: 290px) {
+  .vinyl-segment {
+    flex: 1 1 calc((100% - 4px) / 3); /* 两段 gap × 2px：三段正好铺满一行 */
+  }
 }
 
 /* —— 「封面下的信息」：与上面同一套行，但整行不是按钮 —— 只有右边一小枚按键（值 + ›）可点 —— */
@@ -1332,12 +1378,10 @@
   margin: 0;
 }
 
+/* 分段控件自带左右 14px 外边距（与陈列浮层同一个口径）；这一层不补内边距
+ * —— 两边都补会叠成 28px，跟陈列那边看着不像一个控件。 */
 .vinyl-add-body .vinyl-import-scope {
-  padding: 0 14px;
-}
-
-.vinyl-add-body .vinyl-import-scope .vinyl-segments {
-  margin-top: 8px;
+  padding: 0;
 }
 
 .vinyl-add-body .vinyl-import-status {
@@ -1765,7 +1809,7 @@
     0 2px 6px rgba(0, 0, 0, 0.55);
 }
 
-/* 卡里的四枚键：与唱机上的播放键同款黑键面，等宽铺满一行（歌词 / 选取专辑 / 队列 / 播放模式）；全棱角。
+/* 卡里的三枚键：与唱机上的播放键同款黑键面，等宽铺满一行（歌词 / 唱机 / 唱片架）；全棱角。
  * 选择器前面挂 .vinyl-player：宿主的 button:not(.clickable-icon)（0,1,1）会盖掉单类选择器（0,1,0）的
  * color / box-shadow / background-color —— 不挂前缀的话「双线条 + 黑键面」在真机上根本不生效（实测）。 */
 .vinyl-player .vinyl-btn-mode {
@@ -1789,9 +1833,8 @@
 }
 
 .vinyl-btn-mode {
-  /* 四枚等宽（用户把原来的宽键一分为二）：让出半个 6px 缝 —— 4 × (25% − 4.5px) + 3 × 6px = 100%，
-     一行正好铺满，右边不留缝 */
-  flex: 0 0 calc(25% - 4.5px);
+  /* 三枚等宽，扣掉两道 6px 缝后一行铺满。 */
+  flex: 0 0 calc((100% - 12px) / 3);
   padding: 0 10px;
 }
 
@@ -2792,6 +2835,25 @@
   margin-top: 2px;
 }
 
+.vinyl-player .vinyl-play-mode {
+  flex-shrink: 0;
+  padding: 4px 6px;
+  height: auto;
+  font-size: var(--font-ui-small);
+  white-space: nowrap;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.vinyl-player .vinyl-play-mode:hover,
+.vinyl-player .vinyl-play-mode:focus-visible,
+.vinyl-player .vinyl-queue-more.is-active {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
 .vinyl-queue-title {
   /* 吃掉整行的余量 = 把右边那两枚按钮顶到行尾；同时自己不许换行：
      窄了宁可省略号（`Vinyl order` 很短，实际几乎用不到），折成两行会把按钮挤下去 */
@@ -3393,7 +3455,7 @@
   flex: 1;
   min-width: 0;
   margin: 0;
-  border-radius: 0;
+  border-radius: 7px;
   padding: 7px 12px;
 }
 
@@ -3401,7 +3463,7 @@
   flex: none;
   white-space: nowrap;
   padding: 6px 16px;
-  border-radius: 0;
+  border-radius: 7px;
 }
 
 /* 搜索来源（聚合 / 仅网易云 / 仅 QQ）：复用陈列浮层那套 .vinyl-segments，
@@ -4544,25 +4606,7 @@
 .vinyl-shelf input,
 .vinyl-shelf textarea,
 .vinyl-shelf .clickable-icon,
-.vinyl-player .clickable-icon,
-.modal.vinyl-modal button:not(.checkbox-container),
-.modal.vinyl-modal input:not([type='checkbox']),
-.modal.vinyl-modal textarea,
-.modal.vinyl-modal select,
-.modal.vinyl-modal .dropdown,
-.modal.vinyl-modal .clickable-icon,
-.modal.vinyl-modal .modal-close-button {
-  border-radius: 0;
-}
-
-/* 插件弹窗的壳（类名由各 Modal 挂在自己的 modalEl 上，见 views/*.ts 的 markVinylModal） */
-.modal.vinyl-modal {
-  border-radius: 0;
-}
-
-/* 插件打开的菜单（排序 / 筛选，类名见 shelf-view 的 markMenu）：壳与悬停底一起收 */
-.menu.vinyl-menu,
-.menu.vinyl-menu .menu-item {
+.vinyl-player .clickable-icon {
   border-radius: 0;
 }
 
@@ -4752,5 +4796,620 @@
   .vinyl-link-panes { flex-direction: column; }
 }
 
-/*! vinyl-life styles v1.4.0 — 由 npm run version-bump 维护，勿手改这一行：
+/*! vinyl-life styles v1.4.1 — 由 npm run version-bump 维护，勿手改这一行：
    插件启动时核对版本（见 src/core/style-fallback.ts）；缺失或与 main.js 不符会自动挂上内置副本。 */
+
+
+/* 功能弹层：统一主题字体与控件；尺寸由内容决定，不影响页面内的卡片。 */
+.vinyl-panel :is(button, input, select) {
+  font: inherit;
+  text-align: left;
+  text-align-last: left;
+}
+.modal.vinyl-modal {
+  width: min(440px, calc(100vw - 40px));
+  max-width: calc(100vw - 40px);
+  max-height: calc(100vh - 40px);
+  box-sizing: border-box;
+  padding: 24px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 14px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-family: var(--font-interface);
+  font-size: var(--font-ui-small);
+  line-height: 1.5;
+  text-align: left;
+  box-shadow: 0 24px 72px rgba(0, 0, 0, 0.24), 0 2px 8px rgba(0, 0, 0, 0.1);
+  animation: vinyl-workspace-dialog-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.modal.vinyl-modal.vinyl-dialog-compact {
+  width: min(360px, calc(100vw - 40px));
+}
+.modal.vinyl-modal.vinyl-dialog-wide {
+  width: min(760px, calc(100vw - 40px));
+}
+.modal.vinyl-modal .modal-title {
+  margin: 0 24px 18px 0;
+  font-family: inherit;
+  font-size: var(--font-ui-large, 18px);
+  font-weight: 600;
+  line-height: 1.4;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.modal.vinyl-modal .modal-content {
+  margin: 0;
+  padding: 0;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  text-align: left;
+  overflow-y: auto;
+}
+.modal.vinyl-modal .modal-content > p {
+  margin: 0 0 14px;
+  overflow-wrap: anywhere;
+}
+.modal.vinyl-modal :is(button, input, textarea, select) {
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: 400;
+  line-height: 1.4;
+}
+.modal.vinyl-modal :is(input:not([type='checkbox']):not([type='radio']), textarea, select) {
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 7px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+}
+.modal.vinyl-modal .modal-content > :is(input:not([type='checkbox']):not([type='radio']), textarea) {
+  width: 100%;
+}
+.modal.vinyl-modal button:where(:not(.checkbox-container):not([role='tab']):not(.modal-close-button)) {
+  min-height: 34px;
+  padding: 8px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 7px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  box-shadow: none;
+}
+.modal.vinyl-modal button:where(:not(.checkbox-container):not([role='tab'])):hover,
+.modal.vinyl-modal button:where(:not(.checkbox-container):not([role='tab'])):focus-visible {
+  background: var(--background-modifier-hover);
+}
+.modal.vinyl-modal button:is(.mod-cta, .mod-warning) {
+  border-color: var(--interactive-accent);
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+.modal.vinyl-modal button:is(.mod-cta, .mod-warning):hover,
+.modal.vinyl-modal button:is(.mod-cta, .mod-warning):focus-visible {
+  background: var(--interactive-accent-hover, var(--interactive-accent));
+}
+.modal.vinyl-modal :is(button, input, textarea, select):focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+.modal.vinyl-modal button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.modal.vinyl-modal :is(.modal-button-container, .vinyl-delete-actions) {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 18px 0 0;
+}
+.modal.vinyl-modal :is(.vinyl-local-import, .vinyl-set-cover, .vinyl-delete-modal, .vinyl-qr-modal) {
+  min-width: 0;
+  width: 100%;
+}
+.modal.vinyl-modal .vinyl-cover-preview {
+  margin: 0;
+}
+.modal.vinyl-modal .vinyl-qr-section {
+  align-items: flex-start;
+}
+.modal.vinyl-modal .vinyl-qr-section h4 {
+  margin: 0;
+  font: inherit;
+}
+.modal.vinyl-modal .vinyl-delete-head {
+  flex-wrap: wrap;
+}
+.modal.vinyl-modal .vinyl-delete-opt {
+  padding: 8px 0;
+  margin: 0;
+  gap: 10px;
+}
+.modal.vinyl-modal .vinyl-link-pane {
+  padding: 14px;
+  border-radius: 7px;
+}
+.modal.vinyl-modal .vinyl-link-row {
+  border-radius: 7px;
+}
+.modal.vinyl-modal .vinyl-link-row-title {
+  font-weight: 400;
+}
+.modal.vinyl-modal .prompt-input-container {
+  padding: 0 0 12px;
+}
+.modal.vinyl-modal .suggestion-item {
+  padding: 8px 10px;
+  border-radius: 7px;
+  font: inherit;
+  text-align: left;
+}
+/* 只选一个操作的窗口采用同一种菜单行，不额外强调其中某个操作。 */
+.modal.vinyl-modal.vinyl-dialog-actions .vinyl-import-actions {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+}
+.modal.vinyl-modal.vinyl-dialog-actions .modal-content button,
+.modal.vinyl-modal .vinyl-health-row button {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  width: 100%;
+  min-height: 34px;
+  margin: 0;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-normal);
+  text-align: left;
+  box-shadow: none;
+}
+.modal.vinyl-modal.vinyl-dialog-actions .modal-content button:hover,
+.modal.vinyl-modal.vinyl-dialog-actions .modal-content button:focus-visible,
+.modal.vinyl-modal .vinyl-health-row button:hover,
+.modal.vinyl-modal .vinyl-health-row button:focus-visible {
+  background: var(--background-modifier-hover);
+}
+.menu.vinyl-menu {
+  width: max-content;
+  max-width: min(280px, calc(100vw - 24px));
+  padding: 5px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  background: var(--background-primary);
+  font-family: var(--font-interface);
+  font-size: var(--font-ui-small);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18), 0 2px 6px rgba(0, 0, 0, 0.08);
+  animation: vinyl-workspace-panel-in 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.menu.vinyl-menu .menu-item {
+  justify-content: flex-start;
+  min-height: 34px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  font: inherit;
+  color: var(--text-normal);
+  text-align: left;
+}
+.menu.vinyl-menu .menu-item-title {
+  font: inherit;
+  text-align: left;
+}
+.menu.vinyl-menu .menu-separator {
+  display: none;
+}
+@media (max-width: 680px) {
+  .modal.vinyl-modal { padding: 20px; }
+  .modal.vinyl-modal .vinyl-link-panes { flex-direction: column; }
+}
+
+/* 队列面板与导入工作窗口：连续操作留在原位。 */
+.vinyl-queue-panel {
+  position: fixed;
+  left: var(--vinyl-panel-x);
+  top: var(--vinyl-panel-y);
+  z-index: var(--layer-popover, 1000);
+  width: max-content;
+  max-width: min(260px, calc(100vw - 24px));
+  box-sizing: border-box;
+  padding: 5px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-family: var(--font-interface);
+  font-size: var(--font-ui-small);
+  font-weight: 400;
+  line-height: 1.4;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18), 0 2px 6px rgba(0, 0, 0, 0.08);
+  animation: vinyl-workspace-panel-in 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.vinyl-queue-panel-check {
+  margin-left: auto;
+  width: 16px;
+}
+.vinyl-queue-panel .vinyl-queue-panel-action {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  width: 100%;
+  min-height: 34px;
+  height: auto;
+  padding: 8px 10px;
+  font-family: var(--font-interface);
+  font-size: var(--font-ui-small);
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--text-normal);
+  text-align: left;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: none;
+}
+.vinyl-queue-panel-action > span {
+  font: inherit;
+  text-align: left;
+}
+.vinyl-queue-panel .vinyl-queue-panel-action:hover,
+.vinyl-queue-panel .vinyl-queue-panel-action:focus-visible {
+  background: var(--background-modifier-hover);
+}
+.vinyl-queue-panel-icon {
+  display: flex;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  color: var(--text-muted);
+}
+.vinyl-queue-panel-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.vinyl-queue-panel-confirm {
+  margin-top: 4px;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+}
+.vinyl-queue-panel-confirm > div:first-child {
+  padding: 8px 10px;
+}
+.vinyl-queue-panel-confirm-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+.vinyl-queue-panel button:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+.modal.vinyl-modal.vinyl-import-dialog {
+  width: min(960px, calc(100vw - 40px));
+  max-width: 100%;
+  border-radius: 14px;
+  padding: 24px 0 0;
+  box-shadow: 0 24px 72px rgba(0, 0, 0, 0.24), 0 2px 8px rgba(0, 0, 0, 0.1);
+  animation: vinyl-workspace-dialog-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.modal.vinyl-modal.vinyl-import-dialog .modal-title {
+  margin: 0;
+  padding: 0 28px 18px;
+}
+.vinyl-import-dialog .modal-content.vinyl-import-dialog-content {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+.vinyl-import-dialog-tabs {
+  display: flex;
+  gap: 22px;
+  padding: 0 28px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.vinyl-import-dialog .vinyl-import-dialog-tabs button {
+  height: auto;
+  padding: 10px 0;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  background: transparent;
+  box-shadow: none;
+}
+.vinyl-import-dialog .vinyl-import-dialog-tabs button[aria-selected='true'] {
+  color: var(--text-normal);
+  border-bottom-color: var(--interactive-accent);
+}
+.vinyl-import-dialog-layer {
+  display: flex;
+  flex-direction: column;
+  height: min(580px, calc(100vh - 190px));
+  min-height: 260px;
+  min-width: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+.vinyl-import-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+}
+.vinyl-import-workspace-results {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 24px 28px;
+  border-right: 1px solid var(--background-modifier-border);
+  overflow: hidden;
+}
+.vinyl-import-workspace .vinyl-import-results {
+  flex: 1;
+  max-height: none;
+  min-height: 0;
+  gap: 3px;
+}
+.vinyl-import-workspace .vinyl-import-results:empty {
+  display: block;
+}
+.vinyl-import-workspace .vinyl-import-result {
+  padding: 12px;
+  cursor: pointer;
+  border-color: transparent;
+  background: transparent;
+  border-radius: 8px;
+}
+.vinyl-import-workspace .vinyl-import-result:hover,
+.vinyl-import-workspace .vinyl-import-result:focus-visible {
+  background: var(--background-modifier-hover);
+}
+.vinyl-import-workspace .vinyl-import-result.is-selected {
+  background: var(--background-modifier-active-hover);
+  border-color: var(--interactive-accent);
+}
+.vinyl-import-dialog input,
+.vinyl-import-dialog select,
+.vinyl-import-dialog button:not([role='tab']) {
+  border-radius: 7px;
+}
+.modal.vinyl-modal.vinyl-import-dialog input:not([type='checkbox']):not([type='radio']),
+.modal.vinyl-modal.vinyl-import-dialog select,
+.vinyl-local-workspace :is(input:not([type='checkbox']):not([type='radio']), select) {
+  min-height: 36px;
+  padding: 8px 12px;
+  box-sizing: border-box;
+}
+.vinyl-import-preview {
+  padding: 24px 28px;
+  min-width: 0;
+  overflow-y: auto;
+}
+.vinyl-import-preview-identity {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+  margin-bottom: 24px;
+}
+.vinyl-import-preview-identity > div {
+  min-width: 0;
+}
+.vinyl-import-preview-identity img {
+  width: 112px;
+  height: 112px;
+  object-fit: cover;
+  flex: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+.vinyl-import-preview-identity h3 {
+  margin: 0 0 8px;
+  font-size: 1.3em;
+  overflow-wrap: anywhere;
+}
+.vinyl-import-preview-source {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 3px 7px;
+  background: var(--background-secondary);
+  font-size: var(--font-ui-smaller);
+}
+.vinyl-import-preview-tracks {
+  padding-top: 12px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+.vinyl-import-preview-tracks h4 {
+  margin: 0 0 10px;
+  font-size: var(--font-ui-small);
+}
+.vinyl-import-preview-track {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: var(--font-ui-small);
+}
+.vinyl-import-preview-destination {
+  margin-top: 20px;
+  padding: 12px;
+  background: var(--background-secondary);
+  font-size: var(--font-ui-small);
+  overflow-wrap: anywhere;
+}
+.vinyl-import-workspace-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 15px 26px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+.vinyl-import-preview-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.vinyl-import-preview-status {
+  min-width: 0;
+  font-size: var(--font-ui-small);
+}
+.vinyl-import-preview-status.is-error,
+.vinyl-import-preview-error {
+  color: var(--text-error);
+}
+.vinyl-import-preview-empty {
+  padding: 8px 0;
+  text-align: left;
+}
+.vinyl-import-owned {
+  color: var(--text-success);
+  white-space: nowrap;
+  font-size: var(--font-ui-small);
+}
+.vinyl-import-dialog-layer.is-link .vinyl-import-scope {
+  display: none;
+}
+.vinyl-local-workspace-host {
+  height: min(540px, calc(100vh - 150px));
+}
+.modal.vinyl-modal .vinyl-local-workspace {
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  padding: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.vinyl-local-workspace .vinyl-local-files-section {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+}
+.vinyl-local-workspace .vinyl-import-step {
+  margin-bottom: 12px;
+  font-size: inherit;
+  line-height: 1.5;
+}
+.vinyl-local-workspace .vinyl-local-picker {
+  padding: 18px;
+  border: 1px dashed var(--background-modifier-border);
+  background: var(--background-secondary);
+  line-height: 1.6;
+}
+.vinyl-local-workspace .vinyl-import-actions {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.vinyl-local-workspace .vinyl-import-files {
+  margin: 14px 0 8px;
+  font-size: inherit;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.vinyl-local-workspace .vinyl-local-file-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.vinyl-local-workspace .vinyl-local-file-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px 0;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+.vinyl-local-workspace .vinyl-local-file-empty {
+  padding: 12px 0;
+}
+.vinyl-local-workspace .vinyl-import-section + .vinyl-import-section {
+  margin-top: 24px;
+}
+.vinyl-local-workspace .vinyl-local-target-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-bottom: 12px;
+}
+.vinyl-local-workspace .vinyl-import-choice {
+  margin: 0;
+  line-height: 1.5;
+}
+.vinyl-local-workspace :is(.vinyl-import-input, .vinyl-import-album) {
+  width: 100%;
+  margin: 0;
+}
+.vinyl-local-workspace .vinyl-import-row {
+  margin: 0;
+}
+.vinyl-local-workspace .vinyl-local-storage-hint {
+  margin-top: 10px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.vinyl-local-workspace .vinyl-import-workspace-footer :is(.vinyl-import-status, .vinyl-import-actions) {
+  margin: 0;
+}
+.vinyl-local-workspace .vinyl-import-workspace-footer .vinyl-import-actions {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+@keyframes vinyl-workspace-panel-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes vinyl-workspace-dialog-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (max-width: 680px) {
+  .vinyl-import-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    overflow-y: auto;
+  }
+  .vinyl-import-workspace-results {
+    min-height: 220px;
+    border-right: 0;
+    padding: 20px;
+  }
+  .vinyl-import-preview {
+    border-top: 1px solid var(--background-modifier-border);
+    padding: 20px;
+  }
+  .vinyl-import-preview-identity img {
+    width: 76px;
+    height: 76px;
+  }
+  .vinyl-import-workspace-footer {
+    flex-wrap: wrap;
+    padding: 12px 18px;
+  }
+  .vinyl-local-workspace .vinyl-local-files-section {
+    min-height: 240px;
+  }
+  .vinyl-local-workspace .vinyl-local-file-list {
+    flex: none;
+    max-height: 180px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vinyl-queue-panel,
+  .menu.vinyl-menu,
+  .modal.vinyl-modal {
+    animation: none;
+  }
+}
+
+.vinyl-import-dialog.vinyl-modal input,
+.vinyl-import-dialog.vinyl-modal select,
+.vinyl-import-dialog.vinyl-modal button:not([role='tab']) {
+  border-radius: 7px;
+}

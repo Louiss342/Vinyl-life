@@ -21,6 +21,7 @@ export class RatingModal extends Modal {
   ) {
     super(app);
     markVinylModal(this);
+    this.modalEl.addClass('vinyl-dialog-compact');
     this.titleEl.setText(t('menu.rating'));
   }
 

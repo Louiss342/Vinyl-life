@@ -39,8 +39,12 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'filter.qq': { zh: 'QQ 音乐', en: 'QQ Music' },
   'filter.kugou': { zh: '酷狗音乐', en: 'Kugou Music' },
   'filter.collect': { zh: '仅收藏（无音源）', en: 'Collection only (no source)' },
-  // 分段控件里放得下的短名（完整名字仍在 aria-label 上）
+  // 分段控件里放得下的短名（完整名字仍在 aria-label 上）：陈列的「来源」与添加的「搜索来源」
+  // 共用这一组 —— 两处是同一个控件，联动：只加长一处会立刻显出「一个控件两种叫法」。
+  // 「QQ」不在这里：中英同形的品牌名不建键（见本文件与 i18n.test 的全量自检口径），
+  // 它由 track.ts 的 sourceShortName 统一给出。
   'filter.collectShort': { zh: '仅收藏', en: 'Collect' },
+  'filter.kugouShort': { zh: '酷狗', en: 'Kugou' },
 
   // —— 专辑墙：视图标题 / 工具栏（工具栏方案 2026-09-18：单行，按钮只留图标） ——
   'shelf.title': { zh: '专辑墙', en: 'Album shelf' },
@@ -202,7 +206,7 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'player.emptyQueue': { zh: '空队列', en: 'Empty queue' },
   'player.dragToReorder': { zh: '拖拽调整顺序', en: 'Drag to reorder' },
   // 「选取专辑」= 播放器翻到唱片区（设计稿：页面 1 做立方体左转，转到页面 2）
-  'player.pickAlbum': { zh: '选取专辑', en: 'Pick an album' },
+  'player.pickAlbum': { zh: '唱片架', en: 'Record shelf' },
 
   // —— 唱片区（播放器的另一面：三行唱片架，水平移动视差 + 悬停平放展开）——
   'picker.empty': {
@@ -215,7 +219,31 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'picker.queued': { zh: '已加入队列：{n} 张专辑', en: 'Queued {n} album(s)' },
 
   // —— 导入弹窗：专辑导入（网易云 / QQ 音乐） ——
-  'import.title': { zh: '导入专辑', en: 'Import album' },
+  'import.method': { zh: '导入方式', en: 'Import method' },
+  'import.searchTab': { zh: '搜索专辑', en: 'Search albums' },
+  'import.linkTab': { zh: '粘贴链接', en: 'Paste a link' },
+  'import.localTab': { zh: '本地文件', en: 'Local files' },
+  'import.localFiles': { zh: '音频文件', en: 'Audio files' },
+  'import.localDropHint': { zh: '拖入音频文件或文件夹，也可以手动选择。', en: 'Drop audio files or a folder here, or choose below.' },
+  'import.localFilesEmpty': { zh: '尚未选择文件', en: 'No files selected' },
+  'import.localTarget': { zh: '导入到', en: 'Import into' },
+  'import.localStorage': { zh: '文件保存方式', en: 'File storage' },
+  'import.localCopy': { zh: '复制到笔记库', en: 'Copy into the vault' },
+  'import.localLink': { zh: '引用原文件', en: 'Link to original files' },
+  'import.localCopyHint': { zh: '将音频复制到笔记库，可随笔记库同步。', en: 'Copy audio files into the vault so they can sync with it.' },
+  'import.localLinkHint': { zh: '保留文件原位置，笔记只记录路径。移动原文件后需重新关联。', en: 'Keep files where they are and save their paths. Relink them if you move them.' },
+  'import.localFileCount': { zh: '已选择 {n} 个文件', en: '{n} files selected' },
+  'import.parseLink': { zh: '解析链接', en: 'Parse link' },
+  'import.linkPlaceholder': { zh: '专辑链接或 ID', en: 'Album link or ID' },
+  'import.selectPreview': { zh: '选择专辑查看资料', en: 'Select an album to view details' },
+  'import.trackPreview': { zh: '曲目预览', en: 'Track preview' },
+  'import.previewNoTracks': { zh: '暂无曲目资料', en: 'No track details available' },
+  'import.previewUnavailable': { zh: '未取得专辑资料', en: 'Album details unavailable' },
+  'import.noteDestination': { zh: '笔记目录', en: 'Note folder' },
+  'player.queuePanelOn': { zh: '点击专辑加入队尾；关闭后只保留当前专辑。', en: 'Click an album to queue it. Turning off keeps only the current album.' },
+  'player.queuePanelOff': { zh: '点击专辑立即播放。', en: 'Click an album to play immediately.' },
+  'player.clearQueueConfirm': { zh: '清空队列并停止播放？', en: 'Clear the queue and stop playback?' },
+  'import.title': { zh: '添加唱片', en: 'Add records' },
   'import.searchPlaceholder': {
     zh: '输入专辑、歌手、歌曲、专辑源链接都可以哦:)',
     en: 'Album, artist, song, or a source link — anything works :)',
@@ -888,6 +916,15 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'player.modeOnceList': { zh: '单次播放整个列表', en: 'Play the list once' },
   'player.modeLoopList': { zh: '循环播放整个列表', en: 'Repeat the list' },
   'player.modeShuffleList': { zh: '随机播放列表中的曲目', en: 'Shuffle the tracks in the list' },
+  'player.turntable': { zh: '唱机', en: 'Turntable' },
+  'player.queueTitle': { zh: '播放队列', en: 'Vinyl order' },
+  'player.queueMore': { zh: '队列选项', en: 'Queue options' },
+  'player.queueModeEnabled': { zh: '队列模式已开启', en: 'Queue mode on' },
+  'player.queueModeDisabled': { zh: '队列模式已关闭', en: 'Queue mode off' },
+  'player.clearQueue': { zh: '清空队列', en: 'Clear queue' },
+  'player.playMode.once': { zh: '顺序播放', en: 'Sequential' },
+  'player.playMode.loop': { zh: '循环播放', en: 'Repeat' },
+  'player.playMode.shuffle': { zh: '随机播放', en: 'Shuffle' },
   'player.queueMode': { zh: '专辑队列模式', en: 'Album queue mode' },
   'player.queueModeOn': {
     zh: '专辑队列模式已开启：点专辑墙上的专辑会排到队尾，不换碟',
@@ -900,7 +937,7 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'player.queueRemoveAlbum': { zh: '从队列移除「{name}」', en: 'Remove “{name}” from the queue' },
   'player.queueRemoveTrack': { zh: '从队列移除这首：{name}', en: 'Remove “{name}” from the queue' },
   'player.locateCurrent': { zh: '定位到正在播放', en: 'Scroll to the playing track' },
-  'player.lyrics': { zh: '歌词', en: 'Lyrics' },
+  'player.lyrics': { zh: '歌词栏', en: 'Lyrics panel' },
   'lyrics.idle': { zh: '还没有开始播放', en: 'Nothing playing yet' },
   'lyrics.loading': { zh: '正在取歌词…', en: 'Loading lyrics…' },
   'lyrics.empty': { zh: '这首歌还没有歌词', en: 'No lyrics for this track' },

@@ -80,7 +80,8 @@ export class QrLoginModal extends Modal {
     }
   ) {
     super(app);
-    markVinylModal(this); // 全直角：弹窗壳收掉圆角（见 styles.css「全直角」段）
+    markVinylModal(this);
+    this.modalEl.addClass('vinyl-dialog-compact', 'vinyl-dialog-actions');
     this.deps = deps;
     this.provider = opts?.provider ?? neteaseQrProvider();
     this.onLogin = opts?.onLogin;

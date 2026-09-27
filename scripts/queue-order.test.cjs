@@ -322,7 +322,8 @@ test('专辑队列模式接线：顶部开关 / 分段渲染 / 整段操作都�
   const src = fs.readFileSync(path.join(__dirname, '../src/views/player-view.ts'), 'utf8');
   const headerBlock = src.slice(src.indexOf('const header = '), src.indexOf('const playModeBtn'));
   assert.match(headerBlock, /pickBtn/, '「选取专辑」是顶部第一个按钮（翻到页面 2）');
-  assert.match(headerBlock, /queueModeBtn/, '队列模式开关在播放模式之前（顶部那一行的顺序就是创建顺序）');
+  assert.doesNotMatch(headerBlock, /queueModeBtn/, '队列模式不再占据顶部导航');
+  assert.match(src, /toggle: \(\) => this\.toggleQueueMode\(\)/, '更多菜单保留队列模式');
   // 追加发生在专辑墙与唱片区的点击路径上（播放器只负责显示与整段操作）
   const shelf = fs.readFileSync(path.join(__dirname, '../src/views/shelf-view.ts'), 'utf8');
   assert.match(shelf, /settings\.queueMode[\s\S]{0,200}?enqueueAlbum\(/, '队列模式下点专辑走引擎的 enqueueAlbum');
@@ -525,8 +526,8 @@ test('player-state.ts：不再有「清空后面的专辑」与「恢复发行�
 test('player-view.ts：Vinyl order 行 = 标题 + 两枚图标钮（专辑名与三个旧按键都不在这行）', () => {
   const src = fs.readFileSync(path.join(__dirname, '../src/views/player-view.ts'), 'utf8');
   const block = src.slice(src.indexOf('const orderRow = '), src.indexOf('const queueBox = '));
-  assert.match(block, /vinyl-queue-save/, '保存队列');
-  assert.match(block, /vinyl-queue-locate/, '定位到正在播的那首');
+  assert.match(block, /vinyl-play-mode/, '播放规则菜单');
+  assert.match(block, /vinyl-queue-more/, '队列更多菜单');
   assert.equal(
     /vinyl-order-album/.test(block),
     false,

@@ -346,7 +346,7 @@ test('语言切换：就地更新计数，唱片架不重建；唱片的可读�
 test('播放器：翻转区两面 + 选取专辑翻面（只有②③卡片转，其他不动）', () => {
   const src = fs.readFileSync(path.join(__dirname, '../src/views/player-view.ts'), 'utf8');
   assert.match(src, /vinyl-flip-inner[\s\S]{0,200}?vinyl-flip-face is-deck[\s\S]{0,120}?vinyl-flip-face is-crate/, '两面挂在同一个翻转区里');
-  assert.match(src, /pickBtn\.addEventListener\('click', \(\) => this\.flipTo\(this\.face === 'picker' \? 'player' : 'picker'\)\)/, '「选取专辑」= 翻转区的开关（再点转回来）');
+  assert.match(src, /pickBtn\.addEventListener\('click', \(\) => this\.flipTo\('picker'\)\)/, '唱片架键直接切换，唱机键负责返回');
   assert.match(src, /flipTo\('player'\)[\s\S]{0,400}?loadAlbum\(album\)/, '点专辑 = 先转回唱机卡再换碟');
   assert.match(src, /els\.flip\.toggleClass\('is-crate'/, '翻面只切类（不重建 DOM）');
   assert.match(src, /new AlbumPicker\(\{[\s\S]{0,600}?enqueue: \(albums\)/, '唱片区与播放器接线（换碟 / 批量排队 / 返回）');
@@ -463,7 +463,7 @@ test('样式：恢复原来的窄侧脊 → 悬停展开封面，保留纵向视
 
 test('样式：减少动效时翻面直接切、悬停不倾斜、视差不追手', () => {
   const css = fs.readFileSync(path.join(__dirname, '../styles.css'), 'utf8');
-  const block = css.slice(css.lastIndexOf('@media (prefers-reduced-motion: reduce)'));
+  const block = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'));
   assert.match(block, /\.vinyl-flip-inner\s*\{[^}]*transition:\s*none/, '翻面不做动画');
   assert.match(block, /\.vinyl-pick:hover,[\s\S]{0,80}?\{[^}]*transform:\s*none/, '悬停不倾斜');
   assert.match(block, /\.vinyl-picker-row\s*\{[^}]*transform:\s*none/, '减少动效时关闭行视差');

@@ -248,15 +248,17 @@ test('翻转区命中测试：overflow 不在「面」上，滚动交给板与�
   assert.match(view, /const queueBox = board\.createDiv\(\{ cls: 'vinyl-queue' \}\)/);
 });
 
-test('按键卡：四枚等宽键 1 : 1 : 1 : 1 —— 歌词（左转）/ 选取专辑（右转）/ 队列 / 播放模式', () => {
+test('按键卡：歌词 / 唱机 / 唱片架三个等宽图标，队列操作移到下方', () => {
   assert.match(view, /cls: 'vinyl-btn-mode vinyl-open-lyrics'/, '一号键 = 歌词（向左转）');
   assert.match(view, /cls: 'vinyl-btn-mode vinyl-pick-album'/, '二号键 = 选取专辑（向右转）');
-  assert.match(view, /const queueModeBtn = header\.createEl\('button', \{ cls: 'vinyl-btn-mode vinyl-queue-mode' \}\)/);
-  assert.match(view, /const playModeBtn = header\.createEl\('button', \{ cls: 'vinyl-btn-mode vinyl-play-mode' \}\)/);
+  assert.match(view, /const playerBtn = header\.createEl\('button'/);
+  assert.ok(view.indexOf('const lyricsBtn = header') < view.indexOf('const playerBtn = header'));
+  assert.ok(view.indexOf('const playerBtn = header') < view.indexOf('const pickBtn = header'));
+  assert.match(view, /const playModeBtn = orderRow\.createEl\('button'/);
   // 卡片底色 + 描边；宽度写死百分比（flex-basis 0 会被 padding 撑出「地板宽」，比例就不准了）
   assert.match(css, /\.vinyl-player-header\s*\{[^}]*border/, '按键卡有自己的描边');
   // 四枚等宽：4 × (25% − 4.5px) + 3 道 6px 缝 = 100%，一行正好铺满、右边不留空
-  assert.match(css, /\.vinyl-btn-mode\s*\{[^}]*flex:\s*0 0 calc\(25% - 4\.5px\)/, '四枚键各占四分之一');
+  assert.match(css, /\.vinyl-btn-mode\s*\{[^}]*flex:\s*0 0 calc\(\(100% - 12px\) \/ 3\)/, '三枚键等宽');
   assert.doesNotMatch(css, /vinyl-btn-wide/, '旧的「占一半」宽键已撤（用户把它一分为二）');
   assert.doesNotMatch(view, /vinyl-btn-wide/, '视图里也不再挂宽键类');
   // 标题行没了，专辑名也不在这张卡上（Vinyl order 行只放两枚图标钮）；播放错误由引擎的 Notice 弹窗报出

@@ -305,7 +305,7 @@ function makeView() {
     appendListeningNote: () => {},
   });
   const queueBox = fakeEl();
-  view.els = { queueBox, queueModeBtn: fakeEl('button'), playModeBtn: fakeEl('button') };
+  view.els = { queueBox, queueTitle: fakeEl(), queueMoreBtn: fakeEl('button'), playModeBtn: fakeEl('button') };
   const snapshot = {
     queue: [
       { source: 'netease', id: 1, title: 'S1', duration: 100, albumNotePath: 'Vinyl Note/A.md' },
@@ -358,8 +358,8 @@ test('接线：定位与跟随 —— 打开定位一次，切歌只在「上一
     "block:'nearest'：已经在视野里就一点都不动"
   );
   assert.match(
-    src,
-    /setIcon\(locateBtn, 'locate-fixed'\)[\s\S]{0,200}?t\('player\.locateCurrent'\)/,
+    read('src/views/queue-panel.ts'),
+    /this\.action\(t\('player\.locateCurrent'\), 'locate-fixed'/,
     'Vinyl order 行的定位钮要挂可读名称'
   );
 });
@@ -367,18 +367,18 @@ test('接线：定位与跟随 —— 打开定位一次，切歌只在「上一
 test('接线：Vinyl order 行两个钮 —— 保存与载入是一对（载入此前只有命令面板入口）', () => {
   const src = read('src/views/player-view.ts');
   assert.match(
-    src,
-    /setIcon\(saveQueue, 'save'\)[\s\S]{0,120}?t\('queueNote\.save'\)/,
+    read('src/views/queue-panel.ts'),
+    /this\.action\(t\('queueNote\.save'\), 'save'/,
     '保存钮在这儿'
   );
   assert.match(
-    src,
-    /setIcon\(loadQueue, 'folder-open'\)[\s\S]{0,120}?t\('queueNote\.load'\)/,
+    read('src/views/queue-panel.ts'),
+    /this\.action\(t\('queueNote\.load'\), 'folder-open'/,
     '载入钮要摆在旁边（存了却回不来，是审计点名的半成品）'
   );
   assert.match(
     src,
-    /loadQueue\.addEventListener\('click', \(\) => void this\.plugin\.loadQueueFromActiveNote\(\)\)/,
+    /load: \(\) => void this\.plugin\.loadQueueFromActiveNote\(\)/,
     '载入走命令层同一个方法（别另写一条读笔记的路）'
   );
 });

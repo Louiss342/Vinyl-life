@@ -1,5 +1,5 @@
 // 播放器视图：页面 1 = 转盘播放器（自上而下：按键卡 / 翻转区 / Vinyl order 行 / 队列）。
-//   卡① .vinyl-player-header 按键卡：「选取专辑」宽键（只留图标）占一半，队列模式 / 播放模式各占四分之一（2:1:1）；
+//   卡① .vinyl-player-header：歌词 / 唱机 / 唱片架三个等宽图标；队列操作统一放在下方。
 //     没有标题行 —— 专辑名归 Vinyl order 行末尾（播放错误由引擎的 Notice 弹窗报出）；
 //   翻转区 ②+③ .vinyl-flip：唱机卡 + 唱放条合并为「一张卡」（用户要求），整张左转 90°，
 //     背面是唱片区（三行唱片架，见 album-picker）。
@@ -15,7 +15,7 @@
 //   翻转区的两个面都必须保持 overflow: visible —— 可滚动 + 3D 变换会让 Blink 的命中测试整面失效
 //   （「返回键点不到」就是这么来的），滚动因此交给各自的滚动层（队列挂板、唱片区自己带箱子）。
 // 增量渲染：壳只建一次，状态更新只改目标节点——旋转动画不被打断。
-import { ItemView, WorkspaceLeaf, requestUrl, setIcon } from 'obsidian';
+import { ItemView, Menu, WorkspaceLeaf, requestUrl, setIcon } from 'obsidian';
 import type VinylLifePlugin from '../main';
 import type { PlayerSnapshot } from '../core/player-state';
 import type { Track } from '../core/track';
@@ -30,7 +30,7 @@ import {
   lineProgress,
   scrollPlan,
 } from '../core/lyrics';
-import { fmtTime, notice, prefersReducedMotion } from '../util';
+import { fmtTime, markVinylMenu, notice, prefersReducedMotion } from '../util';
 import { SPIN_SECONDS, SPIN_SPEEDS } from '../core/disc-motion';
 import {
   MotorPhase,
@@ -54,6 +54,7 @@ import { resolveAlbumCover, findAlbumNotes, getAlbumInfo, detectAlbumSources } f
 import type { AlbumInfo } from '../core/album-index';
 import { ARM_PARK_ANGLE, albumProgress, armAngleForProgress, armPosture } from '../core/arm-geometry';
 import { t, tf } from '../core/i18n';
+import { QueuePanel } from './queue-panel';
 import { AlbumPicker } from './album-picker';
 import type { PickerEntry } from './album-picker';
 // 整段移动的落点数学：拖拽（resolveSegmentDropIndex）与键盘（segmentMoveBy）共用一份，
@@ -68,7 +69,7 @@ interface PlayerEls {
   /** 翻转区（②+③）：正面 = 唱机卡 + 唱放卡，背面 = 唱片区，共用这一个 3D 容器 */
   flip: HTMLElement;
   flipInner: HTMLElement;
-  /** 「选取专辑」：翻转区的开关（图标键，点一下转到唱片区 / 再点转回来） */
+  /** 唱片架导航（图标键，直接切换到唱片区） */
   pickBtn: HTMLButtonElement;
   /** 播放模式按钮（单次 / 循环 / 随机）：队列模式下作用于整条列表 */
   playModeBtn: HTMLButtonElement;
@@ -90,8 +91,9 @@ interface PlayerEls {
   queueBox: HTMLElement;
   /** 歌词键（顶部最左）：翻转区向左转过去的那一面 */
   lyricsBtn: HTMLButtonElement;
-  /** 专辑队列模式开关（顶部，「选取专辑」右边） */
-  queueModeBtn: HTMLButtonElement;
+  /** 唱机导航与队列菜单入口 */
+  playerBtn: HTMLButtonElement;
+  queueMoreBtn: HTMLButtonElement;
 }
 
 /** 三种播放模式的图标（Obsidian 的 lucide 图标名） */
@@ -342,8 +344,6 @@ export class VinylPlayerView extends ItemView {
   private lastIndex = -1;
   /** 打开播放器时定位一次「正在播的那首」——之后由跟随逻辑接管（见 update 里的 locate 段） */
   private pendingLocate = false;
-  /** Vinyl order 行的定位钮：把正在播的那首滚回视野（自己翻看队列翻远了之后的回程） */
-  private locateBtn: HTMLButtonElement | null = null;
   // —— 歌词页（向左转的那一面）——
   private lyricsTitleEl: HTMLElement | null = null;
   /** 抬头第二行：`歌手 · 专辑` 合成一行（用户要求；缺哪个就只显示另一个） */
@@ -430,6 +430,7 @@ export class VinylPlayerView extends ItemView {
   /** 当前显示的是哪一面（'player' = 唱机卡那面，'picker' = 唱片区那面） */
   private face: 'player' | 'picker' | 'lyrics' = 'player';
   /** 翻转区半深（px）：= 区宽 / 2，随尺寸变化重算（见 syncFlipDepth） */
+  private queuePanel: QueuePanel | null = null;
   private flipRO: ResizeObserver | null = null;
   // 队列拖拽态：dragging 抑制拖拽尾巴上的 click（见 endQueueDrag），dragFrom 是被拖行的下标
   private dragging = false;
@@ -513,6 +514,7 @@ export class VinylPlayerView extends ItemView {
   }
 
   async onClose() {
+    this.queuePanel?.close(false);
     this.stopLyricsLoop(); // 视图没了就别再逐帧跑（rAF 会一直排下去）
     if (this.lyricsResumeTimer) window.clearTimeout(this.lyricsResumeTimer);
     this.lyricsResumeTimer = null;
@@ -591,6 +593,7 @@ export class VinylPlayerView extends ItemView {
 
   // 语言切换后就地更新（不重建 DOM）：只重放登记过的标签赋值，转盘旋转 / 入场动画 / 播放进度都不受影响
   applyLanguage() {
+    this.queuePanel?.close(false);
     for (const apply of this.labelEls) apply();
     // 歌词行不随语言重建 DOM（重建会把滚动位置和逐帧状态一起丢掉），所以它们的标签动作
     // 各自登记、这里补一次重放
@@ -610,7 +613,8 @@ export class VinylPlayerView extends ItemView {
   private applyQueueLabels() {
     const els = this.els;
     if (els) {
-      els.queueModeBtn.setAttribute('aria-label', t('player.queueMode'));
+      els.queueTitle.setText(t('player.queueTitle'));
+      els.playModeBtn.setText(t(`player.playMode.${this.lastPlayMode || 'once'}`) + ' ▾');
       // 播放模式钮的提示就是当前模式名本身（不再缀「点击切换」）
       els.playModeBtn.setAttribute(
         'aria-label',
@@ -652,31 +656,23 @@ export class VinylPlayerView extends ItemView {
     // 滚动层（板）：内边距与纵向滚动都挂在这层 —— 所有不参与翻面的内容（按键卡 / 队列）都建在板上
     const board = c.createDiv({ cls: 'vinyl-board' });
 
-    // 卡①：顶部四枚键（设计稿 1 : 1 : 1 : 1 —— 用户把原来的宽键一分为二：歌词 / 选取专辑）。
-    // 两张「翻面键」分居两侧：歌词向左转、选取专辑向右转，转过去的是同一块翻转区（见 flipTo）。
+    // 三个图标只负责切换内容；队列行为归到队列菜单，避免与导航混在一起。
     const header = board.createDiv({ cls: 'vinyl-player-header' });
-    // 歌词（左转）：与右边的选取专辑成对，都是「把翻转区转过去」的开关
     const lyricsBtn = header.createEl('button', { cls: 'vinyl-btn-mode vinyl-open-lyrics' });
     setIcon(lyricsBtn, 'mic-vocal');
-    this.bindLabel(() => {
-      lyricsBtn.setAttribute('aria-label', t('player.lyrics'));
-    });
-    lyricsBtn.addEventListener('click', () => this.flipTo(this.face === 'lyrics' ? 'player' : 'lyrics'));
-    // 选取专辑（右转）：翻转区的开关（只留图标 —— 用户不要文字；再点一下转回唱机卡）
+    this.bindLabel(() => lyricsBtn.setAttribute('aria-label', t('player.lyrics')));
+    lyricsBtn.addEventListener('click', () => this.flipTo('lyrics'));
+    const playerBtn = header.createEl('button', { cls: 'vinyl-btn-mode vinyl-open-player is-active' });
+    setIcon(playerBtn, 'disc-3');
+    playerBtn.setAttribute('aria-pressed', 'true');
+    this.bindLabel(() => playerBtn.setAttribute('aria-label', t('player.turntable')));
+    playerBtn.addEventListener('click', () => this.flipTo('player'));
     const pickBtn = header.createEl('button', { cls: 'vinyl-btn-mode vinyl-pick-album' });
-    setIcon(pickBtn, 'disc-3');
-    this.bindLabel(() => {
-      pickBtn.setAttribute('aria-label', t('player.pickAlbum'));
-    });
-    pickBtn.addEventListener('click', () => this.flipTo(this.face === 'picker' ? 'player' : 'picker'));
-    // 专辑队列模式开关（默认关）：开着时点专辑（唱片区 / 专辑墙）是排队，不是换碟
-    const queueModeBtn = header.createEl('button', { cls: 'vinyl-btn-mode vinyl-queue-mode' });
-    setIcon(queueModeBtn, 'list-plus');
-    queueModeBtn.addEventListener('click', () => this.toggleQueueMode());
-    // 播放模式：单次 → 循环 → 随机 循环切换（队列模式下作用于整条列表，见 modeLabelKey）
-    const playModeBtn = header.createEl('button', { cls: 'vinyl-btn-mode vinyl-play-mode' });
-    setIcon(playModeBtn, PLAY_MODE_ICON.once);
-    playModeBtn.addEventListener('click', () => this.cyclePlayMode());
+    setIcon(pickBtn, 'library');
+    this.bindLabel(() => pickBtn.setAttribute('aria-label', t('player.pickAlbum')));
+    lyricsBtn.setAttribute('aria-pressed', 'false');
+    pickBtn.setAttribute('aria-pressed', 'false');
+    pickBtn.addEventListener('click', () => this.flipTo('picker'));
 
     // 翻转区（②+③）：只有这一区翻面（左转 90°）—— 正面 = 唱机卡 + 唱放卡，背面 = 唱片区。
     // 按键卡、Vinyl order、队列都留在板上不动（用户要求「其他不要变」）。
@@ -828,29 +824,18 @@ export class VinylPlayerView extends ItemView {
     // 键盘（Tab + 方向键）仍走原生 range 的 input —— 指针已经被 pointer-events: none 让开
     volSlider.addEventListener('input', () => applyVolume(Number(volSlider.value) / 100));
 
-    // Vinyl order 行：左边标题，右边两个图标钮（保存队列 / 定位到正在播的那首）。
-    // 专辑名不在这儿（用户 2026-09-25 定稿）：一行的宽度留给按钮，标题也不再被挤到换行 ——
-    // 当前是哪张专辑，队列里每个专辑的段头写着（见 renderQueue）。
-    // 清空队列 / 恢复发行顺序两个按键及其功能已按设计稿删除；「写点什么吧」移到每个专辑名行里。
+    // 常驻只留播放规则与更多；队列模式、保存和载入放在同一菜单里。
     const orderRow = board.createDiv({ cls: 'vinyl-order-row' });
     const queueTitle = orderRow.createDiv({ cls: 'vinyl-queue-title' });
-    const saveQueue = orderRow.createEl('button', { cls: 'clickable-icon vinyl-queue-save' });
-    setIcon(saveQueue, 'save');
-    this.bindLabel(() => saveQueue.setAttribute('aria-label', t('queueNote.save')));
-    saveQueue.addEventListener('click', () => void this.plugin.saveQueueNote());
-    // 载入：此前只有命令面板入口（保存有按钮、载入没有 —— 审计点名的半成品）。
-    // 两者是同一条闭环的两端，摆在一起才不会让人以为「存了就回不来」
-    const loadQueue = orderRow.createEl('button', { cls: 'clickable-icon vinyl-queue-load' });
-    setIcon(loadQueue, 'folder-open');
-    this.bindLabel(() => loadQueue.setAttribute('aria-label', t('queueNote.load')));
-    loadQueue.addEventListener('click', () => void this.plugin.loadQueueFromActiveNote());
-    // 定位到正在播的那首：队列长了之后把它滚回视野。跟随播放只在「原本还看得见」时进行，
-    // 所以自己翻远之后要有这条回程（见 update 里的 locate 段）。
-    const locateBtn = orderRow.createEl('button', { cls: 'clickable-icon vinyl-queue-locate' });
-    setIcon(locateBtn, 'locate-fixed');
-    this.locateBtn = locateBtn;
-    this.bindLabel(() => locateBtn.setAttribute('aria-label', t('player.locateCurrent')));
-    locateBtn.addEventListener('click', () => this.locateCurrentRow());
+    this.bindLabel(() => queueTitle.setText(t('player.queueTitle')));
+    const playModeBtn = orderRow.createEl('button', { cls: 'vinyl-play-mode' });
+    playModeBtn.setAttribute('aria-haspopup', 'menu');
+    playModeBtn.addEventListener('click', () => this.openPlayModeMenu());
+    const queueMoreBtn = orderRow.createEl('button', { cls: 'clickable-icon vinyl-queue-more' });
+    setIcon(queueMoreBtn, 'ellipsis');
+    queueMoreBtn.setAttribute('aria-haspopup', 'dialog');
+    this.bindLabel(() => queueMoreBtn.setAttribute('aria-label', t('player.queueMore')));
+    queueMoreBtn.addEventListener('click', () => this.openQueueMenu());
 
     const queueBox = board.createDiv({ cls: 'vinyl-queue' });
     // 队列点击委托（重建不丢监听）。拖拽与点击共存：拖拽中 / 拖拽刚收尾的 click 一律不当切歌，
@@ -921,7 +906,8 @@ export class VinylPlayerView extends ItemView {
       flipInner,
       lyricsBtn,
       pickBtn,
-      queueModeBtn,
+      playerBtn,
+      queueMoreBtn,
       playModeBtn,
       discOuter,
       vinyl,
@@ -970,6 +956,10 @@ export class VinylPlayerView extends ItemView {
     els.flip.toggleClass('is-reduced', prefersReducedMotion());
     els.pickBtn.toggleClass('is-active', face === 'picker');
     els.lyricsBtn.toggleClass('is-active', face === 'lyrics');
+    els.playerBtn.toggleClass('is-active', face === 'player');
+    for (const [button, selected] of [[els.lyricsBtn, face === 'lyrics'], [els.playerBtn, face === 'player'], [els.pickBtn, face === 'picker']] as const) {
+      button.setAttribute('aria-pressed', String(selected));
+    }
     // 焦点跟着翻面走：翻过去之后，原来那些元素在背面（还在 DOM 里，但看不见）——
     // 焦点留在那里时 Enter 会对一个看不见的东西生效，读屏也还在读旧的一面。
     // 只在「焦点确实落在翻转区里」时搬，免得把用户点按钮后留在按钮上的焦点抢走。
@@ -1129,7 +1119,7 @@ export class VinylPlayerView extends ItemView {
     // 播放模式按钮：图标随模式变，非默认（单次）时给个高亮色
     if (s.playMode !== this.lastPlayMode) {
       this.lastPlayMode = s.playMode;
-      setIcon(els.playModeBtn, PLAY_MODE_ICON[s.playMode]);
+      els.playModeBtn.setText(t(`player.playMode.${s.playMode}`) + ' ▾');
       els.playModeBtn.toggleClass('is-active', s.playMode !== 'once');
     }
     // 正在播的那一行：既给视觉（is-current），也给读屏（aria-current）——
@@ -1150,10 +1140,9 @@ export class VinylPlayerView extends ItemView {
     }
 
     // 定位正在播的那首：打开时定位一次；之后跟随播放走，但只在「上一条还看得见」时才跟 ——
-    // 自己往上翻看队列了就别把人拽回来（翻远了点 Vinyl order 上的定位钮回来）。
+    // 自己往上翻看队列了就别把人拽回来（翻远了从队列菜单定位回来）。
     // 「看得见吗」要量两个元素的矩形（强制回流）：只在真的换了曲目时才问
     const wasVisible = indexChanged ? this.currentRowVisible() : false;
-    if (this.locateBtn) this.locateBtn.disabled = s.index < 0;
     if (s.index >= 0 && (this.pendingLocate || (indexChanged && wasVisible))) {
       this.pendingLocate = false;
       this.locateCurrentRow();
@@ -1590,9 +1579,7 @@ export class VinylPlayerView extends ItemView {
   }
 
   private rebuildQueue(els: PlayerEls, s: PlayerSnapshot) {
-    // 「Vinyl order」是丝印品牌式的固定英文标签（与唱机键上的手写体字标同款）：中英同形，
-    // 建 i18n 键会撞上「中英不得逐字相同」的词典测试，故保持硬编码。
-    els.queueTitle.textContent = 'Vinyl order';
+    els.queueTitle.textContent = t('player.queueTitle');
     // 段数变多 = 刚排入新专辑 → 记下来，画完闪一下（只在已经渲染过之后才比较）
     const grew = this.lastSegmentCount >= 0 && s.segments.length > this.lastSegmentCount;
     this.lastSegmentCount = s.segments.length;
@@ -1807,16 +1794,47 @@ export class VinylPlayerView extends ItemView {
   private syncQueueControls() {
     const els = this.els;
     if (!els) return;
-    els.queueModeBtn.toggleClass('is-active', this.plugin.settings.queueMode);
+    this.queuePanel?.sync();
+    els.queueMoreBtn.toggleClass('is-active', this.plugin.settings.queueMode);
+    els.queueMoreBtn.setAttribute('aria-label', t('player.queueMore') + ' · ' + t(this.plugin.settings.queueMode ? 'player.queueModeEnabled' : 'player.queueModeDisabled'));
   }
 
-  /** 播放模式按钮：切到下一档并弹一条提示（模式名随「队列模式」讲专辑还是讲列表） */
-  private cyclePlayMode() {
-    const mode = this.plugin.engine.cyclePlayMode();
-    this.plugin.settings.playMode = mode;
-    void this.plugin.saveSettings();
-    notice(t(modeLabelKey(mode, this.plugin.settings.queueMode)));
-    this.applyQueueLabels();
+  private openPlayModeMenu() {
+    const els = this.els;
+    if (!els) return;
+    this.queuePanel?.close(false);
+    const menu = new Menu();
+    markVinylMenu(menu);
+    for (const mode of ['once', 'loop', 'shuffle'] as PlayMode[]) {
+      menu.addItem((item) => item.setTitle(t(`player.playMode.${mode}`))
+        .setIcon(PLAY_MODE_ICON[mode])
+        .setChecked(this.plugin.engine.snapshot().playMode === mode)
+        .onClick(() => {
+          this.plugin.engine.setPlayMode(mode);
+          this.plugin.settings.playMode = mode;
+          void this.plugin.saveSettings();
+          this.applyQueueLabels();
+        }));
+    }
+    const rect = els.playModeBtn.getBoundingClientRect();
+    menu.showAtPosition({ x: rect.left, y: rect.bottom });
+  }
+
+  private openQueueMenu() {
+    const els = this.els;
+    if (!els) return;
+    if (this.queuePanel) { this.queuePanel.close(); return; }
+    this.queuePanel = new QueuePanel(els.queueMoreBtn, {
+      state: () => {
+        const snapshot = this.plugin.engine.snapshot();
+        return { queueMode: this.plugin.settings.queueMode, hasQueue: snapshot.queue.length > 0, hasCurrent: snapshot.index >= 0 };
+      },
+      toggle: () => this.toggleQueueMode(),
+      save: () => void this.plugin.saveQueueNote(),
+      load: () => void this.plugin.loadQueueFromActiveNote(),
+      locate: () => this.locateCurrentRow(),
+      clear: () => this.plugin.engine.clear(),
+    }, () => { this.queuePanel = null; });
   }
 
   /** 专辑队列模式开关：关掉时队列立即收敛到当前播放专辑。 */

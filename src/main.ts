@@ -611,8 +611,8 @@ export default class VinylLifePlugin extends Plugin {
     };
   }
 
-  openAlbumImport() {
-    new AlbumImportModal(this.app, this.importCtx()).open();
+  openAlbumImport(query = '') {
+    new AlbumImportModal(this.app, this.importCtx(), query).open();
   }
 
   // —— 命令层（core/commands.ts 的 CommandHost 实现）——
