@@ -3,8 +3,6 @@
 import { TFile } from 'obsidian';
 import { t } from './i18n';
 
-export type TrackSource = 'local-vault' | 'local-external' | 'netease' | 'qq' | 'kugou';
-
 export interface TrackMeta {
   title: string;
   artist?: string;
@@ -13,8 +11,7 @@ export interface TrackMeta {
   cover?: string;
   /** 来源专辑笔记路径（统计/感想联动用） */
   albumNotePath?: string;
-  /** 音轨号：本地音频从内嵌标签读（见 core/audio-tags），只用于**本地曲目的排序**；
-   *  在线源的曲目顺序由平台给的列表决定，这里不映射 */
+  /** 音轨号：本地音频从内嵌标签读（见 core/audio-tags），只用于**本地曲目的排序**（在线源的顺序由平台列表决定）。 */
   track?: number;
 }
 
@@ -45,8 +42,7 @@ export type Track =
       trial?: boolean;
     });
 
-/** 试听片段？（会员曲目匿名取流只给一段）：只有 QQ / 酷狗会带回这个标记。
- *  消费方（队列角标、开播提示）不必各自 `'trial' in track` —— 来源多了只改这一处。 */
+/** 试听片段？（会员曲目匿名取流只给一段）：只有 QQ / 酷狗会带回 —— 消费方不必各自写 `'trial' in track`。 */
 export function isTrialTrack(t: Track): boolean {
   return t.source === 'qq' || t.source === 'kugou' ? !!t.trial : false;
 }
@@ -71,9 +67,8 @@ export function trackKey(t: Track): string {
 
 // —— 队列顺序（纯函数：不碰引擎状态，便于单测）——
 
-/** 队列重排内核：把 from 处的元素移到结果数组的 to 位（to = 结果下标，先移除再插入）。
- *  越界（from / to 不在 0..length-1）返回原数组副本；任何情况下都不改原数组。
- *  只作用于本次会话：拖拽结果不落盘、下次播这张专辑仍是发行顺序。 */
+/** 队列重排内核：把 from 处的元素移到结果数组的 to 位（to = 结果下标，先移除再插入）。越界
+ *  返回原数组副本、任何情况下都不改原数组；只作用于本次会话（拖拽结果不落盘，下次播仍是发行顺序）。 */
 export function reorderTracks(tracks: Track[], from: number, to: number): Track[] {
   const next = [...tracks];
   if (!Number.isInteger(from) || !Number.isInteger(to)) return next;
@@ -94,9 +89,8 @@ export function sourceName(s: 'local' | 'netease' | 'qq' | 'kugou'): string {
   return t('src.local');
 }
 
-/** 分段控件里的来源短名（陈列浮层的「来源」与添加浮层的「搜索来源」共用这一份 ——
- *  两处是同一个控件、同一个叫法）。比全名短一档：窄浮层里六段并排也放得下。
- *  「QQ」中英同形，不走词典（i18n 的全量自检把 zh === en 的键判为漏翻，品牌名不建键）；
+/** 分段控件里的来源短名（陈列浮层的「来源」与添加浮层的「搜索来源」共用 —— 同一个控件、同一个叫法），
+ *  比全名短一档：窄浮层里六段并排也放得下。「QQ」中英同形、不走词典（i18n 全量自检把 zh === en 判为漏翻），
  *  网易云中英都够短，直接用全名。 */
 export function sourceShortName(s: 'netease' | 'qq' | 'kugou'): string {
   if (s === 'qq') return 'QQ';

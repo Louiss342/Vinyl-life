@@ -48,8 +48,7 @@ export const EMPTY_STATS: VinylStats = { totalPlays: 0, albums: {}, tracks: {}, 
 
 // 日历只展示近一年；保留两年明细供导出和回顾，聚合计数仍是全量历史。
 export const MAX_PLAY_EVENTS = 50_000;
-/** 超上限时裁到的水位：**一批一批地裁**（低水位），而不是每超一条就裁一次 ——
- *  不然连续播放时每条播放都会触发一次「归档 + 裁剪」。 */
+/** 超上限时裁到的水位：**一批一批地裁**（低水位）—— 每超一条就裁一次，连续播放时每条播放都会触发一次「归档 + 裁剪」。 */
 export const TRIM_TARGET_EVENTS = 45_000;
 export const PLAY_EVENT_RETENTION_MS = 2 * 366 * 24 * 60 * 60 * 1000;
 
@@ -60,8 +59,8 @@ export function needsRetention(events: PlayEvent[], now = Date.now()): boolean {
   return typeof oldest === 'number' && oldest < now - PLAY_EVENT_RETENTION_MS;
 }
 
-/** 裁掉哪些、留下哪些：两边都给出来 —— 调用方要在丢数据之前先把丢掉的那批归档
- *  （见 main.ts 的 archivePrunedEvents 与 DATA_MIGRATION）。events 需已归一。 */
+/** 裁掉哪些、留下哪些：两边都给出来 —— 调用方要在丢数据之前先把丢掉的那批归档（见 main.ts 的
+ *  archivePrunedEvents 与 DATA_MIGRATION）。events 需已归一。 */
 export function trimPlayEvents(
   events: PlayEvent[],
   now = Date.now()
@@ -141,8 +140,7 @@ export function recordTrackPlay(
   t.lastPlayedAt = now;
   stats.tracks[key] = t;
   stats.events.push({ at: now, albumPath, trackKey: key });
-  // 这里**刻意不裁剪**：裁剪要先归档（见 main.ts 的 retainEventsOrKeepAll），
-  // 而归档是异步的、要碰文件系统 —— 核心保持纯函数，由调用方在记录之后统一处理。
+  // 这里**刻意不裁剪**：裁剪要先归档（见 main.ts 的 retainEventsOrKeepAll），而归档异步且要碰文件系统 —— 核心保持纯函数，由调用方在记录之后统一处理。
   if (albumPath) {
     const a = stats.albums[albumPath] ?? { plays: 0, lastPlayedAt: 0 };
     a.plays++;
@@ -173,11 +171,7 @@ export interface CalendarColumn {
   days: Date[];
 }
 
-/**
- * 热力日历的列：**时间倒序**——第 0 列是「含今天的那一周」，往右每列回退一周。
- * 今天落在第 0 列，打开面板不用横向滚动就能看到最近的播放；
- * 本列今天之后的几天仍是未来格（渲染时置灰）。
- */
+/** 热力日历的列：**时间倒序**——第 0 列是「含今天的那一周」，往右每列回退一周（今天就在第 0 列，打开面板不用横向滚动就能看到最近的播放）；本列今天之后的几天仍是未来格，渲染时置灰。 */
 export function calendarColumns(today: Date, weeks = 53): CalendarColumn[] {
   const day0 = startOfLocalDay(today);
   const weekEnd = new Date(day0);
@@ -244,12 +238,7 @@ export function playsByDay(stats: VinylStats): Map<string, PlayEvent[]> {
   return days;
 }
 
-/** 榜单 / 历史里显示用的专辑名：优先用播放时留下的快照标题（笔记删了也还显示原名），
- *  退回路径里的文件名；快照记了版本就缀在后面（与卡片上的写法同一口径）。
- *
- *  这里曾有一个 recentAlbums（按 lastPlayedAt 取前 n 张）——2026-09-26 删：
- *  唯一的调用方是它自己的用例，统计页的榜单要的是「排序 + 每条还要渲染播放次数」，
- *  拿不到它给的那三个字段。留下的这条被统计页三处共用（此前是页面里的私有副本）。 */
+/** 榜单 / 历史里显示用的专辑名：优先用播放时留下的快照标题（笔记删了也还显示原名），退回路径里的文件名；快照记了版本就缀在后面（与卡片上的写法同一口径）。统计页三处共用这一条。 */
 export function albumTitleOf(path: string, stat: AlbumPlayStat): string {
   const title = stat.snapshot?.title || path.split('/').pop()?.replace(/\.md$/, '') || path;
   return stat.snapshot?.edition ? `${title} · ${stat.snapshot.edition}` : title;

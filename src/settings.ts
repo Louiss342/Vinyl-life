@@ -1,13 +1,12 @@
-// 设置面板：自绘标签页（通用 / 统计 / 外观 / 源 / 关于），布局照设计稿
-// Excalidraw/Drawing 2026-09-15 15.58.24：一行标签 + 右侧「Vinyl Life」+ 下方整块面板。
+// 设置面板：自绘标签页（通用 / 统计 / 外观 / 源 / 关于），布局照设计稿 Excalidraw/Drawing 2026-09-15 15.58.24。
 //
 // 为什么不用 1.13 的声明式 API（getSettingDefinitions）：它渲染的是「分页列表 → 子页 + 返回键」，
-// 做不出浏览器标签页那种「点谁就地换内容」。官方文档把话说死了：getSettingDefinitions() 一旦
-// 返回非空数组，display() 就不会被调用 —— 两条路只能二选一。取舍的代价是本插件的设置不再进
-// Obsidian 的全局设置搜索（自绘面板的插件都如此），约定与理由见 CONTRIBUTING.md。
+// 做不出浏览器标签页那种「点谁就地换内容」。官方文档写明：getSettingDefinitions() 一旦返回非空数组，
+// display() 就不再被调用 —— 两条路只能二选一。取舍的代价是本插件的设置不再进 Obsidian 的全局设置
+// 搜索（自绘面板的插件都如此），约定与理由见 CONTRIBUTING.md。
 //
-// 切标签 = 清空内容区重画：不预建四份再藏起来 ——「关于」页的手绘框要按真实尺寸画，
-// 藏起来的元素量出来是 0。语言 / 取值变了走 render()：整面板重建，仍停在当前标签页。
+// 切标签 = 清空内容区重画（不预建四份再藏起来 ——「关于」页手绘框要按真实尺寸画，藏起来的量出来是 0）；
+// 语言 / 取值变了走 render()：整面板重建，仍停在当前标签页。
 import {
   App,
   ButtonComponent,
@@ -23,6 +22,7 @@ import type VinylLifePlugin from './main';
 import { QrLoginModal, kugouQrProvider, qqQrProvider } from './views/qr-login-modal';
 import { StatsPage } from './views/stats-page';
 import { settingsSection } from './views/settings-section';
+import { BRAND_ICON_IDS } from './views/brand-icons';
 import { attachAboutInk, renderAboutPage } from './views/about-page';
 import { DiscDirection, DISC_DIRECTIONS, SpinSpeed, SPIN_SPEEDS } from './core/disc-motion';
 import {
@@ -60,7 +60,6 @@ export const SETTINGS_TABS = [
 
 type TabId = (typeof SETTINGS_TABS)[number]['id'];
 
-/** 上次播放位置（重启后恢复用） */
 export interface LastPlayback {
   albumPath: string;
   trackKey: string;
@@ -72,48 +71,43 @@ export type ShelfColumns = 'auto' | number;
 
 export interface VinylSettings {
   albumFolder: string;
-  /** 界面语言（默认中文；主要覆盖专辑墙文案） */
+  /** 界面语言（默认中文） */
   language: Lang;
   /** 本地专辑笔记模板文件（vault 相对路径；空 = 内置模板） */
   albumNoteTemplate: string;
   coverFolder: string;
-  /** 复制进库的音频的根目录（每张专辑在下面各占一个子目录） */
+  /** 复制进库的音频根目录（每张专辑各占一个子目录） */
   audioFolder: string;
-  /** 导出的统计笔记的落点目录 */
   statsFolder: string;
-  /** 队列笔记的落点目录（播放器「保存队列为笔记」写到这里） */
+  /** 队列笔记落点（「保存队列为笔记」写到这里） */
   queueFolder: string;
-  /** 本地音频导入落库模式 */
   importMode: 'copy' | 'link';
   defaultSource: 'auto' | 'local' | 'netease' | 'qq' | 'kugou';
-  /** 在线搜索的来源范围（「添加」面板的搜索选择）：聚合 / 仅网易云 / 仅 QQ；
-   *  默认聚合。记忆型字段：面板里换档即写回，没有设置页入口（与音量、上次播放位置同类） */
+  /** 在线搜索来源（「添加」面板的搜索选择）：聚合 / 仅网易云 / 仅 QQ，默认聚合；记忆型字段
+   *  （换档即写回，无设置页入口，与音量、上次播放位置同类） */
   searchSource: SearchScope;
   quality: 'standard' | 'higher' | 'exhigh' | 'lossless';
   /** 加载队列后立即播放（交接后即“落盘即播”） */
   autoPlay: boolean;
   playerLocation: 'sidebar' | 'tab' | 'window';
-  /** 播放器面板配色（外观页）：胡桃木 / 雪域白 / 哑光黑 */
+  /** 播放器面板配色（外观页） */
   playerDeck: DeckStyle;
   /** 黑胶唱片配色（外观页）：专辑墙卡片与播放器转盘同时生效 */
   recordColor: RecordColor;
-  /** 专辑墙每行卡片数（外观页） */
   shelfColumns: ShelfColumns;
-  /** 专辑墙黑胶唱片弹出方向（外观页） */
   discDirection: DiscDirection;
-  /** 播放器转盘转速（外观页） */
   turntableSpeed: SpinSpeed;
   /** 搓碟（外观页）：开着时鼠标按在唱片上拖动 = 手动转盘 */
   scratchEnabled: boolean;
   /** 搓碟音效：完整（解码整轨，正反都出声）/ 轻量（只有正向，零内存） */
   scratchSound: ScratchSound;
-  /** 预先备好搓碟缓冲（只有完整音效用得上）：开播几秒后就把整轨抓下来解码，
-   *  第一下搓碟就是双向完整音效；关掉则等到手按上唱片才开始抓（省流量，第一下先用轻量音效） */
+  /** 预先备好搓碟缓冲（只有完整音效用得上）：开播几秒后就抓整轨解码，第一下搓碟即双向完整音效；
+   *  关掉则等手按上唱片才抓（省流量，第一下先走轻量音效） */
   scratchPreload: boolean;
-  /** 专辑墙工具栏的位置（外观页）：顶部 / 底部 × 左 / 中 / 右；默认 = 顶部居中 */
+  /** 专辑墙工具栏位置（外观页）；默认顶部居中 */
   toolbarPosition: ToolbarPosition;
-  /** 专辑墙卡片显示的属性键（专辑墙工具栏「卡片属性」维护；顺序即显示顺序）。
-   *  对应专辑笔记 frontmatter 的键名。只读语义：永远整表替换（变更走 shelf-props 的 toggle/reorder helper） */
+  /** 专辑墙卡片显示的属性键（工具栏「卡片属性」维护，顺序即显示顺序）：对应笔记 frontmatter 的键名。
+   *  只读语义：永远整表替换（变更走 shelf-props 的 toggle/reorder helper） */
   shelfProps: string[];
   /** 卡片属性显示名覆写（frontmatter 键 → 名称）；空 = 用预设别名 / 键名兜底 */
   shelfPropLabels: Record<string, string>;
@@ -131,18 +125,17 @@ export interface VinylSettings {
   sourceFailures: Record<string, { message: string; at: number }>;
   /** 健康检查的在线试播范围（记忆型：弹窗里选了就记住） */
   probeScope: ProbeScope;
-  /** 上次在线试播的时间（健康检查显示「上次检查于何时」；没试播过为空） */
+  /** 上次在线试播时间（「上次检查于何时」；没试播过为空） */
   lastProbeAt?: number;
   /** 每周自动备份一次（只保留最近 backupKeep 份自动备份；手动备份与裁剪归档不在此列） */
   autoBackup: boolean;
-  /** 自动备份保留份数 */
   backupKeep: number;
   /** 最近一次成功备份的时间（手动 / 自动都算），历史页显示 */
   lastBackupAt?: number;
 }
 
-// 七个目录名统一用首字母大写：Vinyl Note / Covers / Audio / Stats / Queues / Template / Backups。
-// 旧名（covers / audio / 模板 / template）由 main.ts 的 migrateFolderNames 在启动时改名（只动仍是旧默认值的项）。
+// 七个目录名统一首字母大写：Vinyl Note / Covers / Audio / Stats / Queues / Template / Backups；
+// 旧名（covers / audio / 模板 / template）由 main.ts 的 migrateFolderNames 启动时改名，只动仍是旧默认值的项。
 export const DEFAULT_SETTINGS: VinylSettings = {
   albumFolder: 'Vinyl Life/Vinyl Note',
   language: 'zh',
@@ -207,8 +200,7 @@ const row = (parent: HTMLElement, name: string, build: (s: Setting) => void): vo
 const columnOptions = (): [number, string][] =>
   SHELF_COLUMN_CHOICES.map((n) => [n, tf('settings.columnsN', { n })]);
 
-// 工具栏位置下拉的显示名（与 DECK_LABEL_KEYS 同一套做法：键写成字面量，别现拼，
-// 词典的「没有死键」自检才扫得到）
+// 工具栏位置下拉的显示名（与 DECK_LABEL_KEYS 同一套做法：键写成字面量，词典的「没有死键」自检才扫得到）
 const TOOLBAR_POS_KEYS: Record<ToolbarPosition, string> = {
   'top-left': 'settings.toolbarTopLeft',
   'top-center': 'settings.toolbarTopCenter',
@@ -270,9 +262,8 @@ const SCRATCH_SOUND_KEYS: Record<ScratchSound, string> = {
   light: 'settings.scratchLight',
 };
 
-// 自绘面板是有意为之（为什么，见文件头注释与 CONTRIBUTING.md）。审核会提示「未实现 getSettingDefinitions」，
-// 但那是取舍不是缺陷：声明式的分页列表做不出浏览器标签页，官方文档写明两条路只能二选一。
-// 不去禁用它 —— 本仓库的 lint 配置禁止豁免 obsidianmd/* 规则（eslint-comments/no-restricted-disable）。
+// 自绘面板是有意为之（理由见文件头与 CONTRIBUTING.md）：审核会提示「未实现 getSettingDefinitions」，
+// 那是取舍不是缺陷。不去禁用它 —— 本仓库 lint 禁止豁免 obsidianmd/* 规则（eslint-comments/no-restricted-disable）。
 export class VinylSettingTab extends PluginSettingTab {
   plugin: VinylLifePlugin;
   /** 当前标签页：切标签 / 重绘后仍停在这一页 */
@@ -305,14 +296,12 @@ export class VinylSettingTab extends PluginSettingTab {
     super.hide();
   }
 
-  /** 整面板重绘：标签条与内容区一起重建，仍停在当前标签页 */
   private render(): void {
     const { containerEl } = this;
     this.stopAboutInk();
     containerEl.empty();
     this.buildTabStrip(containerEl);
-    // 恢复备份之后到重启之前写入是关着的（见 main.ts 的 awaitingRestartAfterRestore）：
-    // 设置页也要说 —— 用户正是在这里改设置，而改完不会落盘
+    // 恢复备份后到重启前写入是关着的（见 main.ts 的 awaitingRestartAfterRestore）——用户正是在这里改设置，得说一声
     if (this.plugin.awaitingRestartAfterRestore) {
       containerEl.createDiv({
         text: t('backup.restartBanner'),
@@ -340,8 +329,7 @@ export class VinylSettingTab extends PluginSettingTab {
     }
   }
 
-  /** 标签条 + 右上角产品名（照设计稿：标签一行靠左，标题靠右）。
-   *  用 <button> 而不是 div：键盘可聚焦、回车 / 空格即切换，不用自己补键盘处理。 */
+  /** 标签条 + 右上角产品名。用 <button> 而不是 div：键盘可聚焦、回车 / 空格即切换，不用自己补键盘处理。 */
   private buildTabStrip(containerEl: HTMLElement): void {
     const head = containerEl.createDiv({ cls: 'vinyl-settings-head' });
     const nav = head.createEl('nav', { cls: 'vinyl-settings-tabs' });
@@ -370,8 +358,7 @@ export class VinylSettingTab extends PluginSettingTab {
   }
 
   // ============ 通用：基础偏好 + 播放 / 路径 / 模板 ============
-  // 书写顺序就是两栏网格里的排布顺序：前两个分区是半宽卡片，正好并排成一行；
-  // 后两个分区带输入框，占整行（见 styles.css 的 .is-paths / .is-template）。
+  // 书写顺序即两栏网格的排布：前两个分区半宽并排成一行，后两个带输入框占整行（见 styles.css 的 .is-paths / .is-template）。
 
   private renderGeneralTab(el: HTMLElement): void {
     const p = this.plugin;
@@ -390,8 +377,7 @@ export class VinylSettingTab extends PluginSettingTab {
       );
     });
 
-    // 「默认音源」与「在线音源音质」已挪到「源」页：那一页收齐所有与音源有关的设置
-    // （默认与音质 / 三家平台登录 / 本地源），通用页只留与音源无关的基础偏好。
+    // 「默认音源」与「在线音源音质」在「源」页（那页收齐默认与音质 / 三家登录 / 本地源），通用页只留与音源无关的偏好
     settingsSection(el, t('settings.section.playback'), 'playback', 'audio-lines', (body) => {
       row(body, t('settings.autoPlay'), (s) =>
         void s.addToggle((tg) =>
@@ -411,12 +397,9 @@ export class VinylSettingTab extends PluginSettingTab {
       this.pathRow(body, t('settings.queueFolder'), 'queueFolder');
     });
 
-    // 模板行：路径 + 选择文件 + 打开 / 生成。按钮文案就是状态 ——
-    // 路径上真有文件时是「打开模板」，没有时是「生成模板文件」（点了按内置模板建一份）。
-    // 这样「设置里指着一个不存在的文件、导入却静默用内置模板」这个坑一眼就能看见。
-    //
-    // 这一行刻意**不设行名**：分区标题已经写着「模板」，行名再和输入框 + 两个按钮挤在一行里，
-    // 中文没有词边界，会被压成一字一行（竖排）。输入框自己挂 aria-label，读屏仍读得出这是什么。
+    // 模板行：路径 + 选择文件 + 打开 / 生成。按钮文案就是状态（有文件 =「打开模板」，没有 =「生成模板文件」），
+    // 「设置里指着一个不存在的文件、导入却静默用内置模板」这个坑一眼就能看见。
+    // 刻意**不设行名**：分区标题已写着「模板」，行名再挤进这一行会把中文压成竖排（输入框自挂 aria-label）。
     settingsSection(el, t('settings.template'), 'template', 'notebook-pen', (body) => {
       {
         const s = new Setting(body);
@@ -440,7 +423,7 @@ export class VinylSettingTab extends PluginSettingTab {
               .setValue(p.settings.albumNoteTemplate)
               .onChange(async (v) => {
                 p.settings.albumNoteTemplate = v.trim();
-                syncState(); // 同上：先反馈，再落盘
+                syncState(); // 先反馈，再落盘
                 await p.saveSettings();
               });
             // 行名去掉了，读屏的名字挂到输入框自己身上（占位文案不算标签）
@@ -470,9 +453,8 @@ export class VinylSettingTab extends PluginSettingTab {
     });
   }
 
-  /** 五类目录共用的一行：就是一个输入框。
-   *  唯一多出来的是「填了个不能用的路径」时描一圈告警色 —— 不写字、不占位，
-   *  正常用的时候这一行和别的设置行长得一模一样。 */
+  /** 五类目录共用的一行：就是一个输入框；唯一多出的是「路径不能用」时描一圈告警色 ——
+   *  不写字、不占位，正常时这一行和别的设置行长得一模一样。 */
   private pathRow(
     body: HTMLElement,
     name: string,
@@ -627,8 +609,7 @@ export class VinylSettingTab extends PluginSettingTab {
 
   private renderSourceTab(el: HTMLElement): void {
     const p = this.plugin;
-    // 音源页的第一张卡：默认走哪一路、在线音质要哪一档 —— 与下面的登录 / 本地源合成
-    // 「音源管理」的完整入口（以前这两行在通用页，跟播放偏好混在一起）
+    // 音源页第一张卡：默认走哪一路 + 在线音质（与登录 / 本地源合成「音源管理」入口；旧在通用页，已挪来）
     settingsSection(el, t('settings.section.sourceDefaults'), 'source-defaults', 'sliders-horizontal', (body) => {
       row(body, t('settings.defaultSource'), (s) =>
         void s.addDropdown((d) =>
@@ -661,7 +642,8 @@ export class VinylSettingTab extends PluginSettingTab {
       );
     });
 
-    settingsSection(el, t('settings.sub.netease'), 'netease', 'cloud', (body) => {
+    // 「源」页三块的分区图标换成平台自己的标记（自注册，见 views/brand-icons），不再是通用 Lucide
+    settingsSection(el, t('settings.sub.netease'), 'netease', BRAND_ICON_IDS.netease, (body) => {
       this.statusRow(body, 'netease');
       row(body, t('settings.qrLogin'), (s) =>
         void s.addButton((b) =>
@@ -688,7 +670,7 @@ export class VinylSettingTab extends PluginSettingTab {
       );
     });
 
-    settingsSection(el, t('settings.sub.qq'), 'qq', 'message-circle-more', (body) => {
+    settingsSection(el, t('settings.sub.qq'), 'qq', BRAND_ICON_IDS.qq, (body) => {
       this.statusRow(body, 'qq');
       row(body, t('settings.qrLogin'), (s) =>
         void s.addButton((b) =>
@@ -715,7 +697,7 @@ export class VinylSettingTab extends PluginSettingTab {
       );
     });
 
-    settingsSection(el, t('settings.sub.kugou'), 'kugou', 'headphones', (body) => {
+    settingsSection(el, t('settings.sub.kugou'), 'kugou', BRAND_ICON_IDS.kugou, (body) => {
       this.statusRow(body, 'kugou');
       row(body, t('settings.qrLogin'), (s) =>
         void s.addButton((b) =>
@@ -768,8 +750,7 @@ export class VinylSettingTab extends PluginSettingTab {
 
   // ============ 登录状态行 ============
 
-  /** 状态行：控件区放状态文案，行渲染后异步回填 —— 先渲染设置项再取状态，
-   *  两个平台并行检测，避免一个慢源阻塞另一个。
+  /** 状态行：控件区放状态文案，行渲染后异步回填 —— 先渲染设置项再取状态、各平台并行检测，一个慢源不阻塞另一个。
    *  行说明（账号与网关连通性）刻意不写：状态就在控件区，再来一行只是重复。 */
   private statusRow(parent: HTMLElement, platform: 'netease' | 'qq' | 'kugou'): void {
     row(parent, t('settings.loginStatus'), (s) => {
@@ -789,9 +770,8 @@ export class VinylSettingTab extends PluginSettingTab {
     });
   }
 
-  /** 网易云登录态回填。不能拿 isConnected 当门槛：render 回调跑的时候行还没接进文档，
-   *  那样首次回填会被直接挡掉（状态永远是空的）。旧元素被重绘丢弃时，写进去也无害；
-   *  同一平台的并发检测用序号只认最后一次。 */
+  /** 网易云登录态回填。不能拿 isConnected 当门槛：render 回调跑时行还没接进文档，首次回填会被直接挡掉。
+   *  旧元素被重绘丢弃时写进去也无害；并发检测用序号只认最后一次。 */
   private async refreshNetease() {
     const el = this.neteaseStatusEl;
     if (!el) return;
@@ -824,8 +804,7 @@ export class VinylSettingTab extends PluginSettingTab {
           : t('settings.notLoggedIn'),
       cls: 'vinyl-auth-primary',
     });
-    // 已登录就只留账号徽标：Cookie 体积是排查用的诊断值，不进用户界面。
-    // 未登录才补一行网关状态 —— 登录失败时它能回答「是不是网关没起来」。
+    // 已登录只留账号徽标（Cookie 体积是排查用的诊断值，不进界面）；未登录才补网关状态行 —— 登录失败时它回答「网关起没起来」。
     if (!st.loggedIn) {
       el.createSpan({
         text: st.serverOk ? t('settings.gatewayOk') : t('settings.gatewayDown'),
@@ -866,7 +845,7 @@ export class VinylSettingTab extends PluginSettingTab {
           : t('settings.notLoggedIn'),
       cls: 'vinyl-auth-primary',
     });
-    // 与网易云同一取舍：登录后不再报 Cookie 体积，只在未登录时报网关状态。
+    // 同网易云：登录后不报 Cookie 体积，只在未登录时报网关状态。
     if (!st.loggedIn) {
       el.createSpan({
         text: st.serverOk ? t('settings.gatewayOk') : t('settings.gatewayDown'),
@@ -875,8 +854,8 @@ export class VinylSettingTab extends PluginSettingTab {
     }
   }
 
-  /** 酷狗音乐登录态回填（同上）。未登录是常态：免费曲库与搜索不需要登录，
-   *  登录只影响会员音质与付费曲目 —— 状态行事照实报「未登录」，不渲染成错误。 */
+  /** 酷狗音乐登录态回填（同上）。未登录是常态：免费曲库与搜索不需要登录（登录只影响会员音质与付费曲目），
+   *  状态行照实报「未登录」，不渲染成错误。 */
   private async refreshKugou() {
     const el = this.kugouStatusEl;
     if (!el) return;
@@ -911,7 +890,7 @@ export class VinylSettingTab extends PluginSettingTab {
           : t('settings.notLoggedIn'),
       cls: 'vinyl-auth-primary',
     });
-    // 与另外两个平台同一取舍：登录后不再报 Cookie 体积，只在未登录时报网关状态。
+    // 同网易云 / QQ：登录后不报 Cookie 体积，只在未登录时报网关状态。
     if (!st.loggedIn) {
       el.createSpan({
         text: st.serverOk ? t('settings.gatewayOk') : t('settings.gatewayDown'),

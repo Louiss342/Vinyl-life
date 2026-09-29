@@ -1,8 +1,6 @@
-// 酷狗网关回归：vm 执行真实 server/gateway.js（连带真实 server/kugou.js），
-// 仅替换 I/O（fs / http / fetch / AbortSignal）。设备与账号数据为合成 fixture。
-//
-// 与 qq-auth.test.cjs 同一套 harness 约定：fetch 桩按 URL 分派、未识别 URL 直接 throw
-//（防止实现偷偷换了端点而测试还绿着）；crypto 用真的（md5 / AES / RSA 都靠它）。
+// 酷狗网关回归：vm 执行真实 server/gateway.js（连带真实 server/kugou.js），仅替换 I/O（fs / http / fetch）。
+// harness 同 qq-auth.test.cjs：fetch 桩按 URL 分派、未识别 URL 直接 throw（防实现偷换端点还绿着），
+// crypto 用真的（md5 / AES / RSA 都靠它）。设备与账号数据为合成 fixture。
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -238,8 +236,6 @@ const deviceOf = (raw) =>
 const SEARCH_ALBUM = '/api/v3/search/album';
 const searchUrl = (page) => `/api/kugou/search?keywords=${encodeURIComponent('测试')}&page=${page}`;
 
-// ============ 路由与纪律 ============
-
 test('kugou：八条路由齐全（方法 + 路径）', async () => {
   const g = gateway();
   const routes = g.context.testRoutes
@@ -273,8 +269,6 @@ test('kugou：模块纪律 —— 零 require、fetch 只从 deps 拿（vm harne
   assert.match(gatewaySrc, /cookieFile:\s*KUGOU_COOKIE_FILE/, '注册块必须注入 cookieFile');
 });
 
-// ============ 设备指纹 ============
-
 test('kugou：首次取流先注册设备，dfid/guid/mid 落盘且第二次不再注册', async () => {
   const g = gateway();
   const r = await g.call('GET', `/api/kugou/song/url?id=${HASH}&level=standard`);
@@ -287,16 +281,12 @@ test('kugou：首次取流先注册设备，dfid/guid/mid 落盘且第二次不�
   assert.equal(g.requests.filter((x) => x.url.includes('r_register_dev')).length, 1, '只注册一次');
   assert.match(g.logs.join('\n'), /酷狗设备已注册/, '注册成功要留一行日志');
 
-  // 第二轮：设备文件已在 → 不得再打注册接口
   await g.call('GET', `/api/kugou/song/url?id=${HASH}&level=standard`);
   assert.equal(g.requests.filter((x) => x.url.includes('r_register_dev')).length, 1, '复用已落盘的设备身份');
 });
 
-/** PKCS#1 v1.5 私钥解密：走 RSA_NO_PADDING + 手工剥填充。
- *  不能直接 privateDecrypt + RSA_PKCS1_PADDING —— Node 20.11 起为 CVE-2023-46809（Marvin 攻击）
- *  把它禁掉了（ERR_INVALID_ARG_VALUE 抛错），Node 24 又放开。直接调会让这条用例的结论随 Node 版本变：
- *  本地 Node 24 绿、CI 的 Node 20 红。无填充解密各版本一致，剥填充这几行照 RFC 8017 §7.2.2 写。
- *  实现侧的 publicEncrypt(RSA_PKCS1_PADDING) 不受影响 —— 那次修复禁的只是私钥解密。 */
+/** PKCS#1 v1.5 私钥解密：RSA_NO_PADDING + 按 RFC 8017 §7.2.2 手工剥填充 —— 不能直接 privateDecrypt +
+ *  RSA_PKCS1_PADDING：Node 20.11 为 CVE-2023-46809 禁掉、Node 24 又放开，直接调结论随版本变；实现侧 publicEncrypt 不受影响。 */
 const rsaPkcs1Decrypt = (crypto, key, data) => {
   const em = crypto.privateDecrypt({ key, padding: crypto.constants.RSA_NO_PADDING }, data);
   if (em[0] !== 0x00 || em[1] !== 0x02) throw new Error('不是 PKCS#1 v1.5 加密块');
@@ -342,8 +332,6 @@ test('kugou：拿不到 dfid 时如实报错，不落盘半份设备', async () 
   );
   assert.equal(g.files.has('/test/.kugou-device'), false, '失败不落盘');
 });
-
-// ============ 扫码登录 ============
 
 test('kugou：qr/key 返回 unikey 与二维码图，不写凭据', async () => {
   const g = gateway();
@@ -407,8 +395,6 @@ test('kugou：DELETE /api/kugou/cookie 清空凭据', async () => {
   assert.equal(g.files.get('/test/.kugou-cookie'), '');
 });
 
-// ============ 曲库 ============
-
 test('kugou：搜索双端点归一化（专辑 + 单曲），页码透传', async () => {
   const g = gateway();
   const r = await g.call('GET', searchUrl(3));
@@ -461,8 +447,6 @@ test('kugou：专辑查无数据时报错而不是静默空专辑', async () => 
   const g = gateway({ albumNoData: true });
   await assert.rejects(() => g.call('GET', '/api/kugou/album?id=900123'), /酷狗专辑信息获取失败/);
 });
-
-// ============ 取流 ============
 
 test('kugou：song/url 走 v5 链，地址 https 化，并按实际到手档位回报', async () => {
   const g = gateway();

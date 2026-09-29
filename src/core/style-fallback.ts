@@ -1,16 +1,12 @@
 // 样式兜底：styles.css 缺失或与代码不同版本时，挂上构建期内联的副本，界面不至于裸奔。
 //
-// 两种要兜的情况：
-//   ① 文件不在 —— 手工安装漏了发布页三个文件之一。
-//   ② 文件在、但版本不对 —— 升级时只覆盖了 main.js、或同步/拷贝只到一半（截断会连尾部
-//      的版本戳一起丢）。设置面板 1.0.10 起整块改版，样式全在这一份文件里：拿旧样式配新
-//      代码，面板会完全没样式、手绘虚线框还会飘到空白处。以前只看 existsSync，这种情况
-//      全漏掉（2026-09 复现并补上）。
+// 两种要兜的情况：① 文件不在（手工安装漏了发布页三个文件之一）；② 文件在、版本不对 —— 升级时只覆盖了
+// main.js、或同步/拷贝只到一半（截断会连尾部的版本戳一起丢）。设置面板 1.0.10 起整版改版，样式全在这份
+// 文件里：旧样式配新代码会完全没样式、手绘虚线框还会飘到空白处（此前只看 existsSync，这种情况全漏掉）。
 //
-// 版本戳在 styles.css 末尾，由 `npm run version-bump` 与 manifest 同步写入。
-// 为什么不用 <style>/<link> 元素：Obsidian 官方 lint（obsidianmd/no-forbidden-elements，
-// 市场审核同一套规则）明确禁止创建这两类元素；document.adoptedStyleSheets 等效且不触线。
-// 正常安装（社区市场 / 三个文件齐全）下什么都不做：Obsidian 自己会加载 styles.css。
+// 版本戳在 styles.css 末尾，由 `npm run version-bump` 与 manifest 同步写入。不用 <style>/<link> 的
+// 原因：Obsidian 官方 lint（obsidianmd/no-forbidden-elements，市场审核同一套规则）禁止创建这两类
+// 元素，document.adoptedStyleSheets 等效且不触线。正常安装（三个文件齐全）下什么都不做。
 import * as fs from 'fs';
 import { gunzipSync } from 'zlib';
 

@@ -1,9 +1,7 @@
 // 搓碟台回归：内存预算挑采样率、解码准备（幂等 / 可作废）、位置积分、方向翻转（负速率可用与不可用两条路）。
-// 盯住的坑：
-//   ① 反向出声：Chromium 的负速率没普及，不支持时必须换到「倒放副本 + 偏移 时长−位置」，
-//      否则反向那一程要么无声要么从错误的位置起播（听感上是另一首歌）；
-//   ② 位置由本模块积分，和声源自己的读数无关 —— 抬手要把积分出来的位置交还给元素；
-//   ③ 换曲时必须丢弃在途的解码结果（几十 MB 的内存别为上一首留着）。
+// 盯住的坑：① 反向出声 —— Chromium 负速率没普及，不支持时必须换「倒放副本 + 偏移 时长−位置」，否则要么无声
+// 要么从错误位置起播（听感上是另一首歌）；② 位置由本模块积分（与声源读数无关），抬手把积分值交还元素；
+// ③ 换曲必须丢弃在途解码结果（几十 MB 的内存别为上一首留着）。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -118,7 +116,6 @@ function setup(over = {}) {
   return { deck, ctx, state, load };
 }
 
-/** 准备一首曲子（取料 → 解码 → 就绪）：load 给整轨字节，时长按参数走（也当 durationHint 传） */
 async function prepare(deck, load, key = 'k', duration = 1) {
   deck.prepare(key, duration, async () => ({ bytes: await load(), durationSec: duration }));
   await tick();
@@ -126,7 +123,6 @@ async function prepare(deck, load, key = 'k', duration = 1) {
   return deck;
 }
 
-/** 不真分配内存的假缓冲：只报 length（字节数按它算），用于内存淘汰用例 */
 function virtualBuffer(sampleRate, seconds) {
   return {
     duration: seconds,
@@ -136,8 +132,6 @@ function virtualBuffer(sampleRate, seconds) {
     getChannelData: () => new Float32Array(1),
   };
 }
-
-// —— 采样率档位 ——
 
 test('采样率档位：按内存预算由高到低挑一档，都装不下返回 null', () => {
   const sPerSec = 22050 * 2 * 4; // 22.05 kHz 立体声 float32 = 176.4 KB/s
@@ -160,8 +154,6 @@ test('预算减半（负速率不可用时倒放副本要占一半）', () => {
   assert.equal(chooseScratchRate(200, SCRATCH_BUDGET_BYTES), 22050);
   assert.equal(chooseScratchRate(200, half), 16000, '同一首曲子：预算减半就降档');
 });
-
-// —— 准备 ——
 
 test('准备：取字节 → 按挑中的档位解码 → 就绪；同键不重复准备', async () => {
   const { deck, state, load } = setup();
@@ -259,8 +251,6 @@ test('准备：取字节失败只影响这一首（静默降级，不抛）', as
   await prepare(deck, async () => null);
   assert.equal(deck.prepared('k'), false);
 });
-
-// —— 出声 ——
 
 test('起手：按当帧倍速起播（不是正常转速），按倍速推进位置积分', async () => {
   const { deck, ctx } = setup();

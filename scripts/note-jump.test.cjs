@@ -1,7 +1,5 @@
-// 「听到这里 → 记下 → 日后重听」闭环的最后一跳：
-//   写感想时把播放位置写成 obsidian://vinyl-life 链接；
-//   在笔记里点那个位置 → 协议处理器载入专辑、按曲名定位、跳到那一刻并开始播。
-// 这里跑真 main.ts（stub 掉 obsidian 与引擎），锁住参数编码、按曲名定位、脏数据与失败提示。
+// 「听到这里 → 记下 → 日后重听」闭环的最后一跳：位置写成 obsidian://vinyl-life 链接，在笔记里点它 →
+// 载入专辑、按曲名定位、跳到那一刻并开播。跑真 main.ts（stub 掉 obsidian 与引擎），锁参数编码与脏数据。
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

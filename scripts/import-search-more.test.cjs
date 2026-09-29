@@ -1,8 +1,6 @@
-// 导入搜索的「结果池 / 展开 / 翻页 / 隐去已导入」回归（驱动真实弹窗 + 结果池模块）：
-//   ① 首屏只画一屏，剩下的先本地展开（不花网络）—— 「只有二十条」不该再靠调大上限来解
-//   ② 本地见底了才向上游要下一页，那一页要和前面的结果一起重排（更贴的浮上来）
-//   ③ 翻到底就收成一行说明，别再留个点了没反应的按钮
-//   ④ 已在收藏的专辑照常出现、就地标「已在收藏」（同平台同 id），状态行报个数
+// 导入搜索的「结果池 / 展开 / 翻页 / 隐去已导入」回归（驱动真实弹窗 + 结果池模块）。口径：
+// ① 首屏只画一屏，其余先本地展开（不花网络 —— 「只有二十条」不靠调大上限解）；② 本地见底才向上游要下一页，
+// 那一页与前面的结果一起重排（更贴的浮上来）；③ 翻到底收成一行说明；④ 已在收藏的照常出现、就地标「已在收藏」（同平台同 id）。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -237,14 +235,12 @@ test('导入搜索：首屏一屏，其余本地展开，展开完了才向上�
   assert.match(String(moreButton(modal.contentEl).textContent), /显示更多（还有 10 张）/);
   const afterSearch = h.calls.filter((c) => c.kind === 'album').length;
 
-  // 本地展开：白嫖池子，一个请求都不该发
   fire(moreButton(modal.contentEl), 'click');
   await flush();
   assert.equal(cardsOf(modal.contentEl).length, 30, '剩下的本地展开出来');
   assert.equal(h.calls.filter((c) => c.kind === 'album').length, afterSearch, '本地展开不花网络');
   assert.match(String(moreButton(modal.contentEl).textContent), /加载更多/, '本地见底 → 该问上游了');
 
-  // 翻页：新一页要与前面的结果一起重排
   fire(moreButton(modal.contentEl), 'click');
   await flush();
   const cards = cardsOf(modal.contentEl);

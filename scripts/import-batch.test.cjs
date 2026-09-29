@@ -1,6 +1,6 @@
 // 搜索结果批量导入：导入完必须**留在搜索页**（不跳转、不关窗），卡片就地变成「打开」。
-// 背景：早先每导一张就 openFile + close()，于是「导入专辑」入口一次只能导一张 ——
-// 这个用例盯的就是那条回归线：批量导入没有新按钮，全靠「导入后不离开」这一个行为。
+// 判别点：批量导入没有新按钮，全靠「导入后不离开」这一个行为 —— 旧实现每导一张就 openFile + close()，
+// 入口一次只能导一张（已废）。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -82,8 +82,7 @@ const collect = (el, out = []) => {
 };
 
 /** 触发记录下来的监听器（事件对象给足面板会读到的字段）。
- *  disabled 的控件不派发点击 —— 浏览器就是这样的，桩也得这样，
- *  否则「按钮忘了重新启用」这类 bug 会被测试放过去。 */
+ *  disabled 控件不派发点击（浏览器如此，桩也得如此），否则「按钮忘了重新启用」这类 bug 会被放过去。 */
 function fire(el, type, ev = {}) {
   if (type === 'click' && el.disabled) return;
   const full = { preventDefault() {}, stopPropagation() {}, key: '', ...ev };

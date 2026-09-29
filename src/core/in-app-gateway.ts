@@ -1,17 +1,13 @@
-// 应用内网关的启动器：用 Electron 自带的 Node（utilityProcess）跑网关，用户不需要安装 Node.js。
-// 背景：Obsidian 的 Electron 二进制禁用了 ELECTRON_RUN_AS_NODE，
-// 「用应用自带的 Node 跑子进程」只能走 Electron 官方通道 utilityProcess.fork ——
-// 它等价于 child_process.fork，但用 Chromium Services API 拉起子进程（Electron 22+，
-// 官方文档明确把它列为「runAsNode fuse 被禁用」时的替代方案）。
-// 这里只负责经 @electron/remote 拿主进程的模块（utilityProcess / session）；
-// fork / 就绪 / 自愈 / 关闭的编排都在 ServerManager。
+// 应用内网关启动器：用 Electron 自带的 Node（utilityProcess）跑网关，用户不需要安装 Node.js。
+// 不能走 runAsNode —— Obsidian 的 Electron 二进制禁用了 ELECTRON_RUN_AS_NODE，只能走官方通道
+// utilityProcess.fork（Electron 22+，官方给「runAsNode fuse 被禁用」的替代方案）。
+// 本模块只负责经 @electron/remote 拿主进程的模块；fork / 就绪 / 自愈 / 关闭的编排都在 ServerManager。
 export interface UtilityProcessLike {
   pid?: number;
   kill(): boolean;
   on?(event: 'exit', listener: (code?: number) => void): unknown;
-  /** stdio: 'pipe' 时的标准输出。网关把「真实监听端口」写在这一路上（见 gateway.js 末尾），
-   *  父进程据此得知端口 —— 先探测端口再交给网关会留下一段被别人抢走的窗口（TOCTOU）。
-   *  拿不到（旧 Electron / remote 通道不给流）就退回探测端口那条老路，见 ServerManager。 */
+  /** stdio: 'pipe' 时的标准输出：网关把「真实监听端口」写在这一路（见 gateway.js 末尾）——
+   *  先探测端口再交给网关会留下一段被别人抢走的窗口（TOCTOU）；拿不到（旧 Electron）就退回探测那条老路。 */
   stdout?: { on(event: 'data', listener: (chunk: { toString(): string }) => void): unknown } | null;
 }
 
@@ -23,9 +19,8 @@ export interface UtilityProcessModuleLike {
   ): UtilityProcessLike;
 }
 
-/** Electron Session 里网关需要的那一小块：系统代理解析 */
+/** Electron Session 里网关需要的那一小块：系统代理解析（返回 'PROXY host:port' / 'SOCKS5 host:port' / 'DIRECT'，PAC 场景可能是分号链） */
 export interface ProxyResolverLike {
-  /** 返回 'PROXY host:port' / 'SOCKS5 host:port' / 'DIRECT'（PAC 场景可能是分号链） */
   resolveProxy(url: string): Promise<string>;
 }
 

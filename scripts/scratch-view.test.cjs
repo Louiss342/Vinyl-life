@@ -1,10 +1,6 @@
-// 搓碟接线回归（源码 + 样式扫描，不需要 Obsidian）：
-// 视图负责的几件事任何一件掉了都是「看着像坏了」而不是报错，所以逐条钉住：
-//   ① 手势挂在转盘容器上、按几何判、排除播放键（唱臂裁剪层盖着盘面）；
-//   ② 拖拽期间位置归手势（快照不回写轨道与唱臂）；
-//   ③ 交还时用负 animation-delay 把当前角度续上（否则转盘会跳一下）；
-//   ④ 装饰层让开指针事件（否则抓取光标永远落不到盘面上）；
-//   ⑤ 关视图时释放解码缓冲（几十 MB 不能攥着）。
+// 搓碟接线回归（源码 + 样式扫描，不需要 Obsidian）：视图负责的几件事任何一件掉了都是「看着像坏了」而不是报错，所以逐条钉住。
+//   ① 手势挂在转盘容器上、按几何判、排除播放键；② 拖拽期间位置归手势（快照不回写轨道与唱臂）；③ 交还时用负 animation-delay 把当前角度续上；
+//   ④ 装饰层让开指针事件；⑤ 关视图时释放解码缓冲（几十 MB 不能攥着）。各自的判据与理由写在用例里。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -46,9 +42,8 @@ test('接线：交还用负 animation-delay 续上角度，转盘不跳', () => 
   assert.match(src, /private currentSpinAngle[\s\S]{0,500}?getAnimations\(\)/, '接手时读当前动画角度对齐');
   // 负延迟要一并算进相位：交还旋转时相位就存在那里（只读 currentTime 会漏掉它，接手时跳回 0°）
   assert.match(src, /private currentSpinAngle[\s\S]{0,800}?timing\?\.delay/, '相位 = currentTime − delay');
-  // 交还与定住是两条路：接着放 → 续上相位继续转；停在暂停 → 就地定住。
-  // 判据取「松手之后要不要放」而不是起手时的姿态：搓碟期间按过媒体键的话，那次说了算
-  //（起手时记的姿态可能已经和它打架，见 player-state 的 scratchResumeIntent）
+  // 交还与定住是两条路：接着放 → 续上相位继续转；停在暂停 → 就地定住。判据取「松手之后要不要放」
+  // 而不是起手时的姿态 —— 搓碟期间按过媒体键的话那次说了算（见 player-state 的 scratchResumeIntent）
   assert.match(src, /const resume = this\.plugin\.engine\.scratchResumeIntent\(\) \?\? st\.playing;/);
   assert.match(src, /if \(resume\) this\.releaseSpin\(st\.angle\);[\s\S]{0,80}?else this\.holdSpin\(st\.angle\)/);
   assert.match(src, /endScratch\(st\.pos, resume\)/, '交给引擎的也是这份姿态');

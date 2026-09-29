@@ -1,7 +1,6 @@
 // 批量删除弹窗：一次确认 + 可选连带清理（本地音频 / 封面）。
 // 资产盘点在 onOpen 前做一次（模态打开期间专辑墙不会改动），执行统一走 plugin.deleteAlbums。
-// 与单张删除的差别：盘点把「同批要删的专辑」互相视为不存在（同批共用的音频不会因为「别人还在引用」被留下），
-// 资产明细按批聚合展示，不逐张弹窗。
+// 与单张删除的差别：盘点把「同批要删的专辑」互相视为不存在（见 delete.ts），明细按批聚合、不逐张弹窗。
 import { App, Modal } from 'obsidian';
 import type VinylLifePlugin from '../main';
 import { AlbumInfo } from '../core/album-index';
@@ -44,7 +43,7 @@ export class DeleteBatchModal extends Modal {
       text: tf('batchDelete.summary', { n: this.albums.length }),
       cls: 'vinyl-delete-title',
     });
-    // 专辑清单：最多铺 LIST_CAP 行，其余折成一行（几十张时不把弹窗撑成一面墙）
+    // 专辑清单最多铺 LIST_CAP 行，其余折成一行（几十张时不把弹窗撑成一面墙）
     const list = c.createDiv({ cls: 'vinyl-delete-batch-list' });
     for (const album of this.albums.slice(0, LIST_CAP)) {
       list.createDiv({
@@ -64,7 +63,7 @@ export class DeleteBatchModal extends Modal {
     }
 
     // —— 连带清理选项（有可删资产才出现）——
-    // 目录内容只扫一遍：下面既要总数、又要逐目录报数（此前同一个目录扫了两遍）
+    // 目录内容只扫一遍：下面的总数与逐目录报数共用（此前同一个目录扫了两遍）
     const folderAudioCounts = targets.audioFolders.map((f) => ({
       folder: f,
       n: scanFolderContents(f).audios.length,
@@ -159,8 +158,7 @@ export class DeleteBatchModal extends Modal {
     const row = c.createDiv({ cls: 'vinyl-import-actions vinyl-delete-actions' });
     const cancelBtn = row.createEl('button', { text: t('common.cancel') });
     const delBtn = row.createEl('button', { text: t('common.delete'), cls: 'mod-warning' });
-    // 连带清理默认**不勾**（单张删除那边留着默认勾选）：批量是唯一一处「一个勾覆盖几百个文件」的场景，
-    // 而弹窗里只有数量、没有清单。勾上之后把总数写进确认按钮，用户按下去之前知道自己在删多少。
+    // 连带清理默认**不勾**（单张删除那边默认勾选）：批量是唯一一处「一个勾覆盖几百个文件」的场景，而弹窗里只有数量、没有清单 —— 勾上后把总数写进确认按钮，按下去之前知道在删多少。
     const syncConfirm = () => {
       const files =
         (audioCb?.checked ? audioTotal : 0) + (coverCb?.checked ? targets.coverFiles.length : 0);

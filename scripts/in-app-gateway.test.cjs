@@ -1,9 +1,6 @@
 // 应用内网关（插件唯一的网关形态）：用 Electron 自带的 Node 跑网关，不依赖系统 Node.js。
-//   1) loadUtilityProcess 的三条加载路径：@electron/remote / electron.remote 回退 / 都拿不到；
-//   2) loadProxyResolver：系统代理解析器可用性（session.resolveProxy）；
-//   3) ServerManager 端到端：fork（测试里用真 Node 模拟 utility fork）→ 就绪 →
-//      系统代理注入 env → 带 token 放行 / 无 token 401 → stop 回收进程；
-//   4) utilityProcess 不可用 / fork 抛错：明确失败态，不静默。
+//   1) loadUtilityProcess 三条加载路径（@electron/remote / electron.remote 回退 / 都拿不到）；2) loadProxyResolver（session.resolveProxy 可用性）；
+//   3) ServerManager 端到端：fork（测试里用真 Node 模拟 utility fork）→ 就绪 → 系统代理注入 env → 带 token 放行 / 无 token 401 → stop 回收；4) utilityProcess 不可用 / fork 抛错：明确失败态，不静默。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -28,8 +25,7 @@ const GATEWAY_SOURCE = esbuild.buildSync({
   write: false,
 }).outputFiles[0].text;
 const GATEWAY_GZIP = zlib.gzipSync(Buffer.from(GATEWAY_SOURCE, 'utf8'), { level: 9 }).toString('base64');
-// 与构建同口径（esbuild.config.mjs:47）：源码 sha1 前 10 位就是临时文件名里的 hash。
-// 用真 hash 而不是桩值 —— 「内容比对」那条防线只有在 hash 真实时才有意义（见下面两条用例）。
+// 与构建同口径（esbuild.config.mjs:47）：源码 sha1 前 10 位就是临时文件名里的 hash。用真 hash 而不是桩值 ——「内容比对」那条防线只有在 hash 真实时才有意义（见下面两条用例）。
 const GATEWAY_HASH = require('node:crypto').createHash('sha1').update(GATEWAY_SOURCE).digest('hex').slice(0, 10);
 
 function bundle(entry) {
@@ -109,10 +105,8 @@ function makeUtilityProcessStub({ failFork = false, withStdout = true, silentStd
       calls.env = (options && options.env) || null;
       calls.serviceName = (options && options.serviceName) || '';
       calls.stdio = (options && options.stdio) || 'ignore';
-      // 测试环境没有 Electron：用真 Node 起同一个网关文件，模拟 utility fork 的进程语义。
-      // withStdout = true 按 stdio:'pipe' 起并把子进程 stdout 透出去 —— 端口交接
-      //（网关 bind(0) → 回报真实端口 → 父进程读它）因此被真实跑到，而不是只走退回路径。
-      // silentStdout：有流但永不回报端口（旧 Electron / remote 那种拿不到内容的通道）。
+      // 测试环境没有 Electron：用真 Node 起同一个网关文件，模拟 utility fork 的进程语义。withStdout = true 按 stdio:'pipe' 起并把子进程
+      // stdout 透出去 —— 端口交接（网关 bind(0) → 回报真实端口 → 父进程读它）因此被真实跑到，而不是只走退回路径；silentStdout：有流但永不回报端口（旧 Electron / remote 那种拿不到内容的通道）。
       const child = spawn(process.execPath, [modulePath], {
         env: options && options.env,
         stdio: withStdout ? ['ignore', 'pipe', 'ignore'] : 'ignore',
@@ -340,8 +334,7 @@ test('网关自己处理监听失败：端口被占时写清原因并以 1 退�
   await new Promise((r) => squatter.listen(0, '127.0.0.1', r));
   const taken = squatter.address().port;
   const logFile = path.join(os.tmpdir(), `vinyl-gw-eaddr-${process.pid}.log`);
-  // 网关源码不能走 node -e：产物 100+ KB，Windows 命令行上限 32 KB（spawn 会直接失败）。
-  // 落成临时文件再跑，与插件里 materializeGateway 的做法一致。
+  // 网关源码不能走 node -e：产物 100+ KB，Windows 命令行上限 32 KB（spawn 会直接失败）—— 落成临时文件再跑，与插件里 materializeGateway 的做法一致
   const gwFile = path.join(os.tmpdir(), `vinyl-gw-eaddr-${process.pid}.js`);
   fs.writeFileSync(gwFile, GATEWAY_SOURCE, 'utf8');
   const child = spawn(process.execPath, [gwFile], {

@@ -1,8 +1,6 @@
 // 本地旁挂歌词（.lrc）回归：驱动真实 LocalSource.readSidecarLyrics + 假 vault / 假 fs。
-//   ① 两种命名流派都认：`song.lrc`（换扩展名）与 `song.flac.lrc`（带原扩展名），大小写不敏感
-//   ② 库内音轨走 vault.readBinary、库外音轨走 fs —— 两条路都要能读到
-//   ③ 编码：UTF-8 与 GBK 都要解得出中文（中文歌词站导出的 .lrc 至今仍有 GBK）
-//   ④ 找不到 / 读失败 → null（视图按「没有歌词」显示，不能抛到调用方）
+//   ① 两种命名流派都认：`song.lrc`（换扩展名）与 `song.flac.lrc`（带原扩展名），大小写不敏感；② 库内音轨走 vault.readBinary、库外走 fs；
+//   ③ UTF-8 与 GBK 都要解得出中文（中文歌词站导出的 .lrc 至今仍有 GBK）；④ 找不到 / 读失败 → null（视图按「没有歌词」显示，不能抛到调用方）
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');

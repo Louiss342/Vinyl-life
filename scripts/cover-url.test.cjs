@@ -1,5 +1,4 @@
-// 封面候选链回归：QQ 封面地址是拼出来的（y.gtimg.cn），部分网络下该 CDN 不可达 →
-// 同路径换 y.qq.com 备用图床；网易云等接口直给的地址不受影响；库内封面优先、色值不当图片用。
+// 封面候选链回归：QQ 封面走 y.gtimg.cn（部分网络不可达）→ 同路径换 y.qq.com 备用图床；非 QQ 地址不加工；库内封面优先、色值不当图片用。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

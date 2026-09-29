@@ -1,12 +1,7 @@
-// 起播预热回归（2026-09-27 用户报「点击播放加载慢、切歌不顺」）：
-// 起播要等的网络有两段 —— 专辑曲目表（实测 100~150ms）与这一首的地址（实测 110~350ms）。
-// 两段都提前做，点下去 / 按下一首时只剩元素缓冲那一段：
-//   ① 这一首一开声，下一首的地址就取回来（切歌不再等取址）；
-//   ② 悬停停够一会儿，这张专辑的队列先搭一遍（在线曲目表进服务缓存 + 第一首地址进 urlCache）；
-//   ③ 地址有保鲜期：签名地址约一刻钟过期，缓存超过 10 分钟当没缓存（重新取一次）——
-//      否则预热好的地址放久了会让 onAudioError 那条兜底去救，用户先听到一次错误再重来。
-// 另守三条边界：本地源不预热（那是整文件读进内存）、预热失败静默（提前量不是用户动作）、
-// 扫过一面墙时只跑最新那一张（每追一张就是一次平台请求）。
+// 起播预热回归：起播本要等两段网络（曲目表、这一首的地址，各百毫秒级），都提前做掉 ——
+//   ① 这一首一开声就取下一首的地址；② 悬停停够先搭一遍队列（曲目表进服务缓存 + 首曲地址进 urlCache）；
+//   ③ 地址保鲜期 10 分钟（签名地址约一刻钟到期），过期当没缓存 —— 否则放久了的地址要靠 onAudioError 兜底，用户先听一次错误再重来。
+// 另守三条边界：本地源不预热（整文件读进内存）、预热失败静默（提前量不是用户动作）、扫过一面墙只跑最新那一张（每张一轮平台请求）。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -191,7 +186,6 @@ test('预热：失败静默（不抛、不改状态、不弹提示）', async ()
   const { engine, calls } = makeEngine({ failSongUrl: true });
   await engine.prefetchTrackUrl({ id: 9, title: 'S9', source: 'netease' });
   assert.equal(engine.snapshot().status, 'idle', '预热失败不改变任何状态');
-  // 真播的时候还会再取一次（预热失败 = 缓存里没有，不是错误态）
   calls.songUrl.length = 0;
   await engine.prefetchTrackUrl({ id: 9, title: 'S9', source: 'netease' });
   assert.deepEqual(calls.songUrl, [9], '下一次预热照旧去取（没有把失败也缓存下来）');

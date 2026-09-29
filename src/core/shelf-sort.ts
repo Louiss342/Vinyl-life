@@ -1,9 +1,8 @@
-// 专辑墙排序：状态 + 比较器 + 陈列面板的方向文案（视图只负责接线与画下拉）。
-// 交互约定（工具栏方案 2026-09-18）：依据与方向是两个独立下拉，不再靠重复点击翻转方向；
-// 方向给具体文案（A → Z / 最新在前 / 最多在前…）；缺失排序属性的专辑一律排最后（与方向无关）。
-// 方向词分两族：A → Z / Z → A 两种语言写法一致，直接写在代码里、不进词典（词典测试也要求中英不同）；
-// 其余走 sort.dir.* 键族。t() 一律在调用时求值，不写进模块级常量（语言切换后才不会僵住）。
-// 依赖方向：util ← shelf-props ← 本模块；视图（shelf-view）单向引用本模块。
+// 专辑墙排序：状态 + 比较器 + 陈列面板的方向文案；视图（shelf-view）单向引用本模块，依赖方向
+// util ← shelf-props ← 本模块。交互约定（工具栏方案 2026-09-18）：依据与方向是两个独立下拉，不靠
+// 重复点击翻转方向；方向给具体文案（A → Z / 最新在前 / 最多在前…）；缺失排序属性的专辑一律排最后
+// （与方向无关）。方向词分两族：A → Z / Z → A 两种语言写法一致、不进词典（词典测试要求中英不同），
+// 其余走 sort.dir.*；t() 一律在调用时求值，不写进模块级常量（语言切换后才不会僵住）。
 
 import { t } from './i18n';
 import { propLabel } from './shelf-props';
@@ -101,9 +100,7 @@ export interface ShelfSortStats {
 
 const text = (v: string | undefined): string => (v ?? '').trim();
 
-/** 数值化：先从「人写的」值里读第一个数（见 core/rating 的口径）——
- *  '1997年' / '2003-05' 读得出年份，'4/5' 读得出评分；读不出来（'待定' 这类）才算缺失，
- *  由调用方排到最后。空串与 null 同样是缺失。 */
+/** 数值化：从「人写的」值里读第一个数（见 core/rating 的口径）—— 读不出来（'待定' 这类）与空串、null 一样算缺失，由调用方排到最后。 */
 function numOf(v: string | number | undefined): number | undefined {
   if (v == null) return undefined;
   const n = parseLeadingNumber(v);
@@ -130,14 +127,10 @@ function missingOf(x: ShelfSortable, sort: ShelfSort, stats: ShelfSortStats): bo
   }
 }
 
-/** 自定义属性的排序器：中文 + 数字感知 —— 数字段按数值比（'2' 排在 '10' 前），
- *  文本段按中文序。**一把尺子量到底**才有严格弱序。 */
+/** 自定义属性的排序器：中文 + 数字感知（'2' 排在 '10' 前）。**一把尺子量到底**才有严格弱序。 */
 const customPropCollator = new Intl.Collator('zh-CN', { numeric: true });
 
-/** 自定义属性比较：每对值都走同一个排序器。
- *  曾经是「两个都能转数字就按数值比，否则按文本比」—— 那不是全序：
- *  '10' vs '2' 按数值、'2' vs '1月' 按文本、'1月' vs '10' 又按文本，能拼出环，
- *  同一组数据只改输入顺序就得到不同结果（刷新 / 筛选后次序莫名变化）。 */
+/** 自定义属性比较：每对值都走同一个排序器。曾经的「两个都能转数字就按数值比、否则按文本比」不是全序 —— 能拼出环，同一组数据只改输入顺序就得到不同结果（刷新 / 筛选后次序莫名变化）。 */
 function compareProp(a: ShelfSortable, b: ShelfSortable, key: string): number {
   return customPropCollator.compare(a.displayProps?.[key] ?? '', b.displayProps?.[key] ?? '');
 }

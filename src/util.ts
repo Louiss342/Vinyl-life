@@ -6,9 +6,8 @@ import { readdirSync as fsReaddirSync } from 'fs';
 import type { Dirent } from 'fs';
 import { t, tf } from './core/i18n';
 
-// 受支持的音频容器（插件本身不解码，最终取决于 Chromium/Electron 内置解码器）：
-//   mp3 · m4a / m4b / mp4（AAC · ALAC）· wav · ogg / oga（vorbis）· opus · aac（ADTS）· webm / weba
-// 不在此列的（ape / wma / dsf / dff / tak / aiff 等）导入时跳过并提示，需自行转码。
+// 受支持的音频容器（插件本身不解码，最终取决于 Chromium/Electron 内置解码器）：mp3 · m4a / m4b / mp4（AAC · ALAC）·
+// wav · ogg / oga（vorbis）· opus · aac（ADTS）· webm / weba。不在此列的（ape / wma / dsf / dff / tak / aiff 等）导入时跳过并提示。
 export const AUDIO_EXTENSIONS = [
   'mp3', 'm4a', 'm4b', 'mp4', 'wav', 'ogg', 'oga', 'flac', 'aac', 'opus', 'webm', 'weba',
 ];
@@ -48,8 +47,8 @@ export function isImageFile(name: string): boolean {
   return IMAGE_EXTENSIONS.includes(extOf(name));
 }
 
-/** unknown → 字符串：只认标量（string / number / boolean / bigint），其余（对象 / 数组 / 函数）
- *  一律返回 ''。用于 frontmatter 等外部数据——直接 String() 会把对象印成 [object Object]。 */
+/** unknown → 字符串：只认标量（string / number / boolean / bigint），其余（对象 / 数组 / 函数）返回 '' ——
+ *  用于 frontmatter 等外部数据，String() 会把对象印成 [object Object]。 */
 export function scalarText(v: unknown): string {
   switch (typeof v) {
     case 'string':
@@ -76,9 +75,7 @@ export interface FolderScan {
   rootName: string;
   /** 全部受支持音频（含子目录） */
   files: File[];
-  /** 根层音频数 */
   rootAudio: number;
-  /** 含音频的一级子目录数 */
   audioSubfolders: number;
   /** 非音频文件数（封面 / cue / log 等，导入时忽略） */
   others: number;
@@ -92,12 +89,10 @@ export function relDirOfPath(relPath: string): string {
   return segs.length <= 1 ? '' : segs.slice(1, -1).join('/');
 }
 
-/** File → 相对路径（选择器读 webkitRelativePath；拖拽由扫描器注入 relPath） */
 export function relPathOf(file: File): string {
   return String(file.webkitRelativePath || file.relPath || '');
 }
 
-/** File → 子目录（`A/CD1/01.flac` → `CD1`） */
 export function relDirOf(file: File): string {
   return relDirOfPath(relPathOf(file));
 }
@@ -173,10 +168,8 @@ export function libraryCandidates(items: PickedAudio[]): LibraryCandidate[] {
     .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
 }
 
-/**
- * 递归收集文件夹内的音频文件（含子目录）：文件夹导入会保留 CD1/CD2 结构，
- * 只扫顶层的话这类专辑会被判成「没有本地音源」而无法播放。
- */
+/** 递归收集文件夹内的音频文件（含子目录）：导入会保留 CD1/CD2 结构，
+ *  只扫顶层的话这类专辑会被判成「没有本地音源」而无法播放。 */
 export function collectFolderAudios(folder: TFolder): TFile[] {
   const out: TFile[] = [];
   const walk = (f: TFolder) => {
@@ -217,13 +210,8 @@ export function libraryRootHint(scan: FolderScan): string {
 /** 碟号子目录（CD1 / Disc 2 / Vol.3 …）：属于同一张专辑 */
 const DISC_DIR_RE = /^(cd|disc|disk|vol|volume|part|pt)[\s._-]*\d+$/i;
 
-/**
- * 判断选中的文件夹该怎么导入：
- *   根层有音频 → 一张专辑（子目录一起收进来）
- *   根层没有、只有 1 个子目录有音频 → 仍按根文件夹名建一张专辑
- *   根层没有、子目录都是碟号（CD1 / CD2）→ 仍是同一张专辑
- *   否则（A / B 各含音频）→ 看起来是音乐库根目录，别糊成一张专辑
- */
+/** 判断选中的文件夹该怎么导入：根层有音频 / 只有 1 个子目录有音频 / 子目录都是碟号（CD1、CD2）→ 一张专辑
+ *  （前两种连子目录一起收进来）；否则（A / B 各含音频）→ 看来是音乐库根目录，别糊成一张专辑。 */
 export function analyzeFolder(rootName: string, items: PickedAudio[]): FolderScan {
   const audioItems = items.filter((it) => isAudioFile(it.file.name));
   const others = items.length - audioItems.length;
@@ -250,7 +238,6 @@ export function analyzeFolder(rootName: string, items: PickedAudio[]): FolderSca
   };
 }
 
-/** 拆分拖入 / 选中的文件：受支持的音频 / 因格式不支持而跳过的 */
 export function splitAudioFiles(files: File[]): { audio: File[]; skipped: File[] } {
   const audio: File[] = [];
   const skipped: File[] = [];
@@ -258,11 +245,8 @@ export function splitAudioFiles(files: File[]): { audio: File[]; skipped: File[]
   return { audio, skipped };
 }
 
-/**
- * 从所选文件推断专辑名：
- *   多个文件来自同一目录 → 目录名（常见于「一张专辑一个文件夹」）；否则首个文件名。
- *   单文件不用目录名，避免把 `D:/Music/xx.mp3` 猜成「Music」。
- */
+/** 推断专辑名：多个文件来自同一目录 → 目录名（常见于「一张专辑一个文件夹」）；否则首个文件名。
+ *  单文件不用目录名，避免把 `D:/Music/xx.mp3` 猜成「Music」。 */
 export function suggestAlbumTitle(files: File[]): string {
   const list = files.filter((f) => isAudioFile(f.name));
   if (!list.length) return '';
@@ -314,7 +298,6 @@ export function fmtTime(sec: number): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-// 网易云播放限制码 → 提示文案
 export function restrictionText(code: number | string | undefined | null): string {
   const c = String(code ?? '');
   if (['401', '10407'].includes(c)) return t('util.restrictionLoginRequired');
@@ -342,8 +325,7 @@ export function notice(msg: string, ms?: number) {
   new Notice(`Vinyl Life · ${msg}`, ms);
 }
 
-// 目录不存在则创建（vault.create / createBinary 不会自动建父目录）：
-// 新装用户首次运行时用来搭出 Vinyl Life/{Vinyl Note, covers, audio, Stats}
+// 目录不存在则创建（vault.create / createBinary 不会自动建父目录）：新装用户首次运行时搭出各个目录
 export async function ensureFolder(app: App, folderPath: string): Promise<void> {
   const p = normalizePath(String(folderPath || ''));
   if (!p) return;
@@ -375,9 +357,8 @@ export function markVinylMenu(menu: Menu): void {
   (menu as Menu & { dom?: HTMLElement }).dom?.addClass('vinyl-menu');
 }
 
-/** 文件夹选择器选中的那个文件夹的**绝对路径**：`webkitRelativePath` 的第一段就是它，
- *  从 `file.path`（Electron 给的真实路径）里把那一段连同文件本身切掉。
- *  用于「重新定位音频」：用户重新挑一次文件夹，插件据此改写笔记里的库外路径。 */
+/** 文件夹选择器选中的那个文件夹的**绝对路径**：`file.path`（Electron 给的真实路径）里切掉
+ *  webkitRelativePath 的第一段及其下内容。用于「重新定位音频」：用户重挑一次文件夹，据此改写笔记里的库外路径。 */
 export function pickedFolderPath(file: File): string {
   const abs = String((file as File & { path?: string }).path || '');
   if (!abs) return '';
@@ -387,8 +368,8 @@ export function pickedFolderPath(file: File): string {
   return parts.slice(0, keep).join(abs.includes('\\') ? '\\' : '/');
 }
 
-/** vault 内目录路径的可用性检查。**返回原因码**（'' = 合法）—— 文案由设置页查词典，
- *  这里不碰 i18n，好在纯 Node 测试里直接跑。规则来自 Obsidian 与 Windows 的双重要求： */
+/** vault 内目录路径的可用性检查。**返回原因码**（'' = 合法）—— 这里不碰 i18n（文案由设置页查词典），
+ *  好在纯 Node 测试里直接跑。规则来自 Obsidian 与 Windows 的双重要求： */
 export type VaultFolderIssue = '' | 'empty' | 'absolute' | 'parent' | 'chars';
 
 export function vaultFolderIssue(value: string): VaultFolderIssue {
@@ -402,18 +383,12 @@ export function vaultFolderIssue(value: string): VaultFolderIssue {
   return '';
 }
 
-/** vault 的 create / delete / rename 值不值得重扫（专辑墙刷新与音源检测缓存共用这一份判据）。
- *
- *  为什么要挑：一次重扫 = 对**每张**专辑重算音源，而重算要碰文件系统（库外引用走
- *  fs.existsSync / 递归 readdir）。此前不看路径一律作废 —— 别的插件写一篇日记、同步客户端
- *  落地一个文件，500 张的墙就要对 500 张专辑各来一遍同步系统调用。
- *
- *  认三类：文件夹（里面装什么都有可能）、音频与图片（本地音源角标 / 封面自动识别）、
- *  专辑笔记目录里的 md（这张专辑在不在收藏里会变；笔记**内容**的变化由 metadataCache 管，
- *  不走这里）。其余（普通笔记、canvas、插件文件、配置…）直接早退，不做任何工作。
- *
- *  参数是普通数据（不是 TAbstractFile）：判据本身只是字符串比较，这样才测得住 ——
- *  它错了的表现是「改了东西界面没反应」，属于最难发现的那类。 */
+/** vault 的 create / delete / rename 值不值得重扫（专辑墙刷新与音源检测缓存共用这份判据）。
+ *  一次重扫 = 对**每张**专辑重算音源，重算要碰文件系统（库外引用走 fs.existsSync / 递归 readdir）；不看路径
+ *  一律作废的话，别的插件写篇日记、同步客户端落地一个文件，500 张的墙就要各来一遍同步调用。认三类：文件夹、
+ *  音频与图片（本地音源角标 / 封面自动识别，rename 时旧名一并判）、专辑笔记目录里的 md（笔记**内容**由
+ *  metadataCache 管，不走这里）；其余（普通笔记 / canvas / 插件文件 / 配置…）直接早退。
+ *  参数是普通数据而非 TAbstractFile：判据只是字符串比较才测得住 —— 它错了的表现是「改了东西界面没反应」。 */
 export function vaultChangeMatters(args: {
   path: string;
   extension: string;
@@ -431,8 +406,8 @@ export function vaultChangeMatters(args: {
   return inAlbumFolder(args.path) || (!!args.oldPath && inAlbumFolder(args.oldPath));
 }
 
-/** 系统「减少动态效果」是否开启（前庭敏感的用户靠它关掉转盘与交接动画）。
- *  拿不到 matchMedia（脚本沙箱 / 老环境）按 false 处理：宁可有动画，也别在渲染路径上抛。 */
+/** 系统「减少动态效果」是否开启（前庭敏感的用户靠它关掉转盘与交接动画）。拿不到 matchMedia
+ *  （脚本沙箱 / 老环境）按 false 处理：宁可有动画，也别在渲染路径上抛。 */
 export function prefersReducedMotion(): boolean {
   try {
     return (

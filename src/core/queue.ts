@@ -1,6 +1,5 @@
-// 队列构建：专辑 → Track[]。
-// 源判定：笔记 source 显式优先；auto = 本地有音轨先播本地，否则 neteaseId → 网易云、
-// 再次 qqId → QQ 音乐、最后 kugouId → 酷狗（三条在线源都没有时按收藏展示）。
+// 队列构建：专辑 → Track[]。源判定：笔记 source 显式优先；auto = 本地有音轨先播本地，否则
+// neteaseId → 网易云、再次 qqId → QQ 音乐、最后 kugouId → 酷狗（三条在线源都没有时按收藏展示）。
 import { AlbumInfo } from './album-index';
 import { Track, sourceName } from './track';
 import { LocalSource } from './local-source';
@@ -20,9 +19,7 @@ export function sourceLabel(s: ActiveSource): string {
   return sourceName(s);
 }
 
-/** 队列里排着的专辑（去重；正在播的那张也在其中）。
- *  专辑墙靠它决定哪些唱片该「离墙」：进了列表的专辑，墙上就不该还摆着 ——
- *  退出列表模式（队列收敛回当前专辑）时集合缩小，被移出的那几张走放回动画（见 shelf-view.updatePlaying）。 */
+/** 队列里排着的专辑（去重；正在播的那张也在其中）。专辑墙靠它决定哪些唱片该「离墙」—— 退出列表模式（队列收敛回当前专辑）时集合缩小，被移出的那几张走放回动画（见 shelf-view.updatePlaying）。 */
 export function queuedAlbumPaths(queue: Track[]): Set<string> {
   const paths = new Set<string>();
   for (const track of queue) {

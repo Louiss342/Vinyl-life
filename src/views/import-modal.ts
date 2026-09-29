@@ -1,6 +1,5 @@
-// 导入弹窗：两个薄壳 —— 在线搜索（views/album-search）与本地导入（views/local-import-pane）。
-// 机制都在那两个面板里（专辑墙的「添加」浮层共用同一套）；壳只做三件事：
-// 挂进 contentEl、把「打开笔记 / 收尾」接成弹窗语义（开完就关窗）、关窗时让在途请求作废。
+// 导入弹窗：两个薄壳 —— 在线搜索（views/album-search）与本地导入（views/local-import-pane），
+// 机制都在那两个面板里（专辑墙的「添加」浮层共用）。壳只管挂载、弹窗语义（开完即关）与作废在途请求。
 import { App, Modal, TFile } from 'obsidian';
 import { AlbumInfo, findAlbumNotes, getAlbumInfo } from '../core/album-index';
 import { ImportContext } from '../import';
@@ -9,8 +8,7 @@ import { t } from '../core/i18n';
 import { AlbumSearchPane } from './album-search';
 import { LocalImportPane } from './local-import-pane';
 
-// ============ 专辑导入（网易云 / QQ 音乐） ============
-// 搜索 / 直连链接 / 结果池与翻页 / 逐条导入状态全在 AlbumSearchPane 里。
+// ============ 专辑导入（网易云 / QQ 音乐）：搜索 / 直链 / 翻页 / 逐条状态全在 AlbumSearchPane ============
 
 export class AlbumImportModal extends Modal {
   private pane: AlbumSearchPane;
@@ -85,8 +83,7 @@ export class AlbumImportModal extends Modal {
   }
 }
 
-// ============ 本地音频导入 ============
-// 文件优先流程（① 选文件 / 文件夹 → ② 目标 → ③ 落库方式）在 LocalImportPane 里。
+// ============ 本地音频导入：文件优先流程（选文件 → 目标 → 落库方式）在 LocalImportPane ============
 
 export class LocalImportModal extends Modal {
   private pane: LocalImportPane;
@@ -98,7 +95,7 @@ export class LocalImportModal extends Modal {
     this.titleEl.setText(t('import.localTitle'));
     this.pane = new LocalImportPane(ctx, albums, presetAlbum, {
       onDone: ({ created, album }) => {
-        // 弹窗路径沿用旧行为：新建的专辑打开笔记（方便接着补封面 / 年份 / 评分），然后关窗
+        // 弹窗路径：新建的专辑就打开笔记（方便接着补封面 / 年份 / 评分），然后关窗
         if (created && album?.file instanceof TFile) {
           void this.app.workspace.getLeaf(false).openFile(album.file);
         }

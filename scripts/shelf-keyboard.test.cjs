@@ -1,10 +1,7 @@
-// 专辑墙键盘网格（roving tabindex）回归：真类 + 假 DOM，卡片与网格由用例手工摆好。
-//   · 走完整 render 需要一整套 vault / 索引桩，而这一批真正会错的是「哪张卡接得住这个键」：
-//     行的切分（列数由 CSS 定，只有量 offsetTop 才准）、到边不吞键、末行不满时的落点、
-//     光标卡被重画 / 离墙后停靠点还在不在。
-//   · 「keydown 监听挂上了没有」是接线，由 a11y.test.cjs 的源码门禁守着（那边扫 onShelfKeydown）。
-//   · 「⋯」按钮退出 Tab 序（menuBtn.tabIndex = -1）后，菜单必须有键盘入口 —— 就是这里的
-//     Shift+F10 / 菜单键；这条对键盘用户是关键路径（设置封面 / 在源站打开只剩它）。
+// 专辑墙键盘网格（roving tabindex）回归：真类 + 假 DOM，卡片与网格由用例手工摆好 —— 走完整 render 要一整套
+// vault / 索引桩，而这一批真正会错的是「哪张卡接得住这个键」：行切分（列数由 CSS 定，只能量 offsetTop）、
+// 到边不吞键、末行不满的落点、重画 / 离墙后的停靠点。接线（keydown 挂上没有）由 a11y.test.cjs 的源码门禁
+// 守着（那边扫 onShelfKeydown）；「⋯」退出 Tab 序（tabIndex = -1）后菜单只剩 Shift+F10 / 菜单键这条键盘入口。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -120,8 +117,7 @@ const plugin = {
   app: { vault: { getMarkdownFiles: () => [] }, metadataCache: { getFileCache: () => null } },
 };
 
-/** 摆一面墙：rows = 每行几张（列数由 CSS 定，视图是按 offsetTop 量出来的）。
- *  卡片路径依次 A0…An，同一行的 offsetTop 相同（这正是视图切行的依据）。 */
+/** 摆一面墙：rows = 每行几张，卡片路径依次 A0…An（同一行的 offsetTop 相同 —— 这正是视图切行的依据）。 */
 function makeWall(rows) {
   const view = new VinylShelfView({}, plugin);
   view.gridEl = fakeEl('div');
@@ -187,7 +183,6 @@ test('键盘网格：方向键在卡片间走，到边不吞键', () => {
   const view = makeWall([4, 4, 2]);
   const c = cards(view);
 
-  // 行首往左：没有去处，别吞键（用户可能把 ← 绑到了别的命令上）
   const left = press(view, c[0], 'ArrowLeft');
   assert.equal(left.preventDefault, 0, '行首按 ← 没有去处：别吞键');
   assert.equal(left.stopPropagation, 0, '没处理就不该拦事件');
@@ -290,8 +285,7 @@ test('键盘网格：光标卡被重画后停靠点补到新元素；离墙则�
   press(view, c[2], 'ArrowRight'); // 光标挪到第 4 张
   const path = c[3].dataset.path;
 
-  // 模拟 applyPlan 的 rebuild：同一个 path 换成新元素（buildCard 会带回默认的 tabIndex=-1），
-  // 旧元素随 replaceWith 离墙、也不再被 cardEls 跟踪 —— 停靠点必须落到新元素上
+  // 模拟 applyPlan 的 rebuild：同一 path 换成新元素（buildCard 带回默认 tabIndex=-1），停靠点必须落到新元素上
   const fresh = fakeEl('div');
   fresh.addClass('vinyl-shelf-card');
   fresh.dataset.path = path;

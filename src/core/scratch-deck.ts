@@ -1,33 +1,18 @@
-// 搓碟台（完整音效）：把整轨音频解码成 AudioBuffer，用 AudioBufferSourceNode 按指针倍速出声 ——
-// 正反两个方向都出声，位置由本模块自己积分（与视图的视觉同源，不依赖元素的 currentTime）。
+// 搓碟台（完整音效）：整轨解码成 AudioBuffer，用 AudioBufferSourceNode 按指针倍速出声 —— 正反两个方向
+// 都出声，位置由本模块自己积分（与视图视觉同源，不依赖元素的 currentTime）。
 //
-// 为什么不能直接用 <audio> 元素：
-//   ① 元素的 playbackRate 只能正向 —— Chromium 的负速率（反向播放）至今没普及，而「搓」的灵魂
-//      恰恰是来回都能出声；
-//   ② 元素的 currentTime 读数是量化过的（官方播放位置 250ms 一档），做不出跟手的手感。
-// 所以搓碟期间元素暂停，声音由这里出；抬手再把最终位置写回元素（见 player-state 的 endScratch）。
-//
-// 内存：解码整轨是这套方案的代价，采样率按内存预算挑档（chooseScratchRate）。
-//   float32 × 2 声道 = 每采样 8 字节 → 22.05 kHz ≈ 10.6 MB/分钟（4 分钟的歌 ≈ 42 MB）。
-//   反向播放在不支持负速率的内核上还要一份倒放副本（再翻一倍），故预算按「前向 + 可能的副本」
-//   一起算：探测不到负速率时预算对半 —— 长音轨在旧内核上退到低采样率，装不下就整首走轻量音效
-//   （正反都不出声的那一侧只是安静，位置照走，不是坏掉）。
-//
-// 缓存：下载 + 解码一份要几秒，而这张碟随时可能被回头再搓 —— 解码好的份按 LRU 留着，
-//   回头再搓是现成的，不用再等一遍。退出只看内存总量：超过预算就丢最久没用过的那份，
-//   正在搓的那份不丢。（不在后台预先下载整轨：那会跟播放抢带宽、还要多解析一次播放地址，
-//   切歌会变得不跟手 —— 准备一律由「手按上来」触发，见 player-view 的 maybePrepareScratch。）
-//
-// 两条出声路线：
-//   负速率可用 → 一个源、带符号 playbackRate（内存 ×1）
-//   负速率不可用 → 正向走原缓冲、反向走倒放副本（把「倒着读」变成「正着读倒放副本」，
-//                  方向翻转时换源；翻转发生在速度过零处，再加 4ms 增益包络，听不出接缝）
-//
-// 三条纪律（都是「手指还在盘上，声音却没了」的来源）：
-//   ① 声源播到头就摘掉重起 —— 已结束的节点上写 playbackRate 是哑的，往回拖也不会再出声；
-//   ② 增益自动化先撤销再排 —— 快速换向时上一次的淡出 / 淡入还排在时间轴上，叠起来会把增益
-//      压在 0 上起不来；
-//   ③ 起手按当帧倍速起播 —— 不是正常转速：手指慢慢拖，耳朵先听到一截原速就是露馅。
+// 为什么不用 <audio>：playbackRate 只能正向（Chromium 的负速率至今没普及），而「搓」的灵魂恰是来回都能
+// 出声；currentTime 读数量化过（官方播放位置 250ms 一档），做不出跟手的手感。故搓碟期间元素暂停、声音
+// 由这里出，抬手再把最终位置写回元素（见 player-state 的 endScratch）。
+// 内存：解码整轨是代价，采样率按预算挑档（chooseScratchRate）；负速率不可用的内核还要一份倒放副本
+//（内存翻倍），故探测不到负速率时预算对半；装不下就整首走轻量音效（那一侧只是安静，位置照走）。
+// 缓存：解码一份要几秒而这张碟随时可能被回头再搓，故按 LRU 留着（退出只看内存总量，正搓的那份不丢）。
+// 不后台预下载整轨：那会跟播放抢带宽、切歌不跟手 —— 准备一律由「手按上来」触发（见 player-view 的
+// maybePrepareScratch）。
+// 两条出声路线：负速率可用 → 一个源 + 带符号 playbackRate；不可用 → 正向原缓冲、反向倒放副本（翻转发生
+// 在速度过零处，加 4ms 增益包络，听不出接缝）。
+// 三条纪律（「手指还在盘上，声音却没了」的来源）：声源播到头要摘掉重起、增益自动化先撤销再排、起手按
+// 当帧倍速起播 —— 为什么分别写在 frame / setGain / begin 上。
 
 import { clampRate } from './scratch';
 
@@ -56,9 +41,8 @@ const RELEASE_FADE_SEC = 0.04;
 /** 单帧位置推进的上限（ms）：窗口切回来时别让位置一帧飞出几秒 */
 const MAX_FRAME_MS = 100;
 
-/** 挑解码采样率：给出这首曲子的时长（秒）与预算，返回能装下的最高档；装不下返回 null。
- *  时长未知（0 / 非有限）也返回 null —— 不猜：宁可这首曲子只有轻量音效，也不要解出一坨内存。
- *  时长由调用方保证（本地未播过的曲子用一次元数据探测补上，见 probeMediaDuration）。 */
+/** 挑解码采样率：时长（秒）+ 预算 → 能装下的最高档；装不下或时长未知（0 / 非有限）都返回 null ——
+ *  不猜：宁可这首曲子只有轻量音效，也不要解出一坨内存。时长由调用方保证（见 probeMediaDuration）。 */
 export function chooseScratchRate(durationSec: number, budget = SCRATCH_BUDGET_BYTES): number | null {
   if (!(durationSec > 0) || !isFinite(durationSec) || !(budget > 0)) return null;
   for (const rate of SCRATCH_SAMPLE_RATES) {
@@ -147,12 +131,9 @@ export interface ScratchDeckDeps {
   schedule?: (fn: () => void) => void;
 }
 
-// —— 负速率探测（一次、结果缓存）——
-
 let negativeRateSupport: Promise<boolean> | null = null;
 
-/** 浏览器是否支持 AudioBufferSourceNode 的负 playbackRate（反向播放）。
- *  一次探测、结果缓存；任何异常按「不支持」处理（退回倒放副本那条路，功能不受影响）。 */
+/** 浏览器是否支持 AudioBufferSourceNode 的负 playbackRate（反向播放）；一次探测、结果缓存，任何异常按「不支持」处理（退回倒放副本那条路，功能不受影响） */
 export function supportsNegativeRate(): Promise<boolean> {
   // 显式比较 null：这里判的是「缓存里有东西没有」，写成 !cached 会让 Promise 参与布尔判断（审核规则盯着）
   if (negativeRateSupport === null) {
@@ -161,11 +142,10 @@ export function supportsNegativeRate(): Promise<boolean> {
   return negativeRateSupport;
 }
 
-/** 渲染一小段斜坡、从中间倒着播：输出该是递减的（正着播是递增，静音则两者都不是）。
- *  为什么从中间起播：从 0 起播时「倒着」与「正着」都立刻到头，分不出方向。 */
+/** 渲染一小段斜坡、从中间倒着播：输出该递减（正着播是递增，静音则两者都不是）。从中间起播是因为从 0 起播时「倒着」与「正着」都立刻到头，分不出方向。 */
 async function probeNegativeRate(): Promise<boolean> {
   // 浏览器全局构造器一律从 window 取：globalThis 在弹出窗口场景下会指到不是当前窗口的那份全局
-  // （审核规则 obsidianmd/no-global-this 也禁用）；取不到按「不支持」处理，另有退路。
+  //（审核规则 obsidianmd/no-global-this 也禁用）；取不到按「不支持」处理，另有退路。
   const Ctor = (
     window as unknown as {
       OfflineAudioContext?: new (c: number, l: number, r: number) => AudioContextLike & {
@@ -188,13 +168,7 @@ async function probeNegativeRate(): Promise<boolean> {
   return got[0] > 0 && got[1] < got[0];
 }
 
-/** 仅测试用：清掉负速率探测的缓存 */
-export function __resetNegativeRateForTest(): void {
-  negativeRateSupport = null;
-}
-
-/** 读一次媒体时长（本地未播过的曲子没有时长元数据，队列里也不带标签）：
- *  临时元素只读元数据、读完立刻卸掉音源；失败 / 超时按 0 处理（该曲目退回轻量音效，不报错）。 */
+/** 读一次媒体时长（本地未播过的曲子没有时长元数据）：临时元素只读元数据、读完立刻卸掉音源；失败 / 超时按 0 处理（该曲目退回轻量音效，不报错）。 */
 export function probeMediaDuration(
   url: string,
   opts?: { create?: () => HTMLAudioElement | null; timeoutMs?: number }
@@ -247,8 +221,7 @@ export class ScratchDeck {
   private bytes = 0;
   /** 正在准备中的曲目键（同键不重复取字节 / 解码） */
   private inflight = new Set<string>();
-  /** 释放代次：dispose 时 ++，在途的取料与解码回来发现已释放就丢弃
-   *  （否则关视图之后回来的结果会往已清空的缓存里塞，甚至把声卡上下文重新建起来） */
+  /** 释放代次：dispose 时 ++，在途的取料与解码回来发现已释放就丢弃（否则关视图后回来的结果会往已清空的缓存里塞，甚至把声卡上下文重新建起来） */
   private epoch = 0;
   /** 负速率是否可用（全局属性，探测一次） */
   private negative = false;
@@ -264,8 +237,7 @@ export class ScratchDeck {
 
   constructor(private deps: ScratchDeckDeps) {}
 
-  /** 当前曲目的缓冲是否就绪（视图据此决定这次起手走完整音效还是轻量音效）。
-   *  顺带把这一份记成「刚用过」：还挂在盘上的那张碟不该被后面的准备挤掉。 */
+  /** 当前曲目的缓冲是否就绪（视图据此决定这次起手走完整音效还是轻量音效）；顺带把这一份记成「刚用过」—— 还挂在盘上的那张碟不该被后面的准备挤掉。 */
   prepared(key: string): boolean {
     const hit = this.entries.get(key);
     if (hit) hit.used = ++this.useSeq;
@@ -277,20 +249,16 @@ export class ScratchDeck {
     return this.entries.has(key);
   }
 
-  /** 这一首值不值得准备（时长已知时先问一句）：装不进预算就不必开始 —— 省下整轨流量与一次
-   *  注定失败的下载。预算按保守的一档算（负速率还没探测出来时，宁可给它一个名额）。 */
+  /** 这一首值不值得准备（时长已知时先问一句）：装不进预算就不必开始 —— 省下整轨流量与一次注定失败的下载。预算按保守的一档算（负速率还没探测出来时宁可给它一个名额）。 */
   canPrepare(durationSec: number): boolean {
     if (!(durationSec > 0)) return true; // 时长未知（本地未播过的曲子）：放它去探测，探完再定夺
     return chooseScratchRate(durationSec, SCRATCH_BUDGET_BYTES / 2) !== null;
   }
 
-  /** 后台准备：取料（字节 + 时长）→ 解码 →（必要时）建倒放副本。幂等：同键在途 / 已就绪都不重复，
-   *  不同键并行（当前 + 下一首）—— 所以没有「后发起的把先发起的作废」这回事：谁回来谁进缓存。
-   *  durationHint = 已知时长（0 = 还不知道，本地未播过的曲子要等探测）：够它先按预算筛一遍，
-   *  装不下的曲子连整轨都不下（省流量，也别让就绪圈为它亮一下又灭）。
-   *  load 由调用方给（本地 / 在线三路的取法与时长探测都在视图侧，本模块不认识音源）。
-   *  返回 true = 这一首的账记下了（排上了 / 已经有了 / 装不下不必备），false = 在途满了没排上
-   *  —— 调用方（预载表）据此回头再挂一次，否则连着切歌时后一首永远排不上队。 */
+  /** 后台准备：取料（字节 + 时长）→ 解码 →（必要时）建倒放副本。幂等（同键在途 / 已就绪都不重复），
+   *  不同键并行（当前 + 下一首）—— 没有「后发起的把先发起的作废」这回事：谁回来谁进缓存。
+   *  durationHint = 已知时长（0 = 还要等探测）：够它先按预算筛一遍，装不下的连整轨都不下（省流量，也别让就绪圈为它亮一下又灭）；load 由调用方给（取法与时长探测都在视图侧，本模块不认识音源）。
+   *  返回 false = 在途满了没排上 —— 调用方（预载表）据此回头再挂一次，否则后一首永远排不上队。 */
   prepare(key: string, durationHint: number, load: () => Promise<ScratchSource>): boolean {
     if (!key || this.entries.has(key) || this.inflight.has(key)) return true;
     if (this.inflight.size >= SCRATCH_MAX_INFLIGHT) return false; // 排不下：等一份回来再说（当前那首优先）
@@ -329,11 +297,8 @@ export class ScratchDeck {
     return true;
   }
 
-  /** 起手：就绪才返回 true（返回后由 frame 驱动）。
-   *  rate = 起手这一帧的倍速：按它起播，而不是按正常转速 —— 手指慢慢拖的时候，
-   *  先响 16ms 的原速再切到 0.3 倍是听得出来的（耳朵先拿到错的音高）。
-   *  返回 false 的两种情形（视图必须退回轻量音效，不能当成「在搓但没声」）：
-   *  这一首没备好，或者声卡上下文建不出来。 */
+  /** 起手：就绪才返回 true（之后由 frame 驱动）。rate = 起手这一帧的倍速 —— 必须按它起播而不是按正常转速，否则手指慢慢拖时先响 16ms 的原速，耳朵先拿到错的音高。
+   *  返回 false（这一首没备好 / 声卡上下文建不出来）时视图必须退回轻量音效，不能当成「在搓但没声」。 */
   begin(key: string, time: number, rate = 0): boolean {
     const entry = this.entries.get(key);
     if (!entry) return false;
@@ -385,9 +350,8 @@ export class ScratchDeck {
     return this.pos;
   }
 
-  /** 抬手：渐弱收尾，返回最终位置（交给引擎写回元素）。
-   *  收尾比换向的包络长得多：这几十分之一是留给元素接回来的（seek + play 有延迟），
-   *  两边叠着淡出淡入，听不出接缝；直接掐掉就是一个窟窿。 */
+  /** 抬手：渐弱收尾，返回最终位置（交给引擎写回元素）。收尾比换向的包络长得多：这几十分之一是留给
+   *  元素接回来的（seek + play 有延迟），两边叠着淡出淡入听不出接缝；直接掐掉就是一个窟窿。 */
   end(): number {
     const ctx = this.ctx;
     if (ctx && this.gain) {
@@ -468,9 +432,8 @@ export class ScratchDeck {
     return new Ctor(SCRATCH_CHANNELS, 1, sampleRate).decodeAudioData(bytes);
   }
 
-  /** 增益：撤销还没走完的自动化，再从当前值走到目标（不给时长就立刻到）。
-   *  撤销这一步是必须的：换向时上一次的「淡出 → 淡入」还排在时间轴上，不撤就叠在一起，
-   *  增益可能被压在 0 上再也起不来 —— 听感就是「手还在盘上，声音却没了」。 */
+  /** 增益：撤销还没走完的自动化，再从当前值走到目标（不给时长就立刻到）。撤销是必须的 —— 换向时
+   *  上一次的淡出 / 淡入还排在时间轴上，叠起来会把增益压在 0 上，听感就是「手还在盘上，声音却没了」。 */
   private setGain(to: number, at: number, durationSec = 0): void {
     const p = this.gain?.gain;
     if (!p) return;
@@ -487,8 +450,7 @@ export class ScratchDeck {
     p.setValueAtTime(to, at);
   }
 
-  /** 起一程声源，并把增益拉回本次会话的音量。begin 与「顶到头之后往回拖」都走这里 ——
-   *  后者接在一次收尾之后，增益还压在 0 上，不拉回来就是哑的。 */
+  /** 起一程声源，并把增益拉回本次会话的音量（begin 与「顶到头之后往回拖」都走这里 —— 后者接在一次收尾之后，增益还压在 0 上，不拉回来就是哑的）。 */
   private openSource(rate: number): void {
     const ctx = this.ctx;
     if (!ctx) return;
@@ -496,8 +458,7 @@ export class ScratchDeck {
     this.startSource(rate);
   }
 
-  /** 起一个源：负速率可用时用原缓冲 + 带符号倍速；否则正向用原缓冲、反向用倒放副本。
-   *  fade > 0 时延后一点起播（让增益包络先把上一程收掉）。 */
+  /** 起一个源：负速率可用时用原缓冲 + 带符号倍速，否则正向原缓冲 / 反向倒放副本；fade > 0 时延后一点起播（让增益包络先把上一程收掉）。 */
   private startSource(rate: number, fade = 0): void {
     const ctx = this.ctx;
     const entry = this.active;
@@ -529,8 +490,7 @@ export class ScratchDeck {
     this.src = node;
   }
 
-  /** 方向翻转：把当前源按增益包络收掉，另一条路起新的（翻转发生在速度过零处，听不出接缝）。
-   *  三拍都走 setGain（先撤后排）：连着几下快速换向也不会把增益叠成一团。 */
+  /** 方向翻转：把当前源按增益包络收掉，另一条路起新的（翻转发生在速度过零处，听不出接缝）。三拍都走 setGain（先撤后排）：连着几下快速换向也不会把增益叠成一团。 */
   private swap(dir: 1 | -1, rate: number): void {
     const ctx = this.ctx;
     if (!ctx || !this.gain) return;
@@ -553,8 +513,7 @@ export class ScratchDeck {
     }
   }
 
-  /** 分片复制倒放副本（正序数据倒着写）：一次复制完会卡住界面，所以按块让出主线程。
-   *  速度：22.05 kHz 的 4 分钟曲子 ≈ 2×21M 个采样，分十几块、总计 ~100ms。 */
+  /** 分片复制倒放副本（正序数据倒着写）：一次复制完会卡住界面，所以按块让出主线程（22.05 kHz 的 4 分钟曲子 ≈ 2×21M 个采样，分十几块、总计 ~100ms）。 */
   private buildReversed(entry: DeckEntry): void {
     const ctx = this.ctx ?? this.context();
     const b = entry.buffer;

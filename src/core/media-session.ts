@@ -1,6 +1,5 @@
 // 系统媒体控制：把引擎状态映射到 MediaSession（媒体键 / 耳机按键 / 系统媒体面板）。
-// 放在插件层而不是播放器视图：播放器关着的时候媒体键也得管用。
-// 浏览器 / Electron 里 navigator.mediaSession 可能不存在（或部分实现），所有调用都要容错。
+// 放在插件层而不是播放器视图 —— 播放器关着媒体键也得管用；mediaSession 可能不存在或只实现一半，调用一律容错。
 import type { PlayerSnapshot } from './player-state';
 
 /** 媒体元数据（形状对齐 MediaMetadataInit，但不依赖 lib.dom 的类型名 —— 便于脚本测试） */
@@ -18,8 +17,8 @@ export function metadataOf(s: PlayerSnapshot): MediaMetadata | null {
   const artwork = track.cover ? [{ src: track.cover }] : [];
   return {
     title: track.title || '',
-    // 歌手用 Track 上的 artist（三平台与本地标签都填了）；只有拿不到时才退回专辑名 ——
-    // 「歌手 = 专辑名」在系统面板上等于少显示一半信息（旧注释说 Track 上没有 artist，已过时）
+    // 歌手用 Track 上的 artist（三平台与本地标签都填了），只有拿不到时才退回专辑名 ——
+    // 「歌手 = 专辑名」在系统面板上等于少显示一半信息
     artist: track.artist || s.albumTitle || '',
     album: s.albumTitle || '',
     artwork,
@@ -114,9 +113,3 @@ export function syncMediaSession(s: PlayerSnapshot, hooks: MediaSessionHooks) {
 
 // seekto 处理器要按时长换算，而处理器只登记一次 → 用模块级变量记住最近一次的时长
 let lastDuration = 0;
-
-/** 仅测试用：重置「已登记处理器」与时长缓存 */
-export function __resetMediaSessionForTest() {
-  handlersBound = false;
-  lastDuration = 0;
-}

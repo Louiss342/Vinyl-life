@@ -1,8 +1,6 @@
-// 酷狗登录态与凭据管理（与 Auth / QqAuth 同语义）：
-//   扫码 803 → 网关校验后落盘 .kugou-cookie（token + userid；登录只有这一条路径）。
-//   未登录也能搜索与取流（免费曲目），登录只影响会员音质与付费曲目 —— 所以状态行
-//   要把「未登录」表达成可选项，而不是错误。
-// 凭据仅存本机插件目录，不进笔记/日志/git。
+// 酷狗登录态与凭据管理（与 Auth / QqAuth 同语义）：扫码 803 → 网关校验后落盘 .kugou-cookie
+// （token + userid；登录只有这一条路径）。未登录也能搜索与取流（免费曲目），登录只影响会员音质与付费
+// 曲目 —— 所以状态行要把「未登录」表达成可选项而非错误。凭据仅存本机插件目录，不进笔记/日志/git。
 import { Plugin } from 'obsidian';
 import * as fs from 'fs';
 import { ServerManager } from './server-manager';

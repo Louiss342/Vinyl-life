@@ -1,11 +1,7 @@
 // 专辑笔记模板回归（1.3.0 重做）：
-//   ① 占位符：值型（title/artist/year/genre/rating/date/time/三个平台 id）与行型
-//      （audioFolder/cover —— 拿不到值整行消失）分开，未识别的原样保留；
-//   ② frontmatter 补全：模板决定笔记长什么样，插件保证**功能键不丢** ——
-//      tags 里一定有 album、已取到的 id / 链接 / 封面 / 艺人年份只在「缺失或为空」时写入，
-//      模板里写死的非空值一律不动；
-//   ③ 端到端：一篇自定义模板 + 在线资料 → 渲染出来的笔记既能被插件认出（tags + id），
-//      又保留了用户自己的字段与正文。
+//   ① 占位符分两类：值型（title/artist/year/genre/rating/date/time/三个平台 id）替换成值本身，行型（audioFolder/cover —— 拿不到值整行消失）替换成整行 frontmatter，未识别的原样保留；
+//   ② frontmatter 补全：模板决定笔记长什么样，插件保证**功能键不丢** —— tags 里一定有 album，已取到的 id / 链接 / 封面 / 艺人年份只在「缺失或为空」时写入，模板里写死的非空值一律不动；
+//   ③ 端到端：一篇自定义模板 + 在线资料 → 渲染出来的笔记既能被插件认出（tags + id），又保留了用户自己的字段与正文。
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -204,7 +200,6 @@ test('端到端：自定义模板 + 在线资料 → 笔记既认得出来也留
   assert.match(out, /^评分:$/m, '用户写的空键留着（没对应资料，不补）');
   assert.match(out, /^> 买这张的那天：$/m);
   assert.match(out, /^叶惠美 —— 周杰伦$/m);
-  // 端到端后没有残留占位符
   assert.doesNotMatch(out, /\{\{/);
 });
 
@@ -233,10 +228,8 @@ test('样式：模板行控件能被压窄、按钮不被压碎（英文长文�
     const at = css.indexOf(selector + ' {');
     return at < 0 ? '' : css.slice(at, css.indexOf('}', at));
   };
-  // 宿主（Obsidian）的 .setting-item-control 是 flex: 1 1 auto / min-width: auto，
-  // min-content 里含着输入框那条定宽（min(310px, 34vw)）与两个按钮的完整文案。
-  // 中文三项相加还在卡片内；英文按钮长一截，9 月 25 日实测（设置窗 900×700）
-  // 控件右缘超出卡片 48px，靠卡片的 overflow: hidden 裁掉半颗按钮。
+  // 宿主的 .setting-item-control 是 flex: 1 1 auto / min-width: auto，min-content 里含着输入框那条
+  // 定宽（min(310px, 34vw)）与按钮的完整文案；英文按钮长一截，2026-09-25 实测（设置窗 900×700）右缘超出卡片 48px 被裁
   const base = '.vinyl-settings-section .setting-item.vinyl-template-setting';
   const control = rule(`${base} .setting-item-control`);
   assert.match(control, /min-width:\s*0/, '控件要允许被压窄，否则整行顶出卡片');

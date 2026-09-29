@@ -1,10 +1,6 @@
-// 搓碟闭环回归：用假 DOM / 假引擎 / 假声卡把一次完整手势从头跑到尾 ——
-//   按下 → 转过阈值起手 → 逐帧把转角喂成角度与倍速 → 松手 → 马达回正 → 交还位置与盘面。
-// 盯住的坑（只看代码看不出来的那种）：
-//   ① 起手必须把元素停掉、把位置交给手势（时间不进则退，音乐不能继续从旧位置往前走）；
-//   ② 逐帧要把转角写进 --vinyl-spin-angle（盘面跟手）、把位置喂给引擎与搓碟台；
-//   ③ 抬手必须把最终位置交回引擎（否则音乐跳到别处），并摘掉接管类、留下负 animation-delay；
-//   ④ 减速回正是有终点的：到了正常转速要停表（否则 rAF 永远转下去）。
+// 搓碟闭环回归：假 DOM / 假引擎 / 假声卡把一次完整手势从头跑到尾（按下 → 过阈值起手 → 逐帧喂转角 → 松手回正 → 交还位置与盘面）。
+// 盯的四个坑：① 起手把元素停掉、位置交给手势（音乐不能从旧位置继续往前走）；② 逐帧写 --vinyl-spin-angle（盘面跟手）并喂位置给引擎与搓碟台；
+// ③ 抬手把最终位置交回引擎（否则音乐跳到别处）、摘接管类、留负 animation-delay；④ 减速回正有终点：到正常转速就停表（否则 rAF 永远转下去）。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -271,8 +267,7 @@ function makeView(mod, settings = {}) {
     },
     updateScratch: (t) => calls.push(['update', t]),
     endScratch: (t, resume) => calls.push(['end', t, resume]),
-    // 搓碟期间按过媒体键才返回 true / false（覆盖起手时的姿态）；这几条用例没按过，按 null 回落
-    // —— 视图写的是 `?? st.playing`，与旧行为一致（见 player-state 的 scratchResumeIntent）
+    // 搓碟期间按过媒体键才返回 true / false；没按过就按 null 回落（视图写 `?? st.playing`，见 player-state 的 scratchResumeIntent）
     scratchResumeIntent: () => null,
     scratchRate: (r) => calls.push(['rate', r]),
     setScratchLive: (live) => calls.push(['live', live]),
@@ -355,7 +350,7 @@ async function flush() {
   for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));
 }
 
-/** 让沙箱里挂着的定时器到点（真表到点就从队列里消失了，替身不替这一步，测试自己删） */
+/** 让挂着的定时器到点（真表到点会自动消失，替身不替这一步，得自己删） */
 function fireTimers(timeouts) {
   for (const [id, fn] of [...timeouts.entries()]) {
     timeouts.delete(id);
@@ -520,8 +515,7 @@ test('闭环：曲目在手里被换掉 → 手势作废（不写位置、收干
 });
 
 // —— 预载（开播几秒后自动备好搓碟缓冲）——
-// 盯住的坑：①「只在手按上来才抓」= 每张唱片的第一下搓碟只有轻量音效（倒着拖没声、位置也对不上）；
-//          ②「开播就抓」= 跟播放抢带宽，切歌变得不跟手。所以这条表既要挂、又要挂得有分寸。
+// 盯的坑：① 只在手按上来才抓 → 每张唱片的第一下搓碟只有轻量音效（倒着拖没声、位置也对不上）；② 开播就抓 → 跟播放抢带宽，切歌不跟手。所以表要挂、也要挂得有分寸。
 
 test('闭环：预载的表 —— 开播不抓，到点才抓；每条快照都不许把它往后推', async () => {
   const { mod, timeouts } = fresh();

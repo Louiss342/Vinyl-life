@@ -1,7 +1,6 @@
 // 网易云搜索链路回归：
-//   ① NeteaseService 的路由 —— 网页会话优先、网关兜底（搜索曾经只有网关单通道）
-//   ② WebClient 的搜索端点 —— 必须走 cloudsearch，不能退回 /api/search/get
-//      （旧端点在已登录/带 MUSIC_U 时稳定 405「操作频繁」，实测见 README 的排查记录）
+//   ① NeteaseService 路由 —— 网页会话优先、网关兜底（旧口径是只有网关单通道）；
+//   ② WebClient 搜索端点 —— 必须走 cloudsearch，不能退回 /api/search/get（旧端点在已登录 / 带 MUSIC_U 时稳定 405「操作频繁」，见 README 排查记录）
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');

@@ -1,8 +1,7 @@
-// Vinyl Life 本地网关（由插件 main.js 内联源码生成，勿手改）
-// 设计：自研极简 request（node:crypto 实现 weapi/eapi 加密 + 内置 fetch 发请求），
-// 仅复用 NeteaseCloudMusicApi 的 7 个轻量端点模块负责响应整形。
-// 无 axios / crypto-js / node-forge / pac-proxy-agent / tunnel 等重依赖：
-// 出口代理是自写的 HTTP CONNECT 隧道（server/proxy.js），不需要三方包。
+// Vinyl Life 本地网关（由插件 main.js 内联源码生成，勿手改）—— 只监听 127.0.0.1，每个请求都要带
+// 本次会话的随机 token（见鉴权段）。设计：自研极简 request（node:crypto 做 weapi/eapi 加密 + 内置
+// fetch），只复用 NeteaseCloudMusicApi 的 7 个轻量端点模块；出口代理是自写的 HTTP CONNECT 隧道
+// （server/proxy.js）—— 为的是不引入 axios / crypto-js / node-forge 等重依赖。
 const http = require('http');
 const dns = require('dns');
 const fs = require('fs');
@@ -19,18 +18,17 @@ const login_status = require('NeteaseCloudMusicApi/module/login_status');
 const album = require('NeteaseCloudMusicApi/module/album');
 const song_url_v1 = require('NeteaseCloudMusicApi/module/song_url_v1');
 const lyric = require('NeteaseCloudMusicApi/module/lyric');
-// 搜索刻意用 cloudsearch（/api/cloudsearch/pc）而不是 module/search（/api/search/get）：
-// 后者在「本机已登录、请求带 MUSIC_U」时会稳定返回 405「操作频繁，请稍候再试」——
-// 也就是登录之后搜索栏必挂（eapi / weapi 两条通道都一样，实测可复现）。
-// cloudsearch 是网页版在用的搜索端点，登录、匿名身份两种状态下都正常。
+// 搜索用 cloudsearch 而非 module/search（/api/search/get）：后者在「已登录、请求带 MUSIC_U」时
+// 稳定返回 405「操作频繁」，登录之后搜索栏必挂（两条加密通道都一样，实测可复现）；cloudsearch
+// 是网页版在用的端点，两种身份都正常。
 const search = require('NeteaseCloudMusicApi/module/cloudsearch');
 
 // ==================== 文案 ====================
-// 网关是独立进程，拿不到渲染进程的词典，所以自带一份小表：错误文案会一路冒到导入弹窗 /
-// 登录窗口里给用户看，不能只有中文。语言由插件经 VINYL_LANG 注入（默认中文）。
+// 网关是独立进程，拿不到渲染进程的词典，所以自带一份小表 —— 文案会冒到导入弹窗 / 登录窗口里
+// 给用户看，不能只有中文。语言由插件经 VINYL_LANG 注入（默认中文）。
 const LANG = process.env.VINYL_LANG === 'en' ? 'en' : 'zh';
-// 每次请求可带 x-vinyl-lang 覆盖（插件切语言后立刻生效，不用重启网关）。
-// 并发下最坏情况是某条文案的语言串台 —— 纯展示问题，不值得为此把语言穿进每个 handler。
+// 每次请求可带 x-vinyl-lang 覆盖（切语言立刻生效，不用重启网关）；并发下最坏是某条文案语言
+// 串台 —— 纯展示问题，不值得为此把语言穿进每个 handler。
 let requestLang = LANG;
 const MSG = {
   'gw.credentialWriteFailed': {
@@ -73,12 +71,12 @@ const MSG = {
     zh: '网易云请求失败，请检查网络后重试',
     en: 'NetEase request failed — check your network and try again',
   },
-  // 上游明确说的「操作频繁」不是网络故障：以前被并进上面那条，用户只会去查网络
+  // 上游明确说的「操作频繁」不是网络故障：并进上面那条，用户只会去查网络
   'gw.neteaseRateLimited': {
     zh: '网易云接口限流（操作频繁），请等几秒再搜',
     en: 'NetEase is rate-limiting requests (too frequent) — wait a few seconds and search again',
   },
-  // 其它上游拒绝：把 code 和上游原话透出来，别让排查卡在「网络问题」上
+  // 其它上游拒绝：透出 code 与上游原话，别让排查卡在「网络问题」上
   'gw.upstreamRejected': {
     zh: '网易云返回 {code}：{message}',
     en: 'NetEase returned {code}: {message}',
@@ -192,7 +190,7 @@ const MSG = {
   },
 };
 
-/** 取当前语言的文案；{name} 占位符按 params 替换（缺键 / 缺参数都原样保留，便于发现漏配） */
+/** 取当前语言的文案；{name} 按 params 替换，缺键 / 缺参数原样保留（便于发现漏配） */
 function msg(key, params) {
   const entry = MSG[key];
   let text = (entry && (entry[requestLang] || entry.zh)) || key;
@@ -202,17 +200,15 @@ function msg(key, params) {
   return text;
 }
 
-/** 把 handler 抛出的东西转成能给人看的文案。
- *  createRequest 是以「普通对象」{status, body, cookie} reject 的，不是 Error ——
- *  以前只判断 instanceof Error，于是上游所有拒绝（限流 405、接口 404…）都被压成
- *  「请检查网络后重试」，界面和 gateway.log 一起指向错误方向。 */
+/** 把 handler 抛出的东西转成能给人看的文案。createRequest 的拒绝是普通对象 {status, body, cookie}
+ *  而非 Error —— 只判断 instanceof Error 会把上游所有拒绝（限流 405、接口 404…）压成「请检查网络后重试」。 */
 function failureText(e) {
   if (e instanceof Error) return e.message;
   const body = e && typeof e === 'object' ? e.body : null;
   const code = body && body.code != null ? Number(body.code) : 0;
   if (code === 405 || code === 429) return msg('gw.neteaseRateLimited');
   const upstream = body ? String(body.message || body.msg || '').trim() : '';
-  // 有的端点（如不存在的专辑）只回 {"code":404}，没有 message —— 只透 code 也比谎报网络故障强
+  // 有的端点（如不存在的专辑）只回 {"code":404} 而没有 message —— 只透 code 也比谎报网络故障强
   if (code || upstream) {
     return msg('gw.upstreamRejected', {
       code: code || '?',
@@ -222,10 +218,10 @@ function failureText(e) {
   return msg('gw.neteaseRequestFailed');
 }
 
-/** 拒绝对应哪个 HTTP 状态：限流给 429，客户端据此让该来源冷却（见 src/core/request-error.ts）。
- *  其它一律 500 —— 客户端只区分「限流」与「出错了」，不靠文案匹配（文案有中英两套）。 */
-/** 路由错误：可以指定 HTTP 状态（默认 500）。供流的三种拒绝各有各的状态：
- *  路径无效 / 不是音频 400、没登记 403、不存在 404 —— 客户端与排查都靠它分流。 */
+/** 拒绝对应哪个 HTTP 状态：限流给 429（客户端据此让该来源冷却，见 src/core/request-error.ts），
+ *  其余一律 500 —— 客户端只区分「限流」与「出错了」，不靠文案匹配（文案有中英两套）。 */
+/** 路由错误：可指定 HTTP 状态（默认 500）。供流的三种拒绝分别是路径无效 / 不是音频 400、
+ *  没登记 403、不存在 404 —— 客户端与排查都靠它分流。 */
 class RouteError extends Error {
   constructor(message, status) {
     super(message);
@@ -242,10 +238,10 @@ function failureStatus(e) {
 }
 
 // ==================== 鉴权 ====================
-// 插件 spawn 网关时用 VINYL_TOKEN 下发本次会话的随机 token，每个请求必须带上
-// （header x-vinyl-token；极少数要进 DOM 的 URL 用 ?t=）。没有它的话，浏览器里任意页面
-// 扫到本机端口就能拿用户的网易云/QQ 账号发请求 —— 所以这里不是「防君子」的摆设。
-// 手工 `node server.js` 调试时没有 token，放行并打一条警告（那种情况下网关照常只监听本机）。
+// 插件 spawn 网关时用 VINYL_TOKEN 下发本次会话的随机 token，每个请求必须带上（header
+// x-vinyl-token；<audio> 这类加不了自定义头的走 ?t=，见下面的供流段）。没有它，浏览器里
+// 任意页面扫到本机端口就能拿用户的网易云/QQ 账号发请求 —— 这里不是「防君子」的摆设。
+// 手工 `node server.js` 调试时没有 token：放行并打一条警告（那时网关照常只监听本机）。
 const AUTH_TOKEN = String(process.env.VINYL_TOKEN || '');
 let warnedNoToken = false;
 
@@ -263,7 +259,7 @@ const KUGOU_COOKIE_FILE =
 const KUGOU_DEVICE_FILE =
   process.env.VINYL_KUGOU_DEVICE_FILE || path.join(path.dirname(COOKIE_FILE), '.kugou-device');
 
-// 凭据文件读写工厂（网易云 / QQ 共用；原子写 + 0600；仅用注入的 fs 方法，便于测试替换）
+// 凭据文件读写工厂（网易云 / QQ 共用；原子写 + 0600；只用注入的 fs 方法，便于测试替换）
 function makeCookieStore(file) {
   function read() {
     try {
@@ -379,8 +375,8 @@ const SPECIAL_CODES = new Set([201, 302, 400, 502, 800, 801, 802, 803]);
 let anonymousToken = '';
 // 匿名 token 注册时绑定的 deviceId（v2 落盘后与 token 一起恢复）
 let savedDeviceId = '';
-// 与 NeteaseCloudMusicApi generateDeviceId 同格式（52 位大写 hex）：
-// register/anonimous 的 username 由 deviceId 派生，格式需与官方客户端一致。
+// 与 NeteaseCloudMusicApi generateDeviceId 同格式（52 位大写 hex）：username 由它派生，
+// 格式需与官方客户端一致。
 const deviceId = Array.from({ length: 52 }, () =>
   '0123456789ABCDEF'.charAt(Math.floor(Math.random() * 16))
 ).join('');
@@ -390,11 +386,9 @@ const randomHex = (n) => crypto.randomBytes(n / 2).toString('hex');
 // 网关日志：控制台 + 落盘（VINYL_LOG_FILE 由主进程传入绝对路径）
 const LOG_FILE = process.env.VINYL_LOG_FILE || '';
 
-/** 每行前面挂本地时间。为什么非有不可：这份文件的用途是用户报障时贴进 issue，而没有时间戳
- *  就没法把一条失败放回它发生的时刻 —— 一次启动会写十几行，多次启动的日志又首尾相接
- *  （网关每次随 Obsidian 起一份），光看内容分不清哪条属于哪一次。
- *  格式取 `YYYY-MM-DD HH:mm:ss`（本地时间，与用户看到的时钟一致）；不含 5 位以上数字串，
- *  也不会被下面的路径 / 查询串规则误伤（见 redact.js）。 */
+/** 每行前面挂本地时间：这份文件是用户报障时贴进 issue 的，没有时间戳就没法把一条失败放回它
+ *  发生的时刻（一次启动写十几行，多次启动的日志又首尾相接，光看内容分不清哪条属于哪一次）。
+ *  格式 `YYYY-MM-DD HH:mm:ss`（本地时间）；不含 5 位以上数字串，不会被 redact.js 误伤。 */
 function logStamp() {
   const d = new Date();
   const p = (n) => String(n).padStart(2, '0');
@@ -408,8 +402,8 @@ function serverLog(...args) {
   console.log(...args);
   if (!LOG_FILE) return;
   try {
-    // 体积上限：超了就把上一份滚成 .1（只留一代）。日志就长在插件目录（库内）里，
-    // 无上限的 append 会把它撑成几十 MB 跟着同步走。statSync 失败当「没有旧文件」处理。
+    // 超上限就把上一份滚成 .1（只留一代）：日志长在插件目录（库内），无上限的 append 会把它
+    // 撑成几十 MB 跟着同步走。statSync 失败当「没有旧文件」处理。
     let size = 0;
     try {
       size = fs.statSync(LOG_FILE).size;
@@ -425,15 +419,14 @@ function serverLog(...args) {
   } catch (_) {}
 }
 
-/** 参数拼成一行：字符串原样、其余 JSON（与从前同一口径，只是多过一道脱敏） */
+/** 参数拼成一行：字符串原样、其余 JSON（拼好后再统一过 redactLogText 脱敏） */
 function renderLogArgs(args) {
   return args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
 }
 
-/** 启动时把**已经存在**的日志就地净化一遍：脱敏只作用于新写入的行，而升级前那份文件里
- *  可能已经留下了个人标识（老版本的 qq 登录日志里就是完整的 QQ 号），它会一直留到下次
- *  512 KB 轮转 —— 而这份文件正是用户报障时要贴进 issue 的那一份。
- *  只在这一处做一次（网关每次启动一份，不是热路径）；内容没变就不回写，免得白动 mtime。 */
+/** 启动时把**已经存在**的日志就地净化一遍：脱敏只作用于新写入的行，升级前那份里可能已经留下
+ *  个人标识（旧版的 qq 登录日志写着完整的 QQ 号），它会一直留到下次轮转 —— 而这份文件正是
+ *  用户报障时要贴进 issue 的那一份。只做一次（非热路径）；内容没变不回写，免得白动 mtime。 */
 function sanitizeExistingLog() {
   if (!LOG_FILE) return;
   for (const file of [LOG_FILE, LOG_FILE + '.1']) {
@@ -448,9 +441,9 @@ function sanitizeExistingLog() {
 }
 
 // ==================== 出站代理 ====================
-// 内置 fetch（undici）不读系统代理：会出现「浏览器能打开封面、插件下载不了」。
-// 插件启动网关时把「系统代理」（Electron session.resolveProxy）经 VINYL_PROXY 注入，
-// 也认 HTTPS_PROXY / HTTP_PROXY / ALL_PROXY 等常规变量；都没有则直连（与从前一致）。
+// 内置 fetch（undici）不读系统代理 —— 会出现「浏览器能打开封面、插件下载不了」。插件启动网关时
+// 把「系统代理」（Electron session.resolveProxy）经 VINYL_PROXY 注入，也认 HTTPS_PROXY 等常规
+// 变量；都没有则直连。
 const proxyConfig = resolveProxyConfig(process.env);
 const proxyFetch = createProxyFetch((...args) => fetch(...args), proxyConfig, {
   msg,
@@ -465,8 +458,7 @@ serverLog(
       : '直连'
 );
 
-// 构建指纹 Cookie 头（对齐库的 processCookieObject）
-// deviceId 优先复用已有匿名 token 的设备标识。
+// 构建指纹 Cookie 头（对齐库的 processCookieObject）；deviceId 优先复用匿名 token 的设备标识。
 function buildFingerprintCookie(cookieObj, uri, includeMusicAuth) {
   const header = {
     osver: cookieObj.osver || OS_INFO.osver,
@@ -647,9 +639,8 @@ const request = createRequest;
 loadAnonymousTokenFromDisk();
 
 // —— 匿名身份惰性注册（新用户首次扫码登录）——
-// 802 授权只有在请求携带 MUSIC_A 时才会下发 MUSIC_U。新用户本机没有 .anon-token，
-// 因此首次扫码前注册一次匿名身份并落盘复用；每个进程生命周期最多尝试一次，避免触发
-// 上游限流（注册接口有频率限制，失败不阻塞流程，仍有浏览器登录兜底）。
+// 802 授权只有在请求携带 MUSIC_A 时才会下发 MUSIC_U，而新用户本机没有 .anon-token，因此首次扫码前
+// 注册一次并落盘复用；每个进程生命周期最多试一次，避免触发上游限流（失败不阻塞，仍有浏览器登录兜底）。
 const ID_XOR_KEY_1 = '3go8&$8*3*3h0k(2)2';
 let anonRegisterTried = false;
 
@@ -734,11 +725,10 @@ function readBody(req) {
   });
 }
 
-// 封面代理的护栏（这个路由是拿内部 token 也不该被当成任意代理用的）：
-//   只允许 http(s) → 解析出的地址不能是本机 / 内网 / 链路本地（防 SSRF 打内网服务）
-//   → 只收图片 → 限时 10s、限 12MB。跳转按同一套规则重新校验，不信任 Location 的协议。
-// 失败原因要能分流：DNS 解析失败 / 内网地址 / 源站 404 / 其它状态码 / 连不上，各有各的文案 ——
-// 这些文案会一路冒到导入提示里，一律说「不是图片」只会把排查带偏。
+// 封面代理的护栏（这个路由拿着内部 token 也不该被当成任意代理用）：只允许 http(s) → 解析出的
+// 地址不能是本机 / 内网 / 链路本地（防 SSRF 打内网服务）→ 只收图片 → 限时 10s、限 12MB；
+// 跳转按同一套规则重新校验，不信任 Location 的协议。失败原因要能分流（DNS 失败 / 内网 /
+// 源站 404 / 其它状态码 / 连不上），它们会冒到导入提示里，一律说「不是图片」只会把排查带偏。
 const BINARY_TIMEOUT_MS = 10000;
 const BINARY_MAX_BYTES = 12 * 1024 * 1024;
 
@@ -773,8 +763,7 @@ function assertFetchable(rawUrl) {
   return new Promise((resolve, reject) => {
     dns.lookup(target.hostname, { all: true }, (err, addrs) => {
       const list = Array.isArray(addrs) ? addrs : [];
-      // 解析失败与被解析到内网地址是两回事：前者（DNS 被拦 / 域名不存在）说成「指向本机或内网」
-      // 只会误导排查方向
+      // 解析失败与被解析到内网是两回事：前者（DNS 被拦 / 域名不存在）说成「指向本机或内网」只会误导排查
       if (err || list.length === 0) {
         reject(new Error(msg('gw.coverDnsFailed', { host: target.hostname })));
         return;
@@ -936,12 +925,11 @@ route('DELETE', '/api/cookie', async () => {
 });
 
 // ==================== 本机音频按 Range 供流（库外音频专用） ====================
-// 背景：库外音频（vault 之外的绝对路径）此前由插件整文件读进渲染进程做成 Blob ——
-// 一首 30–50 MB 的无损就是一整块内存，一张 20 首的专辑能上 GB（见 src/core/local-source.ts）。
-// 现在改由网关按 HTTP Range 供流：Chromium 的 <audio> 只取需要的区间，整轨不驻留内存。
-// 代价：库外音频从此也会用到网关（README 里「只放本地音频不启动网关」已按此改写）。
-// 安全：与其它路由同一套 token 鉴权（<audio> 不能自定义请求头，所以走 ?t= 那条路，见上面的鉴权段）；
-// 另外只认「绝对路径 + 音频扩展名 + 常规文件」—— 这条路由不是通用文件读取口。
+// 背景：库外音频（vault 之外的绝对路径）此前由插件整文件读进渲染进程做成 Blob —— 一首 30–50 MB
+// 的无损就是一整块内存，一张 20 首的专辑能上 GB（见 src/core/local-source.ts）。改由网关按 HTTP
+// Range 供流后，<audio> 只取需要的区间，整轨不驻留内存；代价是库外音频从此也要用网关（README 已改写）。
+// 安全：与其它路由同一套 token 鉴权（<audio> 不能自定义请求头，只能走 ?t=，见上面的鉴权段），
+// 且只认「绝对路径 + 音频扩展名 + 常规文件」—— 这条路由不是通用文件读取口。
 // 扩展名表与 src/util.ts 的 AUDIO_EXTENSIONS / MIME_BY_EXT 必须一致（有测试锁着）。
 const STREAM_MIME = {
   mp3: 'audio/mpeg',
@@ -958,14 +946,13 @@ const STREAM_MIME = {
   weba: 'audio/webm',
 };
 
-/** 本会话允许供流的路径（见 /api/local/allow）。为什么需要这一层：
- *  <audio> 发的是浏览器级请求、带不了自定义头，所以这条路由的凭据只能是 URL 里的 ?t= 会话 token。
- *  光有 token 还不够 —— 拿到它的任何进程都能用它读盘上**任意**音频文件；登记过之后，
- *  能读的就只剩「插件真的声明过要放的那几个路径」，与 README 6.3.1 的口径一致。 */
+/** 本会话允许供流的路径（见 /api/local/allow）。为什么需要这一层：<audio> 发的是浏览器级请求、
+ *  带不了自定义头，凭据只能是 URL 里的 ?t= 会话 token；但光有 token 还不够 —— 拿到它的任何进程
+ *  都能读盘上**任意**音频文件，登记过之后能读的只剩「插件真的声明过要放的那几个路径」（README 6.3.1）。 */
 const streamAllow = new Set();
 
-/** 登记键：与供流同样的两条硬条件（绝对路径 + 认识的音频扩展名），再 path.resolve 归一
- *  —— 插件与网关同机，但分隔符写法可能不同。不合格的路径直接不收（返回 null）。 */
+/** 登记键：与供流同样的两条硬条件（绝对路径 + 认识的音频扩展名），再 path.resolve 归一 ——
+ *  插件与网关同机，但分隔符写法可能不同。不合格的路径直接不收（返回 null）。 */
 function streamAllowKey(raw) {
   const p = String(raw || '');
   if (!path.isAbsolute(p)) return null;
@@ -1008,9 +995,9 @@ function resolveStreamFile(raw) {
 
 route('GET', '/api/local/stream', async ({ query }) => ({ file: resolveStreamFile(query.path) }));
 
-/** 解析单区间 Range。返回 {start,end} / null（没带 Range，回全量）/ 'invalid'（不合法或越界 → 416）。
- *  只认单区间（bytes=a-b / a- / -n）：多区间按规范允许回 200 全量，这里就这么办 —— 音频播放器
- *  实际只发单区间，为多区间做 multipart 响应没有收益。 */
+/** 解析单区间 Range：{start,end} / null（没带，回全量）/ 'invalid'（不合法或越界 → 416）。
+ *  只认单区间（bytes=a-b / a- / -n）；多区间按规范回 200 全量 —— 播放器实际只发单区间，
+ *  为它做 multipart 响应没有收益。 */
 function parseRange(header, size) {
   const m = /^bytes=(\d*)-(\d*)$/.exec(String(header || '').trim());
   if (!m) return null;
@@ -1063,18 +1050,17 @@ function sendStreamFile(req, res, file) {
       // 响应已经结束：无处可收，忽略
     }
   });
-  // 客户端中断必须销毁读流：<audio> 拖进度条 / 切曲 / 换 src 都会中断上一次请求，
-  // 这走的是 res 的 close（不是读流的 error）。只 pipe 的话 Node 把它 unpipe 掉就完了，
-  // fs.ReadStream 不 destroy 就一直攥着 fd —— 每次中断漏一个，几百次之后
-  // 进程的 fd 预算见底，之后所有供流 / 写凭据 / 建连一起失败，而进程还活着（自愈只看进程退出）。
+  // 客户端中断必须销毁读流：<audio> 拖进度条 / 切曲 / 换 src 都会中断上一次请求，走的是 res 的
+  // close（不是读流的 error）；只 pipe 的话 Node 把它 unpipe 掉就完了，fs.ReadStream 不 destroy
+  // 就一直攥着 fd —— 每次中断漏一个，几百次之后 fd 预算见底，供流 / 写凭据 / 建连会一起失败。
   res.on('close', () => stream.destroy());
   res.writeHead(range ? 206 : 200, headers);
   stream.pipe(res);
 }
 
 // ==================== QQ 音乐路由（/api/qq/*） ====================
-// server/qq.js 为纯注入式模块：fs/fetch/日志/超时/crypto/路径全部由这里注入，
-// 模块自身零 require、零裸 fetch（测试以 vm 替换本文件作用域内的 I/O）。
+// server/qq.js 为纯注入式模块：fs/fetch/日志/超时/crypto/路径全由这里注入，模块自身零 require、
+// 零裸 fetch（测试以 vm 替换本文件作用域内的 I/O）。
 registerQqRoutes({
   route,
   log: serverLog,
@@ -1088,7 +1074,7 @@ registerQqRoutes({
 });
 
 // ==================== 酷狗音乐路由（/api/kugou/*） ====================
-// server/kugou.js 与 qq.js 同一套纪律：零 require、零裸 fetch（测试以 vm 替换本文件的 I/O）。
+// server/kugou.js 与 qq.js 同一套纪律（零 require、零裸 fetch，测试以 vm 替换本文件的 I/O）；
 // 比 QQ 多一个 deviceFile —— 酷狗取流强依赖设备指纹 dfid（首次使用时注册并落盘）。
 registerKugouRoutes({
   route,
@@ -1103,8 +1089,7 @@ registerKugouRoutes({
 });
 
 const server = http.createServer(async (req, res) => {
-  // 不发任何 CORS 头：插件用 requestUrl（不受同源策略约束），浏览器里的第三方页面
-  // 既不该也不需要通过 CORS 访问这里。
+  // 不发任何 CORS 头：插件走 requestUrl（不受同源策略约束），浏览器里的第三方页面既不该也不需要访问这里。
   let url;
   try {
     url = new URL(req.url, 'http://127.0.0.1');
@@ -1153,11 +1138,10 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-// 端口：VINYL_PORT=0（或未给）时由系统分配，选中的端口回报给父进程。
-// 为什么不让父进程先探测再传进来：探测完必须先关掉那个监听才能交给网关，中间有一段
-// 端口被别人抢走的窗口（TOCTOU）—— 抢到了网关会 EADDRINUSE，用户看到的是「在线音源
-// 莫名其妙不可用」。改成网关自己 bind(0) 再回报真实端口，这条缝就不存在了。
-// 回报格式固定在下面这一行上，插件侧按它解析（改格式要同步改 server-manager 的 PORT_RE）。
+// 端口：VINYL_PORT=0（或未给）时由系统分配，选中的端口回报给父进程。不让父进程先探测再传进来是因为：
+// 探测完必须先关掉那个监听才能交给网关，中间有一段端口被别人抢走的窗口（TOCTOU，抢到就是
+// EADDRINUSE）；网关自己 bind(0) 再回报就没有这条缝。回报格式固定在下面这一行上，
+// 插件侧按它解析（改格式要同步改 server-manager 的 PORT_RE）。
 const port = Number(process.env.VINYL_PORT || 0);
 // 先净化历史日志（见 sanitizeExistingLog），再开始写新行 —— 顺序反了会把刚写的那行也当历史读进来
 sanitizeExistingLog();
@@ -1165,9 +1149,9 @@ server.listen(port, '127.0.0.1', () => {
   serverLog('[vinyl-server] listening on 127.0.0.1:' + server.address().port);
 });
 
-// 监听失败（端口被占 / 权限 / 网卡异常）：必须有处理，否则 Node 会把 'error' 事件
-// 直接抛成未捕获异常，进程带着一段吓人的堆栈死掉 —— 插件侧只看到「退出」，只能猜。
-// 这里写清原因再退出：父进程按「启动失败」处理（它会换端口重试，见 server-manager 的自愈）。
+// 监听失败（端口被占 / 权限 / 网卡异常）必须有处理，否则 Node 会把 'error' 抛成未捕获异常、进程
+// 带着一段吓人的堆栈死掉，插件侧只看到「退出」只能猜；这里写清原因再退，父进程按「启动失败」
+// 换端口重试（见 server-manager 的自愈）。
 server.on('error', (e) => {
   serverLog('[vinyl-server] 监听失败：' + ((e && e.message) || String(e)));
   process.exit(1);

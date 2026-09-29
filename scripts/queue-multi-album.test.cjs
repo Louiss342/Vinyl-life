@@ -230,7 +230,7 @@ test('移除整段：删别人不动播放；删到自己这段就顺延', async
   assert.deepEqual(segShape(engine), [[C, 0, 1, true]], '顺延到剩下的那段');
   assert.equal(engine.snapshot().current.title, 'T4');
 
-  engine.removeRange(0, 1); // 删光
+  engine.removeRange(0, 1);
   const empty = engine.snapshot();
   assert.equal(empty.queue.length, 0);
   assert.equal(empty.index, -1);
@@ -317,7 +317,6 @@ test('随机（列表模式）：整条列表的曲目一起打乱（各专辑�
 test('队尾行为：单次停住 / 循环回队首 / 随机重洗后继续', async () => {
   const tick = () => new Promise((r) => setImmediate(r));
 
-  // 单次：队尾暂停
   const once = makeEngine();
   once.engine.setQueue([tr(1, A), tr(2, A)], A, 'A 专辑', 'netease');
   await once.engine.playIndex(1); // 最后一首
@@ -325,7 +324,6 @@ test('队尾行为：单次停住 / 循环回队首 / 随机重洗后继续', as
   await tick();
   assert.equal(once.engine.snapshot().status, 'paused', '单次：播完就停');
 
-  // 循环：回队首继续
   const loop = makeEngine();
   loop.engine.setQueue([tr(1, A), tr(2, A)], A, 'A 专辑', 'netease');
   loop.engine.cyclePlayMode(); // → loop
@@ -335,7 +333,6 @@ test('队尾行为：单次停住 / 循环回队首 / 随机重洗后继续', as
   assert.equal(loop.engine.snapshot().status, 'playing', '循环：接着放');
   assert.equal(loop.engine.snapshot().index, 0, '回到队首');
 
-  // 随机：重洗后继续（顺序变了、仍在播）
   const sh = makeEngine({ random: () => 0 });
   sh.engine.setQueue([tr(1, A), tr(2, A), tr(3, A)], A, 'A 专辑', 'netease');
   sh.engine.cyclePlayMode();

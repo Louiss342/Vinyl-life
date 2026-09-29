@@ -1,7 +1,6 @@
 // 音量 / 播放位置 / 播放明细的落盘节奏回归（用可控的假时钟把 30 秒跑成毫秒）：
-//   ① 播放中 timeupdate 每 400ms 调一次 scheduleStatsSave —— 纯防抖会把落盘无限推后，
-//      崩溃或强杀就丢掉整场明细。最长等待保证连续播放时也一定写得下去；
-//   ② 但也不能变成「每改必写」：停手之后仍然是一次防抖写入。
+// 播放中 timeupdate 每 400ms 调一次 scheduleStatsSave，纯防抖会把落盘无限推后（崩溃 / 强杀丢掉整场明细），
+// 所以要 30 秒封顶；但也不能反过来变成「每改必写」—— 停手之后仍是一次防抖写入。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -106,7 +105,6 @@ test('连续播放也会落盘：最长等待 30 秒兜住被无限推后的防�
   assert.ok(during >= 1, `40 秒连续播放至少要落盘一次（实际 ${during} 次）`);
   assert.ok(during <= 3, `但也不能每来一次改动就写一次（实际 ${during} 次）`);
 
-  // 停手（暂停 / 停止播放）之后：防抖照旧，一次写入
   const before = saves();
   fakeNow += 5000;
   await runDueTimers();

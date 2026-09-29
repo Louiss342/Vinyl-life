@@ -27,15 +27,15 @@ const i18n = mod.exports;
 test('i18n：默认中文，切到 en 后取英文', () => {
   i18n.setLanguage(undefined);
   assert.equal(i18n.getLanguage(), 'zh', '默认中文');
-  assert.equal(i18n.t('shelf.refresh'), '刷新');
+  assert.equal(i18n.t('shelf.heading'), '我的唱片');
 
   i18n.setLanguage('en');
   assert.equal(i18n.getLanguage(), 'en');
-  assert.equal(i18n.t('shelf.refresh'), 'Refresh');
+  assert.equal(i18n.t('shelf.heading'), 'My records');
   assert.equal(i18n.t('menu.setCover'), 'Set cover…');
 
   i18n.setLanguage('zh');
-  assert.equal(i18n.t('shelf.refresh'), '刷新', '切回来仍是中文');
+  assert.equal(i18n.t('shelf.heading'), '我的唱片', '切回来仍是中文');
 });
 
 test('i18n：未知语言回落中文，未知键回落 key 本身', () => {
@@ -48,18 +48,17 @@ test('i18n：未知语言回落中文，未知键回落 key 本身', () => {
 test('i18n：专辑墙用到的键在中英两套里都有且非空', () => {
   const keys = [
     'sort.title', 'sort.artist', 'sort.year', 'sort.plays', 'sort.rating',
-    'sort.recent', 'sort.custom', 'sort.customLabel', 'sort.noProps',
+    'sort.recent', 'sort.custom',
     'sort.dir.newestFirst', 'sort.dir.earliestFirst', 'sort.dir.mostFirst',
     'sort.dir.leastFirst', 'sort.dir.highFirst', 'sort.dir.lowFirst',
     'sort.dir.recentFirst', 'sort.dir.asc', 'sort.dir.desc',
     'filter.all', 'filter.local', 'filter.netease', 'filter.qq', 'filter.kugou', 'filter.collect',
     'shelf.title', 'shelf.heading', 'shelf.search', 'shelf.searchClear', 'shelf.searchOnline',
-    'shelf.refresh', 'shelf.batchDelete',
     'toolbar.search', 'toolbar.display', 'toolbar.displayFiltered', 'toolbar.add', 'toolbar.more',
     'display.source', 'display.arrange', 'display.sortBy', 'display.dir', 'display.view',
     'display.columns', 'display.props', 'display.propsNone', 'display.back', 'display.customGroup',
     'more.select', 'more.refresh', 'menu.selectMany',
-    'shelf.empty.title', 'shelf.empty.hint', 'shelf.filtered.title', 'shelf.filtered.hint',
+    'shelf.filtered.title', 'shelf.filtered.hint',
     'batch.selected', 'batch.selectAll', 'batch.clear', 'batch.delete', 'batch.exit',
     'batchDelete.title', 'batchDelete.summary', 'batchDelete.more', 'batchDelete.playingHint',
     'batchDelete.alsoAudio', 'batchDelete.alsoCover', 'batchDelete.coverShared',
@@ -137,9 +136,8 @@ function srcTsFiles(dir = path.join(__dirname, '../src'), out = []) {
 }
 
 // ============ 词典反向自检：不留「没人引用」的死键 ============
-// 背景：功能删了、文案还留在词典里（旧版「粘贴链接」流程、重复的 noteExists 等就是这么攒下来的）。
-// 扫描范围含 scripts/ 自身：只在测试里按名字引用的键也算「有引用」，不会被误报。
-// 例外只有动态拼接的键族：modeLabelKey 用 `player.mode${name}${scope}` 现拼，源码里没有整串字面量。
+// 功能删了、文案还留在词典里就是这么攒下来的。扫描范围含 scripts/ 自身：只在测试里按名字引用的键也算「有引用」。
+// 例外只有动态拼接的键族（如 modeLabelKey 用 `player.mode${name}${scope}` 现拼，源码里没有整串字面量），见 DYNAMIC_KEY_PATTERNS。
 const DYNAMIC_KEY_PATTERNS = [
   /^player\.playMode\.(once|loop|shuffle)$/, // 播放器下拉菜单与状态文字按模式拼接
   /^player\.mode(Once|Loop|Shuffle)(Album|List)$/,
@@ -167,19 +165,12 @@ test('i18n：词典里没有无人引用的死键（动态拼接的键族除外�
 });
 
 // ============ 提示气泡防护：同一元素不得同时设 aria-label 与 title ============
-// 背景：Obsidian 会按 aria-label 渲染自己那套样式化提示，浏览器又会为 title 弹原生提示；
-// 同一元素上两个属性并存 ⇒ 悬停时弹两个气泡。
-// 启发式（纯源码扫描，不执行 DOM）：
-//   ① 行邻域内同一个接收者既 setAttribute('aria-label', X) 又 setAttribute('title', X)（文案相同才判失败）；
-//   ② 同一个 attr: { … } 对象字面量里同时出现 aria-label 与 title 键（同一元素，必然双提示；这条是确定的）。
-// 局限：启发式不是语义分析——把 aria-label 与 title 拆到相隔很远的两个函数里、或同一文案写成不同
-//   表达式（如 t('k') 与 tf('k', {})）时可能漏检；同理，接收者重名（两个作用域里都叫 b）在窗口内可能误报，
-//   但误报只会让人肉核对一眼，不会放过真问题。
-// 反向见下一条测试：title 现在是全面禁止的（祖先的 title 会被浏览器继承到子元素上，启发式抓不到）。
+// 宿主按 aria-label 画样式化气泡，浏览器又会为 title 弹原生气泡；同一元素上两个属性并存 ⇒ 悬停时弹两个。
+// 判据（纯源码扫描，不执行 DOM）：① 行邻域内同一接收者的两个 setAttribute 文案相同；② 同一 attr: { … } 里两个键并存（必然双提示）。
+// 局限：拆到相隔很远的两个函数、或同一文案写成不同表达式（t('k') 与 tf('k', {})）会漏检；接收者重名可能误报，只多一眼人肉核对，不会放过真问题。
 // ============ 提示气泡：视图层不得再出现 title 属性 ============
-// 背景：宿主按 aria-label 画样式化气泡，浏览器又会为 title 弹一个原生气泡 —— 而且 title 会被
-// *继承*：只要祖先带 title，悬停它内部任何元素都会再冒一个（「写感想」按钮压在段头 title 上时
-// 就是两个气泡）。启发式查不出这种跨元素的继承，所以这里直接禁掉 title：提示一律走 aria-label。
+// 启发式抓不到 title 的*继承*（祖先带 title，其内任何元素被悬停都会再冒一个 —— 「写感想」钮压在段头 title 上就是两个气泡），
+// 所以这里直接禁掉：提示一律走 aria-label（上一条测试是它的反向断言）。
 test('源码防护：视图层不出现 title 属性（提示统一走 aria-label）', () => {
   const hits = [];
   for (const f of srcTsFiles()) {
@@ -336,17 +327,15 @@ test('i18n：语言切换后新建的登录 provider 文案跟着变（不能被
 // ============ 播放器视图：源码防护 + 切语言后就地更新 ============
 
 // 提取源码里的字符串字面量内容（跳过注释与正则），用于「不得硬编码中文」的断言。
-// 正则字面量必须跳过：sanitizeFileName 里就有含引号的正则（/[\\/:*?"<>|#^[\]]/g），
-// 不跳过的话扫描器会从那个引号一路吃到下一个引号，把中间的中文注释当成「字符串」误报。
-// 正则判定是启发式：/ 出现在这些记号之后才算正则（赋值 / 括号 / 逗号 / 冒号 / return 等），
-// 否则算除法。漏判的代价是误报（能人工核对），误判正则的代价是漏检 —— 所以宁可宽松。
+// 正则字面量必须跳过：sanitizeFileName 里就有含引号的正则（/[\\/:*?"<>|#^[\]]/g），不跳就会从那个引号一路吃到下一个引号、
+// 把中间的中文注释当成「字符串」误报。正则判定是启发式（/ 在赋值 / 括号 / 逗号 / return 等之后才算，否则算除法）：
+// 漏判只是误报（能人工核对），误判正则才漏检 —— 所以宁可宽松。
 function isRegexStart(src, i) {
   let j = i - 1;
   while (j >= 0 && /\s/.test(src[j])) j--;
   if (j < 0) return true; // 文件开头
   const prev = src[j];
   if ('=(,:[!&|?{};+*-'.includes(prev)) return true;
-  // return / typeof / case 等关键字后也是正则
   const kw = /(^|[^\w$])(return|typeof|case|in|of|new|delete|void|instanceof)$/.exec(
     src.slice(Math.max(0, j - 12), j + 1)
   );
@@ -413,12 +402,10 @@ function stringLiterals(src) {
 }
 
 // 例外清单（每一条都要有理由，别往里塞用户可见文案）：
-//   src/core/i18n.ts      —— 词典本体
-//   src/core/about.ts     —— 作者手记（原文常量，刻意不翻译；README 也逐字校验它）
-//   `[vinyl] …`           —— 控制台日志：给开发者看的，不进界面（约定带这个前缀）
-//   `…/专辑笔记模板.md`    —— 模板文件的**路径**，不是文案：固定路径才不会让老用户的模板失联
-//                          （1.3.0 把目录从 模板/ 改成 template/、再改成 Template/，文件名仍是这个中文名）
-//   `…/模板`              —— 1.3.0 之前那个默认模板**目录名**：只在迁移里用来认出旧目录并改名
+//   src/core/i18n.ts   —— 词典本体；src/core/about.ts —— 作者手记（原文常量，刻意不翻译；README 也逐字校验它）
+//   `[vinyl] …`        —— 控制台日志：给开发者看的，不进界面（约定带这个前缀）
+//   `…/专辑笔记模板.md` —— 模板文件的**路径**，不是文案：固定路径才不会让老用户的模板失联（目录名 1.3.0 起改过几轮，文件名不变）
+//   `…/模板`           —— 1.3.0 之前那个默认模板**目录名**：只在迁移里用来认出旧目录并改名
 const CJK_ALLOWED_FILES = ['src/core/i18n.ts', 'src/core/about.ts'];
 const CJK_ALLOWED_LITERALS = [/^\[vinyl\]/, /专辑笔记模板\.md$/, /\/模板$/];
 
@@ -574,6 +561,7 @@ function playerModule() {
           TFolder: class {},
           normalizePath: (p) => p,
           setIcon: () => {},
+          addIcon: () => {},
         };
       }
       return require(name);
@@ -587,8 +575,7 @@ function playerModule() {
   return playerBundle;
 }
 
-// 引擎快照最小面（播放器只读这些字段）。
-// segments 必须与 queue 自洽：播放器按段渲染队列，段数/长度对不上就会画错行。
+// 引擎快照最小面（播放器只读这些字段）；segments 必须与 queue 自洽：播放器按段渲染队列，段数/长度对不上就会画错行。
 function snap(over = {}) {
   const queue = over.queue || [];
   const segments =
@@ -629,7 +616,7 @@ test('播放器：切语言后 applyLanguage 就地更新按钮提示与头部�
   const hasLabel = (v) => all.some((e) => e.getAttribute('aria-label') === v);
   const hasText = (v) => all.some((e) => e.textContent === v);
 
-  // 提示只走 aria-label（Obsidian 的原生样式化提示）；再设 title 会叠出第二个浏览器原生气泡
+  // 提示只走 aria-label（宿主原生样式化提示）；再设 title 会叠出第二个浏览器原生气泡（理由见上面的 title 防护）
   const noteBtn = all.find((e) => e.getAttribute('aria-label') === '给「A」写点什么吧:)');
   assert.ok(noteBtn, '「写点什么吧」的提示应为中文（在专辑名那一栏的最后）');
   assert.equal(noteBtn.getAttribute('title'), null, '追加感想钮不得再设 title');
@@ -681,8 +668,7 @@ test('播放器：队列行的拖拽提示随语言就更新（不重建队列�
   const row = view.queueRows[0];
   const idx = view.queueIdxs[0];
   assert.ok(row && idx, '队列行与序号格已建');
-  // 提示只走 aria-label：行报曲名、序号格报拖拽 —— 同一元素只留一个提示来源
-  // （浏览器会把祖先的 title 继承到子元素上，行上再挂 title 就会和宿主气泡叠成两个）
+  // 提示只走 aria-label：行报曲名、序号格报拖拽 —— 同一元素只留一个提示来源（祖先的 title 会被浏览器继承给子元素，再挂就叠两个气泡）
   assert.equal(idx.getAttribute('aria-label'), '拖拽调整顺序');
   assert.equal(row.getAttribute('title'), null, '行上不得再有 title');
 
@@ -733,9 +719,8 @@ test('播放器：切语言后队列的来源角标按新语言重算（不重�
 });
 
 // ============ 命令面板瘦身 + 插入此刻正在听（驱动 main.ts 真实代码） ============
-// main.ts 的 onload / insertNowPlaying 需要整个 Obsidian App 才能跑，这里按「用到什么补什么」搭桩：
-// Plugin 基类只给 app / manifest，vault 只给 adapter.getBasePath 与建目录，Audio 只给 addEventListener
-// （PlaybackEngine 构造时挂监听），workspace 只给 getActiveViewOfType（假编辑器）。
+// main.ts 的 onload / insertNowPlaying 需要整个 Obsidian App 才能跑，这里按「用到什么补什么」搭桩：Plugin 基类只给
+// app / manifest，vault 只给 adapter.getBasePath 与建目录，Audio 只给 addEventListener，workspace 只给 getActiveViewOfType（假编辑器）。
 // 够驱动命令注册与插入这两条路径，但**不是**完整 App 模拟：不覆盖视图渲染、真实 vault 与设置面板。
 let mainBundle = null;
 function mainModule() {
@@ -777,6 +762,7 @@ function mainModule() {
           FuzzySuggestModal: class {},
           normalizePath: (p) => p,
           setIcon: () => {},
+          addIcon: () => {},
         };
       }
       return require(name);
@@ -804,8 +790,7 @@ function makePlugin({ view = null, data = {}, snapshot = null } = {}) {
       adapter: { getBasePath: () => process.cwd() },
       getAbstractFileByPath: () => null,
       createFolder: async () => {},
-      // onload 的缓存作废监听：这里只要求「能注册上」，事件本身的行为由
-      // scripts/album-source-cache.test.cjs 覆盖
+      // 缓存作废监听：这里只要求「能注册上」，事件本身的行为由 scripts/album-source-cache.test.cjs 覆盖
       on: () => ({}),
     },
     workspace: {
@@ -834,8 +819,7 @@ function makePlugin({ view = null, data = {}, snapshot = null } = {}) {
   return plugin;
 }
 
-// 日常常驻命令（id 不能改：改了已绑定的快捷键就失效）。
-// 命令表在 core/commands.ts（宿主中立），main.ts 只做接线 —— 运行时注册出来的 id 必须与它一致。
+// 日常常驻命令（id 不能改：改了已绑定的快捷键就失效）；命令表在 core/commands.ts（宿主中立），main.ts 只做接线 —— 运行时注册出来的 id 必须与它一致。
 const KEPT_COMMANDS = [
   'open-shelf',
   'open-player',
@@ -940,8 +924,7 @@ test('main：insertNowPlaying — 专辑名 / 路径含 wikilink 语法字符时
 });
 
 // ============ 「关于」页：作者手记逐字保真 + 正文不进词典 ============
-// 手记正文是原文常量（src/core/about.ts 的 ABOUT_TEXT）：不翻译、不进词典、不许「润色」。
-// 期望值在这里独立抄一遍（不从源码读回），任何人改动正文都会让下面的断言先响。
+// 手记正文是原文常量（src/core/about.ts 的 ABOUT_TEXT）：不翻译、不进词典、不许「润色」；期望值在这里独立抄一遍（不从源码读回），改动即先响。
 const aboutSource = esbuild.buildSync({
   entryPoints: [path.join(__dirname, '../src/core/about.ts')],
   bundle: true,
@@ -960,8 +943,7 @@ vm.runInNewContext(aboutSource, {
 });
 const about = aboutMod.exports;
 
-// 逐字期望值：首行末尾一个空格，段落之间空行，末尾一个换行（照录原文代码块的最后一个行尾）。
-// 写法上刻意用 \n 转义而不是多行模板字符串：转义后的值不受编辑器「删行尾空格」与 git CRLF 影响。
+// 逐字期望值：首行末尾一个空格、段间空行、末尾一个换行（照录原文代码块的行尾）；写法上刻意用 \n 转义而非多行模板字符串 —— 转义后的值不受编辑器「删行尾空格」与 git CRLF 影响。
 const ABOUT_EXPECTED =
   '一首歌值得被写下来。 \n' +
   '\n' +
@@ -969,8 +951,7 @@ const ABOUT_EXPECTED =
   '\n' +
   '音乐和笔记也许本身有着天然的亲和力。\n';
 
-// 英译逐字期望值：同样在测试里独立抄一遍（不从源码读回）。
-// 段落结构与中文一致（三段、段间空行），末行行尾同样保留一个换行。
+// 英译逐字期望值：同样独立抄一遍（不从源码读回）；段落结构与中文一致（三段、段间空行、末尾换行）。
 const ABOUT_EXPECTED_EN =
   'A song is worth writing down.\n' +
   '\n' +
@@ -1010,7 +991,6 @@ test('「关于」手记：ABOUT_TEXT_EN 逐字照录（英译，与中文并列
   assert.notEqual(en, ABOUT_EXPECTED, '英译与中文原文不能相同（否则等于没加译文）');
   assert.equal(en.includes('\r'), false, '不得含 CR（CRLF 换行会破坏逐字保真）');
 
-  // 段落结构与中文一致：三段、段间空行、末行一个换行
   const lines = en.split('\n');
   assert.equal(lines.length, 6, '三段正文 + 两个段间空行 + 末尾换行切出的空串');
   assert.equal(lines[1], '', '第一段与第二段之间是空行');
@@ -1058,8 +1038,7 @@ test('「关于」手记：正文不进 i18n 词典（不是键、不翻译）',
 
 test('设置面板：自绘标签页（有意不走声明式分页）', () => {
   const src = fs.readFileSync(path.join(__dirname, '../src/settings.ts'), 'utf8');
-  // 自绘是刻意的：官方文档写明 getSettingDefinitions() 返回非空数组时 display() 不会被调用，
-  // 两条路只能二选一。这条断言是闸门，别「顺手升级」回声明式分页（注释里提到它不算）。
+  // 自绘是刻意的：官方文档写明 getSettingDefinitions() 返回非空数组时 display() 不会被调用，两条路只能二选一 —— 这条断言是闸门，别「顺手升级」回声明式分页（注释里提到它不算）。
   assert.equal(
     /^\s*getSettingDefinitions\s*\(/m.test(src),
     false,
@@ -1092,8 +1071,7 @@ test('「关于」页接线：about 标签页渲染手记正文，版本号与�
   assert.match(aboutSrc, /REPO_URL/, '底部 GitHub 外链走 REPO_URL 常量');
   assert.match(about.REPO_URL, /^https:\/\/github\.com\/Louiss342\/Vinyl-life$/, '仓库地址');
 
-  // 接线顺序（只戳正文那两行：import 行会让「谁在前」变得没意义）：
-  // 中文正文先建，英译后建 —— 真正的节点先后由下面假 DOM 的用例驱动验证
+  // 接线顺序：中文正文先建、英译后建（只戳正文那两行 —— import 行会让「谁在前」变得没意义）；节点先后由下面假 DOM 的用例驱动验证
   assert.match(
     aboutSrc,
     /ABOUT_TEXT(?!_)[\s\S]{0,400}?ABOUT_TEXT_EN/,
@@ -1235,6 +1213,62 @@ test('设置面板：分区图标优先走宿主 Lucide，宿主没有该图标�
   assert.equal(legacy.every((el) => el.getAttribute('data-icon') === null), true);
 });
 
+test('设置面板：源页三块用平台自己的品牌图标（自注册的，不跟宿主图标集走）', () => {
+  // 品牌图标由插件在 onload 里 addIcon 注册（views/brand-icons）。它们**不该**走「宿主有没有这个名字」
+  // 那道判断 —— 那份名单是一次性缓存，若先于注册被填上就永远错过，下面第二段专门验这条。
+  const openSourceTab = (extra) => {
+    const mod = settingsModule(extra);
+    const tab = new mod.VinylSettingTab(
+      { vault: { getAbstractFileByPath: () => null } },
+      {
+        manifest: { version: '9.9.9' },
+        settings: mod.DEFAULT_SETTINGS,
+        server: {},
+        saveSettings: async () => {},
+        refreshLanguage: () => {},
+        refreshAppearance: () => {},
+      }
+    );
+    tab.containerEl = fakeEl();
+    tab.display();
+    // 「源」是第四个标签（通用 / 历史 / 外观 / 源 / 关于）
+    const tabs = collect(tab.containerEl).filter((e) => e.classes.has('vinyl-settings-tab'));
+    assert.equal(tabs.length, 5, '五个标签');
+    tabs[3].onclick();
+    return collect(tab.containerEl).filter((e) => e.classes.has('vinyl-settings-section-icon'));
+  };
+  const record = (el, name) => el.setAttribute('data-icon', name);
+
+  // 宿主认得通用图标名时：五块各是一个图标位
+  const icons = openSourceTab({
+    getIconIds: () => ['sliders-horizontal', 'hard-drive'],
+    setIcon: record,
+  });
+  assert.deepEqual(
+    [...icons.map((el) => el.getAttribute('data-icon'))],
+    ['sliders-horizontal', 'vinyl-brand-netease', 'vinyl-brand-qq', 'vinyl-brand-kugou', 'hard-drive'],
+    '源页五块：默认音源与本地音源仍是 Lucide，三家平台换成各自的标记'
+  );
+  assert.deepEqual(
+    [...icons.map((el) => String(el.textContent))],
+    ['', '', '', '', ''],
+    '走图标就不再放文本符号'
+  );
+
+  // 图标集里根本没有我们注册的名字（老宿主 / 缓存先于注册填上）：品牌图标照样出图，不回落文本
+  const legacy = openSourceTab({ getIconIds: () => [], setIcon: record });
+  assert.deepEqual(
+    [...legacy.map((el) => el.getAttribute('data-icon'))],
+    [null, 'vinyl-brand-netease', 'vinyl-brand-qq', 'vinyl-brand-kugou', null],
+    '宿主图标集里没有也得把品牌图标画出来 —— 是我们自己注册的，不靠那份名单'
+  );
+  assert.deepEqual(
+    [...legacy.map((el) => String(el.textContent))],
+    ['⌁', '', '', '', '▱'],
+    '认不出的通用图标仍回落文本符号（这里是「默认音源」与「本地音源」两块）'
+  );
+});
+
 // ============ 设置面板与「关于」页：esbuild + 假 DOM ============
 // 面板整块自绘，所以能在这个假 DOM 上跑：Setting 顶成链式桩（控件回调不触发，
 // 验的是行的装配与标签切换），「关于」页的文本部分是纯 DOM 构建，直接驱动。
@@ -1305,6 +1339,7 @@ function settingsModule(extra = null) {
           FuzzySuggestModal: class {},
           normalizePath: (p) => p,
           setIcon: () => {},
+          addIcon: () => {},
           requestUrl: async () => ({}),
           ...(extra || {}), // 放最后：用例要用真实行为覆盖某个导出（如 setIcon / getIconIds）
         };

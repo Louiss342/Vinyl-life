@@ -1,6 +1,5 @@
-// 本地音频的内嵌标签解析（core/audio-tags）：合成字节 → 断言解析结果。
-// 为什么用合成数据而不是真音频文件：这里要验的是**字节搬运**（帧长 / 编码 / 大小写 / 版本差异），
-// 合成出来的边界比真文件更好摆 —— 比如 UTF-16 带 BOM、2.2 的 3 字节帧 ID、syncsafe 长度。
+// 本地音频的内嵌标签解析（core/audio-tags）：合成字节 → 断言解析结果。用合成数据而非真文件：
+// 这里验的是**字节搬运**（帧长 / 编码 / 大小写 / 版本差异），边界比真文件好摆 —— UTF-16 带 BOM、2.2 的 3 字节帧 ID、syncsafe 长度。
 // 覆盖：ID3v2.3（UTF-8 / UTF-16）、ID3v2.2、ID3v2.4（syncsafe）、FLAC、Ogg Vorbis、Opus、MP4（含 trkn）。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -24,8 +23,7 @@ vm.runInNewContext(source, {
 });
 const { parseAudioTags, audioTagReadHint } = mod.exports;
 
-// 沙箱里造出来的对象带着另一个 realm 的原型，strict deepEqual 会判「结构相同但引用不同」——
-// 先过一遍 JSON 归一（与 stats 用例里的 plain 同一个做法）
+// 沙箱对象带另一个 realm 的原型，strict deepEqual 会判「结构相同但引用不同」—— 先 JSON 归一（同 stats 用例）
 const plain = (v) => JSON.parse(JSON.stringify(v));
 
 /** 拼字节：字符串按字符码、数字按字节、嵌套数组递归摊平（Uint8Array.from 不会自己摊） */

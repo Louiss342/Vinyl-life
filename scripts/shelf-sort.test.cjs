@@ -1,5 +1,5 @@
 // 专辑墙排序回归：依据顺序 / 状态机（换依据 / 换方向 / 换属性）/ 方向文案（含中英）/ 比较器。
-// 工具栏方案 2026-09-18：依据与方向是两个独立下拉（不再靠重复点击翻转）；缺失排序属性一律排最后。
+// 依据与方向是两个独立下拉（旧交互才是靠重复点击翻转，已废）；缺失排序属性一律排最后。
 // esbuild 从真实 TS 编译进 node:vm（stub obsidian），不改 vault、不依赖 Obsidian 运行。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');

@@ -19,7 +19,6 @@ const NETEASE_URL = 'https://music.163.com/#/album?id=437968';
 const QQ_MID = '004VSvF52mQoQp';
 const QQ_URL = `https://y.qq.com/n/ryqq/albumDetail/${QQ_MID}`;
 
-// —— 极简 frontmatter 读取（只取本用例关心的键）——
 function readFm(content) {
   const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(String(content || ''));
   if (!m) return {};
@@ -92,8 +91,7 @@ function setup() {
   };
   const app = {
     vault,
-    // importLocalAudio 落库后要写 frontmatter（本地导入用例依赖）。
-    // 已有 _fm 就当它是笔记现成的 frontmatter（真 processFrontMatter 拿到的就是那一份）。
+    // importLocalAudio 落库后写 frontmatter；已有 _fm 就当它是笔记现成的 frontmatter（真 processFrontMatter 拿到的就是那份）。
     fileManager: {
       processFrontMatter: async (file, fn) => {
         const fm = file._fm || {};
@@ -109,7 +107,6 @@ function setup() {
     },
   };
 
-  // 稳定的设置对象（测试可改，如 albumNoteTemplate）
   const settings = {
     albumFolder: 'Vinyl Life/Vinyl Note',
     coverFolder: 'Vinyl Life/covers',
@@ -219,8 +216,6 @@ function setup() {
   return { mod, ctx, files, folders, binaries, calls, app, settings, kugouAlbum };
 }
 
-// ============ 链接识别 ============
-
 test('parseAlbumInput：网易云链接 / 纯数字 ID', () => {
   const h = setup();
   assert.deepEqual({ ...h.mod.parseAlbumInput(NETEASE_URL) }, { source: 'netease', id: 437968 });
@@ -244,8 +239,6 @@ test('parseAlbumInput：无法识别时返回 undefined', () => {
     assert.equal(h.mod.parseAlbumInput(bad), undefined, `不应识别：${bad}`);
   }
 });
-
-// ============ 派发与建笔记 ============
 
 test('本地导入：不支持的格式 / 已存在 分开计数（不再混为「跳过重复」）', async () => {
   const h = setup();
@@ -356,7 +349,6 @@ test('模板：可用设置指定的模板文件（占位符替换 + 落空行�
   assert.doesNotMatch(c, /\{\{/, '不得残留占位符');
   assert.match(c, /## 感想/, '模板正文保留');
 
-  // 外链模式：{{audioFolder}} 落空 → 整行被清掉，其他字段保留
   const h2 = setup();
   h2.files.set(
     '模板/album.md',
@@ -489,8 +481,6 @@ test('导入专辑：纯 mid / 旧版链接同样可导入', async () => {
   );
 });
 
-// ============ 封面图床回退（y.gtimg.cn 不可达的机器） ============
-
 const QQ_COVER = `https://y.gtimg.cn/music/photo_new/T002R300x300M000${QQ_MID}.jpg`;
 const QQ_COVER_MIRROR = `https://y.qq.com/music/photo_new/T002R300x300M000${QQ_MID}.jpg`;
 
@@ -524,16 +514,13 @@ test('导入专辑：两个图床都失败 → 专辑照建、不留 cover 字�
   assert.equal(res.ok, true, '封面失败不影响专辑建好：' + res.detail);
   const note = h.files.get('Vinyl Life/Vinyl Note/未完成.md');
   assert.ok(note, '应建立专辑笔记');
-  // 1.3.0 起笔记走模板：内置模板里有一个空的 cover 字段（属性面板点进去就能填），
-  // 所以这里锁的是「不写封面**引用**」—— 空字段可以留，坏值 / 半截值不能留
+  // 1.3.0 起笔记走模板：模板里本来就有个空的 cover 字段，所以这里锁的是「不写封面**引用**」—— 空字段可留，坏值 / 半截值不能留
   assert.doesNotMatch(note._content, /^cover:\s*[^\s"']/m, '拿不到图就不写封面引用');
   assert.equal(h.calls.covers.length, 2, '两个候选都试过才放弃');
   assert.equal(h.calls.notices.length, 1, '失败必须可见（一条 Notice）');
   assert.match(h.calls.notices[0], /封面下载失败/);
   assert.match(h.calls.notices[0], /连接失败或超时/, '提示里要带原因');
 });
-
-// ============ 查重 ============
 
 test('导入专辑：已存在同 qqId 的笔记 → 指路而不新建', async () => {
   const h = setup();
@@ -558,8 +545,6 @@ test('导入专辑：已存在同 neteaseId 的笔记 → 指路而不新建（�
   assert.equal(res.ok, false);
   assert.match(res.detail, /已存在/);
 });
-
-// ============ 失败路径 ============
 
 test('导入专辑：无法识别的链接 → 提示两种来源，不建笔记', async () => {
   const h = setup();
@@ -591,8 +576,6 @@ test('导入专辑：接口抛错 → 中文失败信息，不建笔记', async 
   assert.match(res.detail, /获取专辑失败/);
   assert.equal(h.files.size, 0);
 });
-
-// ============ 酷狗音乐（第三来源） ============
 
 const KUGOU_ID = '12345678';
 const KUGOU_URL = `https://www.kugou.com/yy/album/single/${KUGOU_ID}.html`;

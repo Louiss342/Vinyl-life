@@ -1,6 +1,5 @@
-// 轻量 i18n：模块级当前语言 + 字典查表（插件设置里切换，默认中文）。
-// 覆盖面：专辑墙、播放器、各弹窗（导入 / 登录 / 删除 / 统计 / 封面）、设置面板、命令名与提示。
-// 约定：t() 在渲染 / 事件发生时求值（不要写进模块级常量，否则切换语言后不会变）。
+// 轻量 i18n：模块级当前语言 + 字典查表（设置里切换，默认中文）；覆盖专辑墙、播放器、
+// 各弹窗、设置面板、命令名与提示。约定：t() 必须在渲染 / 事件发生时求值 —— 抄进模块级常量就定死语言了。
 export type Lang = 'zh' | 'en';
 
 export const LANGUAGES: Array<{ value: Lang; label: string }> = [
@@ -10,7 +9,7 @@ export const LANGUAGES: Array<{ value: Lang; label: string }> = [
 
 export const DICT: Record<string, { zh: string; en: string }> = {
   // —— 专辑墙：排序 / 筛选 ——
-  // 排序依据名；方向词见 sort.dir.*（A-Z / Z-A 两语言一致，不进词典，见 core/shelf-sort.ts）
+  // 排序依据名；方向词在 sort.dir.*（A-Z / Z-A 两语言同形故不进词典，见 core/shelf-sort.ts）
   'sort.title': { zh: '专辑名称', en: 'Album title' },
   'sort.artist': { zh: '作者名称', en: 'Artist' },
   'sort.year': { zh: '发行日期', en: 'Release date' },
@@ -18,12 +17,7 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'sort.rating': { zh: '评分', en: 'Rating' },
   'sort.recent': { zh: '最近播放', en: 'Recently played' },
   'sort.custom': { zh: '自定义排序依据', en: 'Custom sort' },
-  'sort.customLabel': { zh: '自定义排序依据：{name}[{dir}]', en: 'Custom: {name}[{dir}]' },
-  'sort.noProps': {
-    zh: '专辑笔记里还没有可排序的属性',
-    en: 'No sortable properties on your album notes yet',
-  },
-  // 方向词（工具栏方案：给具体动作，不再是「早-晚」这种两头式）
+  // 方向词给具体动作，不做「早-晚」这种两头式（工具栏方案）
   'sort.dir.newestFirst': { zh: '最新在前', en: 'Newest first' },
   'sort.dir.earliestFirst': { zh: '最早在前', en: 'Earliest first' },
   'sort.dir.mostFirst': { zh: '最多在前', en: 'Most first' },
@@ -39,14 +33,12 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'filter.qq': { zh: 'QQ 音乐', en: 'QQ Music' },
   'filter.kugou': { zh: '酷狗音乐', en: 'Kugou Music' },
   'filter.collect': { zh: '仅收藏（无音源）', en: 'Collection only (no source)' },
-  // 分段控件里放得下的短名（完整名字仍在 aria-label 上）：陈列的「来源」与添加的「搜索来源」
-  // 共用这一组 —— 两处是同一个控件，联动：只加长一处会立刻显出「一个控件两种叫法」。
-  // 「QQ」不在这里：中英同形的品牌名不建键（见本文件与 i18n.test 的全量自检口径），
-  // 它由 track.ts 的 sourceShortName 统一给出。
+  // 分段控件的短名（全名仍在 aria-label 上）：陈列「来源」与添加「搜索来源」是同一个控件，
+  // 这组键要一起改。「QQ」中英同形不建键（全量自检见 i18n.test），由 track.ts 的 sourceShortName 给出。
   'filter.collectShort': { zh: '仅收藏', en: 'Collect' },
   'filter.kugouShort': { zh: '酷狗', en: 'Kugou' },
 
-  // —— 专辑墙：视图标题 / 工具栏（工具栏方案 2026-09-18：单行，按钮只留图标） ——
+  // —— 专辑墙：视图标题 / 工具栏（单行，按钮只留图标） ——
   'shelf.title': { zh: '专辑墙', en: 'Album shelf' },
   'shelf.heading': { zh: '我的唱片', en: 'My records' },
   // 标题与数量同行：数量用手绘体；有搜索 / 来源筛选时改报「匹配数/总数」
@@ -56,15 +48,8 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'toolbar.display': { zh: '陈列', en: 'Display' },
   'toolbar.add': { zh: '添加', en: 'Add' },
   'toolbar.more': { zh: '更多', en: 'More' },
-  // 陈列：非「全部」的筛选要在单行工具栏里保持可见（按钮图标后面跟一个来源名）
+  // 陈列：非「全部」的筛选在单行工具栏里要保持可见（图标后跟来源名）
   'toolbar.displayFiltered': { zh: '陈列 · {source}', en: 'Display · {source}' },
-  'shelf.refresh': { zh: '刷新', en: 'Refresh' },
-  'shelf.batchDelete': { zh: '批量删除', en: 'Batch delete' },
-  'shelf.empty.title': { zh: '还没有专辑笔记', en: 'No album notes yet' },
-  'shelf.empty.hint': {
-    zh: '新建笔记并写入 frontmatter：tags: [album] + cover / artist / year… 即可上墙；也可用工具栏「添加」从网易云或本地音频起步。',
-    en: 'Create a note with frontmatter tags: [album] plus cover / artist / year… to put it on the shelf, or start with Add in the toolbar.',
-  },
   // —— 专辑墙：空态教程（文案取自 Excalidraw 设计稿 Drawing 2026-09-15 14.14.52）——
   'shelf.tutorial.title': { zh: 'Enjoy Your Vinyl Life！！！', en: 'Enjoy Your Vinyl Life!!!' },
   'shelf.tutorial.emptyTitle': { zh: '现在的专辑墙还什么都没有哦0.o', en: 'The album wall is still empty 0.o' },
@@ -165,9 +150,9 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'menu.openNote': { zh: '打开笔记', en: 'Open note' },
   'menu.importAudio': { zh: '导入本地音频…', en: 'Import local audio…' },
   'menu.setCover': { zh: '设置封面…', en: 'Set cover…' },
-  // 评分：菜单项与弹窗标题共用一个键；弹窗里的输入提示与校验文案另两个
+  // 评分：菜单项与弹窗标题共用一键，输入提示与校验文案另有两个
   'menu.rating': { zh: '评分', en: 'Rating' },
-  // 评分弹窗：自由填数字（用户 2026-09-26 定稿），留空 = 清除
+  // 评分弹窗：自由填数字（2026-09-26 定稿），留空 = 清除
   'rating.placeholder': { zh: '填一个数字，留空则清除', en: 'Type a number; leave it empty to clear' },
   'rating.invalid': { zh: '请输入一个数字（例如 4 或 4.5）', en: 'Please type a number (for example 4 or 4.5)' },
   'menu.openNetease': { zh: '在网易云打开', en: 'Open in NetEase' },
@@ -176,7 +161,7 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'menu.deleteAlbum': { zh: '删除专辑…', en: 'Delete album…' },
 
   // —— 音源显示名 / 音质档（队列行角标 · 播放器音质读数） ——
-  // 三处取值都来自函数调用（track.ts / queue.ts），切语言后立即生效；别抄进模块级常量表。
+  // 取值都走函数调用（track.ts / queue.ts），切语言立即生效 —— 别抄进模块级常量表。
   'src.netease': { zh: '网易云', en: 'NetEase' },
   'src.qq': { zh: 'QQ音乐', en: 'QQ Music' },
   'src.kugou': { zh: '酷狗音乐', en: 'Kugou Music' },
@@ -252,10 +237,10 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     zh: '正在同时搜索网易云音乐、QQ 音乐和酷狗音乐…',
     en: 'Searching NetEase, QQ Music and Kugou Music…',
   },
-  // 单源搜索（「搜索来源」选了网易云或 QQ）：不再说「同时搜索」
+  // 单源搜索（选了网易云 / QQ）：不说「同时搜索」
   'import.searchingOne': { zh: '正在搜索{source}…', en: 'Searching {source}…' },
   'import.searchFound': { zh: '找到 {n} 张专辑', en: 'Found {n} album(s)' },
-  // 已在库中的（同平台同 id）照常出现在结果里、就地标「已在收藏」：这里如实报一声有几张
+  // 已在库中（同平台同 id）的照常出现在结果里、就地标「已在收藏」，这里报一声有几张
   'import.searchFoundOwned': {
     zh: '找到 {n} 张专辑（其中 {m} 张已在收藏）',
     en: 'Found {n} album(s) — {m} already in your library',
@@ -268,7 +253,7 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     zh: '库中有一张同名专辑（平台不同，可继续添加）',
     en: 'A same-name album is in your library (different platform — you can still add)',
   },
-  // 结果池与翻页：先本地展开（不花网络），展开完了再向上游要下一页
+  // 结果池与翻页：先本地展开（不花网络），展开完再向上游要下一页
   'import.showMore': { zh: '显示更多（还有 {n} 张）', en: 'Show more ({n} left)' },
   'import.loadMore': { zh: '加载更多', en: 'Load more' },
   'import.loadingMore': { zh: '正在加载…', en: 'Loading…' },
@@ -294,7 +279,7 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     zh: '没有找到专辑（{sources} 暂时不可用：{reason}）。',
     en: 'No albums found ({sources} unavailable: {reason}).',
   },
-  // 被上游限流时这一来源会冷却一会儿，这一轮根本不发请求 —— 得如实说，不然会被当成「没结果」
+  // 冷却期内这一来源根本不发请求：得如实说，否则会被当成「没结果」
   'import.sourceCoolingDown': {
     zh: '触发接口限流，{n} 秒内暂停搜索该来源',
     en: 'rate-limited — this source is paused for {n}s',
@@ -306,7 +291,7 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'import.sourceNetease': { zh: '网易云', en: 'NetEase' },
   'import.sourceQq': { zh: 'QQ 音乐', en: 'QQ Music' },
   'import.sourceKugou': { zh: '酷狗音乐', en: 'Kugou Music' },
-  // 搜索来源（「添加」面板搜索框下的分段控件）：聚合 / 仅网易云 / 仅 QQ / 仅酷狗
+  // 搜索来源：添加面板搜索框下的分段控件（与陈列的「来源」同形）
   'import.searchScope': { zh: '搜索来源', en: 'Search source' },
   'import.scopeAll': { zh: '聚合', en: 'All' },
   'import.scopeAllHint': {
@@ -333,7 +318,6 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'add.localHint': { zh: '将本地音频拖到这里，或', en: 'Drop local audio here, or' },
   'add.chooseFiles': { zh: '选择文件', en: 'Choose files' },
   'add.back': { zh: '返回添加', en: 'Back to Add' },
-  // 新专辑不在当前视野里时的回执（看得见的那张贴边走边闪，不用打扰）
 
   // —— 导入弹窗：本地音频导入 ——
   'import.localTitle': { zh: '导入本地音频', en: 'Import local audio' },
@@ -469,7 +453,7 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     en: 'Imported "{name}" ({artist}{year}{tracks})',
   },
   'import.kugouTracks': { zh: '，{n} 曲', en: ', {n} track(s)' },
-  // 封面下载彻底失败（含备用图床）时的可见提示：专辑照常建好，只有封面要用户知道
+  // 封面下载彻底失败（含备用图床）：专辑照常建好，只有封面要用户知道
   'import.coverFailed': {
     zh: '封面下载失败（{msg}），可在专辑卡片右键手动设置封面',
     en: 'Cover download failed ({msg}) — you can set a cover from the album card later',
@@ -518,14 +502,12 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'delete.failed': { zh: '删除失败：{msg}', en: 'Delete failed: {msg}' },
 
   // —— 播放统计页 ——
-  'stats.total': { zh: '共播放 {n} 次', en: '{n} plays in total' },
   'stats.recent': { zh: '最近播放', en: 'Recently played' },
   'stats.top': { zh: '播放最多', en: 'Most played' },
   'stats.noRecords': { zh: '暂无记录', en: 'No records yet' },
   'stats.plays': { zh: '{n} 次', en: '{n} plays' },
   'stats.totalLabel': { zh: '累计播放', en: 'Total plays' },
-  // 累计播放行的手写体小字（Drawing 2026-09-17 16.15.55）：数字放大、单位是小字。
-  // 英文用「·」把两组分开（中文靠空白分隔，见 styles.css 的 .vinyl-stats-hand）。
+  // 手写体小字（数字放大、单位小字）；英文用「·」分组，中文靠空白（见 styles.css 的 .vinyl-stats-hand）
   'stats.unitPlays': { zh: '次播放', en: 'plays' },
   'stats.unitListened': { zh: '听过', en: '· listened to' },
   'stats.unitAlbums': { zh: '张专辑', en: 'albums' },
@@ -562,8 +544,7 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'stats.exportNote': { zh: '一键导出为笔记', en: 'Export as note' },
   'stats.exportedNotice': { zh: '已导出统计：{path}', en: 'Statistics exported: {path}' },
   'stats.exportFile': { zh: 'Vinyl Life 播放统计 {date}', en: 'Vinyl Life playback statistics {date}' },
-  // 导出笔记的骨架：摘要 callout / 各分区标题与表头（表格用 Markdown 管道表 + 字符柱状）。
-  // 不设 H1：笔记标题就是文件名；落点目录固定英文 Stats，不进词典（不随语言变）
+  // 导出笔记骨架：管道表 + 字符柱状；不设 H1（文件名即标题）、落点目录固定英文 Stats，不进词典
   'stats.exportTitle': { zh: '我的听歌统计', en: 'My listening statistics' },
   'stats.exportSummary': {
     zh: '**{plays}** 次播放 · **{albums}** 张专辑 · **{tracks}** 首曲目 · 记录了 **{days}** 天',
@@ -649,7 +630,7 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     en: 'QR check failed: {msg}. Retrying — you can also refresh the QR code.',
   },
 
-  // —— 登录弹窗：音源文案（网易云） ——
+  // —— 登录弹窗：各音源文案（网易云 / QQ 音乐 / 酷狗音乐） ——
   'login.netease.title': { zh: '网易云登录', en: 'NetEase sign-in' },
   'login.netease.appHint': { zh: '请用网易云音乐 App 扫码', en: 'Scan with the NetEase Cloud Music app' },
   'login.netease.noSessionHint': {
@@ -657,14 +638,12 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     en: '❌ Authorized but no valid session was issued (anonymous device registration may be rate-limited by NetEase). Wait a moment, then refresh the QR code and try again.',
   },
 
-  // —— 登录弹窗：音源文案（QQ 音乐） ——
   'login.qq.title': { zh: 'QQ 音乐登录', en: 'QQ Music sign-in' },
   'login.qq.appHint': {
     zh: '请用手机 QQ 扫码（此为 QQ 互联二维码，QQ 音乐 App 的「扫一扫」识别不了）',
     en: 'Scan with mobile QQ (this is a QQ Connect QR code — the QQ Music app scanner cannot read it)',
   },
 
-  // —— 登录弹窗：音源文案（酷狗音乐） ——
   'login.kugou.title': { zh: '酷狗音乐登录', en: 'Kugou Music sign-in' },
   'login.kugou.appHint': {
     zh: '请用酷狗音乐 App 扫码（未登录也能搜到并播放免费曲目，登录后解锁会员音质与付费曲目）',
@@ -779,7 +758,7 @@ export const DICT: Record<string, { zh: string; en: string }> = {
 
   // —— 设置面板：关于 ——
   // 只有「壳」文案进词典（标签名 / 版本行 / 许可行）；作者手记正文是原文常量
-  // （src/core/about.ts 的 ABOUT_TEXT），不翻译、不进词典 —— 别抄进来。
+  // （src/core/about.ts 的 ABOUT_TEXT），别抄进来。
   'settings.tab.about': { zh: '关于', en: 'About' },
   'settings.aboutVersion': { zh: '版本 {v}', en: 'Version {v}' },
   'settings.aboutLicense': { zh: 'MIT 许可证', en: 'MIT License' },
@@ -794,7 +773,7 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     en: 'Insert the currently playing track',
   },
   'cmd.ribbonShelf': { zh: 'Vinyl Life 专辑墙', en: 'Vinyl Life album shelf' },
-  // 新增命令（core/commands.ts）：此前这些动作只有鼠标路径
+  // 这些动作此前只有鼠标路径（core/commands.ts）
   'cmd.appendNote': { zh: '写听歌记录到当前专辑笔记', en: 'Append a listening entry to the playing album' },
   'cmd.setCover': { zh: '给当前专辑设置封面', en: 'Set the cover of the playing album' },
   'cmd.openInSource': { zh: '在源站打开当前专辑', en: 'Open the playing album on its source site' },
@@ -854,7 +833,7 @@ export const DICT: Record<string, { zh: string; en: string }> = {
     zh: '写入「{name}」失败：{msg}',
     en: 'Could not write to "{name}": {msg}',
   },
-  // 插入此刻正在听：行文案（插进当前笔记，语法随语言变 → 用 tf 占位符拼）
+  // 插入此刻正在听的行文案：语法随语言变，用 tf 占位符拼
   'notice.nowPlayingLine': {
     zh: '此刻正在听《{album}》的《{track}》',
     en: 'Now playing: {track} — {album}',
@@ -911,7 +890,7 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'util.restrictionUnavailable': { zh: '音源不可用', en: 'Source unavailable' },
 
   // —— 专辑队列模式（播放器顶部开关 + 队列分组）——
-  // 播放模式（播放器顶部按钮）：队列模式下作用于整条列表，否则作用于当前专辑
+  // 播放模式：队列模式下作用于整条列表，否则只作用于当前专辑
   'player.modeOnceAlbum': { zh: '单次播放整张专辑', en: 'Play the album once' },
   'player.modeLoopAlbum': { zh: '循环播放整张专辑', en: 'Repeat the album' },
   'player.modeShuffleAlbum': { zh: '随机播放整张专辑的曲目', en: 'Shuffle the album’s tracks' },
@@ -1058,6 +1037,11 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   },
   'gateway.notReady': { zh: '网关 15s 未就绪', en: 'The gateway did not become ready within 15s' },
   'gateway.exitCodeUnknown': { zh: '未知', en: 'unknown' },
+  // 起不来时的统一出口（main.ts 的 server.onFailure）：带上具体原因，并说明本地音频不受影响
+  'gateway.unavailable': {
+    zh: '在线音源暂不可用：{msg}（本地音频不受影响）',
+    en: 'Online sources are unavailable: {msg} (local audio is unaffected)',
+  },
   'gateway.tempWriteFailed': {
     zh: '无法写入网关临时文件（{file}）：{msg}。在线音源（网易云 / QQ 音乐 / 酷狗音乐）不可用，本地源不受影响；请检查系统临时目录权限。',
     en: 'Could not write the gateway temp file ({file}): {msg}. Online sources (NetEase / QQ Music / Kugou Music) are unavailable; local audio is unaffected — check permissions on the system temp folder.',
@@ -1124,7 +1108,7 @@ export const DICT: Record<string, { zh: string; en: string }> = {
   'stats.exportFailed': { zh: '导出统计失败：{msg}', en: 'Could not export statistics: {msg}' },
   'stats.clearFailed': { zh: '清除统计失败：{msg}', en: 'Could not clear statistics: {msg}' },
   'backup.restartNotice': { zh: '备份已恢复。请重启 Obsidian 后再继续使用 Vinyl Life。', en: 'Backup restored. Restart Obsidian before using Vinyl Life again.' },
-  // 恢复之后到重启之前是「写不进去」的状态：常驻警示（一条几秒的 Notice 兜不住用户接着用几小时）
+  // 恢复后到重启前是「写不进去」的状态：要常驻警示（一条几秒的 Notice 兜不住用户接着用几小时）
   'backup.restartBanner': {
     zh: '已恢复备份：重启 Obsidian 之前，新的播放记录与设置改动都不会被保存。',
     en: 'Backup restored: until you restart Obsidian, new play events and setting changes are not saved.',
@@ -1222,7 +1206,7 @@ export function t(key: string): string {
   return entry[current] || entry.zh;
 }
 
-/** 带占位符的查表：值里的 {name} 用 vars 替换（缺键 / 缺变量时原样保留） */
+/** 带占位符的查表：值里的 {name} 用 vars 替换（缺键 / 缺变量时原样保留占位符） */
 export function tf(key: string, vars: Record<string, string | number>): string {
   return t(key).replace(/\{(\w+)\}/g, (m, k: string) =>
     vars[k] == null ? m : String(vars[k])

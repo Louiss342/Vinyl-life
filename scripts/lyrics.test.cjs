@@ -1,10 +1,7 @@
-// 歌词纯逻辑回归（解析 / 定位 / 滚动计划 / 景深 / 行内推进）：
-//   ① LRC 的坑：元数据行、一行多时间戳、小数位 1/2/3 位、乱序、间奏空行、翻译配对
-//   ② 定位必须用二分（每帧都要问一次），边界是「最后一条 at ≤ t」
-//   ③ 连续滚动：两行之间的全部时间都在走（没有静止期）、线性且单调、速度跟着行距走
-//   ④ 景深档位：离当前行多远、封顶、还没唱到第一行时的口径
-// 注：vm 里 map 出来的数组 / 字面量对象原型与测试 realm 不同，deepStrictEqual 会假红 ——
-// 一律走 Array.from / 展开后再比。
+// 歌词纯逻辑回归（A 解析 / A2 偏移 / A3 解码 / B 定位 / C 连续滚动 / C2 景深 / C3 视觉中心 / D 行内推进）。
+// 口径：解析要认元数据行、一行多时间戳、1/2/3 位小数、乱序、间奏空行与翻译配对；定位用二分（每帧都要问一次），
+// 边界是「最后一条 at ≤ t」；连续滚动两行之间一直在走（没有静止期）、线性且单调、速度跟着行距走；景深按离当前行距离分档并封顶。
+// 注：vm 里 map 出来的数组 / 字面量对象原型与测试 realm 不同，deepStrictEqual 会假红 —— 一律走 Array.from / 展开后再比。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -95,8 +92,6 @@ test('解析：整篇没有时间戳 → 空（宁可不显示，也不要一行
   }
 });
 
-// ============ A2. 全局偏移（[offset:]） ============
-
 test('偏移：正值 = 整篇提前（每行时间戳减去 offset）', () => {
   const lines = parseLrc('[offset:+500]\n[00:10.00]甲\n[00:20.00]乙');
   assert.deepEqual(
@@ -137,8 +132,6 @@ test('偏移：没有这条标签就是 0；翻译跟主歌词共用同一份偏
     '翻译与主歌词共用一份偏移 —— 各减各的会因时间戳不再全等而整篇配不上'
   );
 });
-
-// ============ A3. 字节解码（本地 .lrc） ============
 
 const gbkOk = (() => {
   try {
@@ -196,13 +189,12 @@ test('连续滚动：两行之间一直在走，走到下一行时刻正好落�
   assert.ok(Math.abs(plan.progress - 0.2) < 1e-9, `进度 = 已唱时间占行距的比例（实际 ${plan.progress}）`);
   assert.equal(scrollPlan(L, 5000).progress, 0, '行首：正好停在当前行上');
   assert.ok(scrollPlan(L, 10000 - 0.001).progress > 0.999, '行尾：已经走到了下一行');
-  // 关键差别（旧版是「换行前的窗口里才动、其余时间静止」）：行中间任意时刻都在走
+  // 关键差别：行中间任意时刻都在走（旧口径是「只在换行前的窗口里动」，已废）
   assert.ok(scrollPlan(L, 5200).progress > scrollPlan(L, 5100).progress, '行中间也在走');
 });
 
 test('连续滚动：线性且单调 —— 匀速、不会回弹', () => {
-  // progress 到换行会归零（换的是「从哪一行走到哪一行」），所以单调要看**像素位置**：
-  // 位置 = 从当前行中心走到下一行中心，视图就是这么插值的。行距 40px 的假像素位置。
+  // progress 到换行会归零（换的是「从哪一行走到哪一行」），所以单调要看**像素位置**：位置 = 从当前行中心走到下一行中心（视图就是这么插值的），行距按 40px 假像素算。
   const px = (i) => i * 40;
   const posAt = (t) => {
     const p = scrollPlan(L, t);
@@ -216,7 +208,6 @@ test('连续滚动：线性且单调 —— 匀速、不会回弹', () => {
   }
   assert.equal(posAt(5000), px(1), '行首正好在当前行中心');
   assert.equal(posAt(10000), px(2), '换行那一刻正好落在下一行中心（位置连续，不会跳）');
-  // 线性（不做缓动）：同一段行距里，等长时间走出等长距离
   const d1 = scrollPlan(L, 7000).progress - scrollPlan(L, 6000).progress;
   const d2 = scrollPlan(L, 9000).progress - scrollPlan(L, 8000).progress;
   assert.ok(Math.abs(d1 - d2) < 1e-9, '匀速 —— 缓动会在两端停下来，那正是要取消的静止期');
@@ -224,8 +215,8 @@ test('连续滚动：线性且单调 —— 匀速、不会回弹', () => {
 });
 
 test('连续滚动：短句走得快、长句走得慢（速度跟着歌唱走）', () => {
-  const fast = parseLrc('[00:00.00]一\n[00:00.60]二'); // 行距 600ms
-  const slow = parseLrc('[00:00.00]一\n[00:12.00]二'); // 行距 12s
+  const fast = parseLrc('[00:00.00]一\n[00:00.60]二');
+  const slow = parseLrc('[00:00.00]一\n[00:12.00]二');
   assert.ok(Math.abs(scrollPlan(fast, 100).progress - 100 / 600) < 1e-9);
   assert.ok(Math.abs(scrollPlan(slow, 100).progress - 100 / 12000) < 1e-9);
   assert.ok(
@@ -253,8 +244,6 @@ test('连续滚动：两行同一时刻 → 直接落位（行距为 0 不能除
   assert.ok(Number.isFinite(plan.progress));
 });
 
-// ============ C2. 景深档位 ============
-
 test('景深：离当前行多远（0 = 正在唱），唱过的与没唱的对称', () => {
   assert.equal(lineDepth(3, 3), 0, '正在唱的那一行');
   assert.equal(lineDepth(4, 3), 1);
@@ -270,11 +259,8 @@ test('景深：还没唱到第一行时，把第 0 行当作当前行', () => {
   assert.equal(lineDepth(99, -1), MAX_LYRIC_DEPTH);
 });
 
-// ============ C3. 视觉中心（滚动位置 → 画面正中是第几行） ============
-
 test('视觉中心：取离容器正中最近的那一行', () => {
-  const off = [60, 100, 140, 180]; // 各行中心的像素位置（升序）
-  // 容器高 200 → 中心 = scrollTop + 100
+  const off = [60, 100, 140, 180]; // 各行中心像素位置（升序）；容器高 200 → 中心 = scrollTop + 100
   assert.equal(centerLineIndex(off, 0, 200), 1, '中心 100 正对第 2 行');
   assert.equal(centerLineIndex(off, 20, 200), 1, '中心 120：两行等距 → 取上面那一行（手往下滚时中心不该先跳）');
   assert.equal(centerLineIndex(off, 21, 200), 2, '中心 121：下面那行更近了');

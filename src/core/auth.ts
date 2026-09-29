@@ -1,6 +1,4 @@
-// 登录态与 Cookie 管理：
-//   扫码 803 → 网关验证后落盘 .cookie（登录只有这一条路径）。
-//   凭据仅存本机插件目录，不进笔记/日志/git。
+// 登录态与 Cookie 管理：扫码 803 → 网关验证后落盘 .cookie（登录只有这一条路径）；凭据仅存本机插件目录，不进笔记/日志/git。
 import { Plugin } from 'obsidian';
 import * as fs from 'fs';
 import { ServerManager } from './server-manager';

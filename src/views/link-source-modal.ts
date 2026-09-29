@@ -1,10 +1,8 @@
 // 关联已有：把一张在线搜索结果挂到库里的某篇专辑笔记上（只写平台 id，不动正文）。
 //
-// 评审意见两条都落在这里：
-//   ① 候选要挑得动 —— 显示艺人 / 发行日期 / 本地曲目数，按相似度排序（同名版本排一起），
-//      另给一个模糊搜索框（大库里靠下拉框翻是翻不到的）；
-//   ② 选错版本代价大 —— 左右并排：左边是搜索结果（上游专辑），右边是选中的目标笔记，
-//      确认前把两边的艺人 / 年份 / 版本 / 已有音源摆在一起看。
+// 两条评审意见落在这里：① 候选要挑得动 —— 显示艺人 / 发行日期 / 本地曲目数、按相似度排序（同名版本排一起），
+// 另给模糊搜索框（大库里靠下拉翻是翻不到的）；② 选错版本代价大 —— 左右并排对照上游专辑与目标笔记的
+// 艺人 / 年份 / 版本 / 已有音源，确认前先看见。
 import { App, Modal, TFile } from 'obsidian';
 import { AlbumInfo, detectAlbumSources, findAlbumNotes, getAlbumInfo } from '../core/album-index';
 import { AlbumSearchCandidate, fuzzyMatches, rankLibraryMatches } from '../core/album-discovery';
@@ -109,7 +107,6 @@ export class LinkSourceModal extends Modal {
     return sourceName(this.candidate.source);
   }
 
-  /** 左栏：搜索结果本身（拿它和右栏的目标笔记对照版本） */
   private renderSourcePane(pane: HTMLElement): void {
     const c = this.candidate;
     pane.createDiv({ cls: 'vinyl-link-pane-title', text: t('link.sourceAlbum') });

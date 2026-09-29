@@ -1,8 +1,6 @@
 // 专辑删除回归：esbuild 编译真实 src/delete.ts（连带 album-index 的 frontmatter 解析）后在 vm 执行
-// （stub obsidian + 假 vault）。覆盖：可删资产盘点（音频文件夹 / 零散文件 / 封面）、
-// 其他专辑引用保护（含子目录嵌套，以及「本专辑文件落在别人音频文件夹里」这两种方向）、
-// 外链路径不删、勾选项关闭时不动作、文件夹内文件不重复删除；
-// 以及批量删除（专辑墙工具栏入口）：同批专辑互相视为不存在，共用资源可删、批外引用仍受保护。
+// （stub obsidian + 假 vault）。覆盖单张盘点/执行（文件夹 / 零散文件 / 外链 / 封面各归其位，其他专辑引用保护：
+// 子目录嵌套 + 「本专辑文件落在别人音频文件夹里」两个方向，勾选关闭不动作）与批量删除（批内互视为不存在）。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -164,7 +162,7 @@ test('盘点：文件夹 / 零散文件 / 外链 / 封面各归其位，文件�
 test('安全：文件夹内混有非音频文件 → 只删音频、文件夹保留', () => {
   const h = setup();
   const note = seedAlbumA(h);
-  h.addFile(`${AUDIO_DIR}/notes.pdf`, {}); // 用户的非音频文件混在专辑音频目录里
+  h.addFile(`${AUDIO_DIR}/notes.pdf`, {});
   const t = h.mod.collectAlbumDeleteTargets(h.app, h.albumOf(note));
 
   assert.deepEqual(Array.from(t.audioFolders), [], '混有非音频文件时不做整目录删除');
@@ -198,7 +196,6 @@ test('音源检测：音频在子目录里也算本地音源（多碟专辑导�
 
 test('封面自动识别：音频文件夹内的约定图 / 封面目录同名图；显式 cover 优先', () => {
   const h = setup();
-  // ① 音频文件夹里的 cover.jpg
   const inside = h.addFile('Vinyl Life/audio/A/cover.jpg', {});
   const noteA = h.addFile('Vinyl Life/Vinyl Note/A.md', {
     tags: ['album'],
@@ -210,7 +207,6 @@ test('封面自动识别：音频文件夹内的约定图 / 封面目录同名�
     '音频文件夹内的 cover.jpg 自动生效'
   );
 
-  // ② 显式 cover 优先于约定图
   const explicit = h.addFile('Vinyl Life/covers/explicit.jpg', {});
   const noteB = h.addFile('Vinyl Life/Vinyl Note/B.md', {
     tags: ['album'],
@@ -223,7 +219,6 @@ test('封面自动识别：音频文件夹内的约定图 / 封面目录同名�
     'frontmatter 写了 cover 就不走自动识别'
   );
 
-  // ③ 封面目录下与专辑同名的图片
   const sameName = h.addFile('Vinyl Life/covers/C.jpg', {});
   const noteC = h.addFile('Vinyl Life/Vinyl Note/C.md', { tags: ['album'] });
   assert.equal(
@@ -232,7 +227,7 @@ test('封面自动识别：音频文件夹内的约定图 / 封面目录同名�
     'covers/ 下同名图片自动生效'
   );
 
-  // ④ 什么都没有 → 无封面（卡片回落到 ♪ 占位）
+  // 无封面是合法的：卡片回落到 ♪ 占位
   const noteD = h.addFile('Vinyl Life/Vinyl Note/D.md', { tags: ['album'] });
   assert.equal(
     h.mod.buildAlbumInfo(h.app, noteD, noteD.fm, { coverFolder: 'Vinyl Life/covers' }).cover,
@@ -372,8 +367,7 @@ test('计数：countFolderAudios 递归统计（子目录计入 + 非音频文�
 });
 
 // ============ 批量删除（专辑墙工具栏入口）============
-// 与单张盘点的分水岭：同批要删的专辑互相视为「不存在」——它们共用的音频目录不该因为
-// 「还有别张在引用」（其实是同批要删的那张）被留下；与未选中专辑共用的资源照旧保护。
+// 与单张盘点的分水岭：同批要删的专辑互相视为「不存在」，共用的音频目录因此可删；与未选中专辑共用的照旧保护。
 
 test('批量：同批两张专辑共用的音频目录 / 封面可删（单张盘点会误判成「他人引用」）', () => {
   const h = setup();

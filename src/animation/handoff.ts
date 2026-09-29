@@ -1,13 +1,10 @@
-// 黑胶交接动效：IDLE → HANDOFF → PLAYING 状态机
-// 不做跨视图物理飞行（多 pane 不可靠且耗电）：
-//   墙上「拾取 + 离墙淡出」（WAAPI，420ms）+ 播放器「落盘淡入」（视图内入场动画）两段拼接。
-// 时间线（方向：从封套右侧开口抽出；时长 700ms，缓动 easeOutCubic）：
-//   A 拾取 0–370ms    唱片从封面右侧探出位向右抽出 + 轻微放大（现实中从开口抽出、拿起）
-//   B 离墙 370–700ms  继续右上方离场 + 缩小 + 淡出
-//   C 落盘 ~700ms+    播放器出现/聚焦，唱片滑入转盘（VinylPlayerView.playEntrance）
-//   D 出声 与 C 并行   地址解析完成即 play()
-// 播放中墙上唱片持续隐藏（is-playing 类，CSS 值与动画终点一致）；
-// 换专辑时 cancel 冻结动画，唱片经 CSS transition 优雅滑回封套。
+// 黑胶交接动效：IDLE → HANDOFF → PLAYING 状态机。
+// 不做跨视图物理飞行（多 pane 不可靠且耗电）：墙上「拾取 + 离墙淡出」（WAAPI，420ms）与播放器
+// 「落盘淡入」（视图内入场动画）两段拼接。时间线 700ms / easeOutCubic，方向从封套右侧开口抽出：
+// A 拾取 0–370ms 向右抽出 + 轻微放大 → B 离墙 370–700ms 右上方离场 + 缩小 + 淡出 → C 落盘 ~700ms+
+// 播放器出现/聚焦、唱片滑入转盘（VinylPlayerView.playEntrance），D 出声与 C 并行（地址解析完即 play()）。
+// 播放中墙上唱片持续隐藏（is-playing 类，CSS 值与动画终点一致）；换专辑时 cancel 冻结动画，唱片经
+// CSS transition 滑回封套。
 import type VinylLifePlugin from '../main';
 import type { AlbumInfo } from '../core/album-index';
 import { discTransform } from '../core/disc-motion';
@@ -17,13 +14,9 @@ export type HandoffState = 'idle' | 'handoff' | 'playing';
 
 const LIFT_OFF_MS = 700;
 
-/**
- * 唱片离墙动画（点击交接、排入列表共用同一串关键帧）：A 拾取 → B 离墙。
- * 关键帧取 CSS 变量（--vinyl-disc-{rest,lift,off}），方向随「黑胶动画方向」设置变化；
- * 终点与 CSS 隐藏态（.is-playing / .is-queued .vinyl-shelf-disc）同源，靠 fill:forwards 保持
- * —— 动画起点又与磁盘当时的探出位相同，所以状态类同一帧落地也不会触发 transition 抢戏。
- * 动画挂在卡片上（cardEl.__vinylLift）：渲染刷新时随 DOM 一起消亡，回位时由调用方 cancel。
- */
+/** 唱片离墙动画（点击交接、排入列表共用同一串关键帧）：关键帧取 CSS 变量（--vinyl-disc-{rest,lift,off}），
+ *  方向随「黑胶动画方向」设置变化。终点与 CSS 隐藏态（.is-playing / .is-queued .vinyl-shelf-disc）同源、
+ *  起点又与磁盘当时的探出位相同，故状态类同帧落地也不会抢 transition；动画挂在 cardEl.__vinylLift 上随 DOM 消亡。 */
 export function animateDiscLiftOff(cardEl: HTMLElement, discEl: HTMLElement): Animation {
   const lift = discEl.animate(
     [
@@ -48,10 +41,8 @@ export class HandoffController {
     return this.state;
   }
 
-  /**
-   * 点击黑胶 → 交接。cardEl 为墙上卡片（含 .vinyl-shelf-disc），传 null 时跳过墙上动画。
-   * 返回最终状态（playing = 队列已加载并开始播放 / 落盘待命）。
-   */
+  /** 点击黑胶 → 交接。cardEl 为墙上卡片（含 .vinyl-shelf-disc），传 null 跳过墙上动画；
+   *  返回最终状态（playing = 队列已加载并开始播放 / 落盘待命）。 */
   async handoff(album: AlbumInfo, cardEl: HTMLElement | null): Promise<HandoffState> {
     if (this.state === 'handoff') return this.state; // 防重入
     this.state = 'handoff';
@@ -61,10 +52,9 @@ export class HandoffController {
     // 减少动态效果：跳过拾取动画（交接流程照走，只是不做那串位移）
     if (cardEl && discEl && !prefersReducedMotion()) {
       cardEl.addClass('is-handing-off');
-      // 换专辑时 shelf-view 取消这条动画，唱片经 CSS transition 回位。
-      // finish 与 cancel 都要摘类：这个类带着 pointer-events: none（见 styles.css），
-      // 被取消时只挂 finish 的话它会永远留在卡上 —— 那张卡鼠标点不动、悬停也没反应。
-      // 孪生动画 is-returning 修过同一个坑（见 shelf-view 的 playDiscReturn）。
+      // 换专辑时 shelf-view 取消这条动画，唱片经 CSS transition 回位。finish 与 cancel 都要摘类：
+      // 这个类带着 pointer-events: none（见 styles.css），只挂 finish 的话它会永远留在卡上 ——
+      // 那张卡点不动、悬停也没反应（孪生动画 is-returning 修过同一个坑，见 shelf-view 的 playDiscReturn）。
       const lift = animateDiscLiftOff(cardEl, discEl);
       const clear = () => cardEl.removeClass('is-handing-off');
       lift.addEventListener('finish', clear);

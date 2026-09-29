@@ -1,7 +1,5 @@
-// 播放引擎回归：
-//   1) 换专辑竞态：快速连点两张专辑时，后发起的加载必须胜出（先发起的慢请求结果丢弃）；
-//   2) 换专辑即停旧曲：setQueue 必须卸载上一张音源（关闭「自动播放」时不残留旧曲）；
-//   3) 错误兜底竞态：切歌后旧曲的兜底结果不得覆盖当前曲。
+// 播放引擎回归：1) 换专辑竞态 —— 快速连点两张专辑时，后发起的加载必须胜出（先发起的慢请求结果丢弃）；
+// 2) 换专辑即停旧曲 —— setQueue 卸载上一张音源（关掉「自动播放」时不残留）；3) 错误兜底竞态 —— 切歌后旧曲的兜底结果不得覆盖当前曲。
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -91,8 +89,8 @@ class AudioStub {
 
 const { PlaybackEngine } = loadModule('src/core/player-state.ts', {
   Audio: AudioStub,
-  // 暂停走马达斜坡，斜坡用 window.setInterval 推进曲线。下面那几条只关心「状态与元素」，
-  // 给一对不排帧的桩就够（马达曲线本身另有 motor-engine / motor-view 两组用例盯着）。
+  // 暂停走马达斜坡（window.setInterval 推进曲线）；下面几条只关心状态与元素，给一对不排帧的桩就够，
+  // 曲线本身另有 motor-engine / motor-view 两组用例盯着。
   window: { setInterval: () => 0, clearInterval: () => {}, setTimeout: () => 0, clearTimeout: () => {} },
 });
 

@@ -1,16 +1,11 @@
 // 搓碟（scratch）：手势 → 唱片转角 / 声音倍速 的纯换算 + 指针接管。
 //
-// 为什么单独成模块（与 core/arm-geometry 同一理由）：换算是这套交互里唯一值得单测的部分 ——
-// 视图只负责把结果写给 CSS 变量与引擎，测试用真源码 esbuild + vm 跑这一份就够。
-//
-// 模型（以「手指粘在唱片表面」为准，不做人为增益）：
-//   指针方位角 θ = atan2(y − cy, x − cx)（屏幕坐标，与 CSS rotate 同向：x 向右、y 向下）
-//   单帧转角 dθ = wrap(θ − θprev)                    —— 手指划过的角，就是唱片转过的角
-//   倍速 rate = (dθ/dt) ÷ (360°/spinSeconds)         —— 正常转速 = 设置里的转盘转速
-//   音频前进量 = dθ/360 × spinSeconds                 —— 1.8s/圈（33⅓ RPM）时，转一圈 = 音频走 1.8 秒
-// 半径只用来「收手」：贴着圆心时 dθ 对位移极其敏感（1px 能转好几度），
-// 按 RATIO 把灵敏度收回来，免得指针抖一下就甩飞。视觉用原始转角跟着手指走（直接操作，不平滑），
-// 只有声音的倍速过一层低通（鼠标事件 60–125Hz 的采样抖动不该进音频）。
+// 单独成模块（与 core/arm-geometry 同一理由）：换算是这套交互里唯一值得单测的部分 —— 视图只把
+// 结果写给 CSS 变量与引擎，测试用真源码 esbuild + vm 跑这一份就够。
+// 模型（以「手指粘在唱片表面」为准，不做人为增益）：单帧转角 dθ = wrap(θ − θprev) 就是唱片转过的
+// 角，倍速 rate = dθ/dt ÷ 单圈耗时（正常转速 = 设置里的转盘转速），音频前进量 = dθ/360 × spinSeconds。
+// 半径只用来「收手」：贴着圆心时 dθ 对位移极其敏感（1px 能转好几度），按 RATIO 收回灵敏度。
+// 视觉用原始转角跟手（直接操作，不平滑），只有声音的倍速过一层低通（鼠标 60–125Hz 的采样抖动不该进音频）。
 
 /** 指针到圆心的距离下限（× 唱片半径）：低于它按这个半径算转角（收手） */
 export const SCRATCH_MIN_RADIUS_RATIO = 0.25;
@@ -18,14 +13,12 @@ export const SCRATCH_MIN_RADIUS_RATIO = 0.25;
 export const SCRATCH_MAX_TURN = 120;
 /** 倍速上限（正常转速的几倍）：真实搓碟可以更快，但再快只是噪音，且容易把位置甩飞 */
 export const SCRATCH_MAX_RATE = 4;
-/** 轻量音效（元素自己出声）的停声线：低于它算「按住不放」（停声）。给个下限而不是 0，
- *  是避免 0.01 倍的嗡嗡声。与下面的出声线一起构成迟滞，中间地带保持现状。 */
+/** 轻量音效的停声线：低于它算「按住不放」。给下限而非 0 是避免 0.01 倍的嗡嗡声，与出声线一起构成迟滞。 */
 export const SCRATCH_LIVE_PAUSE_RATE = 0.05;
-/** 轻量音效的出声线：高过它才让元素出声。停在停声线与出声线之间的手势（换向的那一瞬）
- *  不切换元素的起停 —— 每一次切换都是真的 play() / pause()，在阈值上来回抖会碎成一片。 */
+/** 轻量音效的出声线：高过它才让元素出声。停在两条线之间（换向那一瞬）不切换元素起停 ——
+ *  每次切换都是真的 play() / pause()，在阈值上来回抖会碎成一片。 */
 export const SCRATCH_LIVE_RESUME_RATE = 0.12;
-/** 轻量音效起播前允许的对齐误差（秒）：低于它就不动元素的 currentTime
- *  （每次写 currentTime 都要断一下声音，差一点点不值得断）。 */
+/** 轻量音效起播前允许的对齐误差（秒）：低于它就不动 currentTime（每次写都要断一下声，不值得）。 */
 export const SCRATCH_LIVE_ALIGN_TOL = 0.02;
 /** 起手阈值（deg）：转不够这么多当「点了一下」，不打断播放 */
 export const SCRATCH_ENGAGE_TURN = 3;
@@ -36,15 +29,12 @@ export const SCRATCH_MOTOR_TAU_MS = 150;
 /** 回正的收尾容差（倍速）：|rate − 目标| 小于它就交还给 CSS 动画与播放元素 */
 export const SCRATCH_SETTLE_EPS = 0.02;
 
-/** 预先备好搓碟缓冲的等待时长（ms）：开播后先让播放自己把流拉稳，再去抓整轨。
- *  立刻抓会跟开播抢带宽（实测「切歌变得不跟手」），一直不抓则每张唱片的第一下搓碟只能用
- *  轻量音效（实测「声音跟歌没关系」）—— 等这么久，两头都躲开。 */
+/** 预先备好搓碟缓冲的等待时长（ms）：开播后先让播放把流拉稳再抓整轨 —— 立刻抓会跟开播抢带宽
+ *  （实测「切歌变得不跟手」），一直不抓则每张唱片第一下搓碟只能用轻量音效（实测「声音跟歌没关系」）。 */
 export const SCRATCH_PRELOAD_DELAY_MS = 6000;
 
-/** 搓碟音效档（设置 → 外观 → 播放器）：full = 完整（解码整轨，正反都出声）；
- *  light = 轻量（元素按倍速出声，只有正向，零内存、零预载）。
- *  轻量档的音高跟着倍速走、位置对着针位（见 player-state 的 scratchRate）——
- *  它只是「倒着不出声」，不是「听到别的段落」。 */
+/** 搓碟音效档（设置 → 外观 → 播放器）：full = 解码整轨、正反都出声；light = 元素按倍速出声，只有
+ *  正向、零内存零预载（音高跟倍速、位置对针位，只是「倒着不出声」，见 player-state 的 scratchRate）。 */
 export type ScratchSound = 'full' | 'light';
 export const SCRATCH_SOUNDS: readonly ScratchSound[] = ['full', 'light'];
 export const DEFAULT_SCRATCH_SOUND: ScratchSound = 'full';
@@ -100,9 +90,8 @@ export function approachRate(
   return rate + (target - rate) * (1 - Math.exp(-dtMs / tauMs));
 }
 
-/** 搓碟累计器：指针事件把转角喂进 add()，每帧由 frame() 取走 ——
- *  分开两步是为了让「事件按自己的节奏来、声音与视觉按帧走」：鼠标 125Hz 的碎采样
- *  若逐事件算倍速，抖动会直接进音频。 */
+/** 搓碟累计器：指针事件把转角喂进 add()，每帧由 frame() 取走 —— 分开两步是为了「事件按自己的
+ *  节奏来、声音与视觉按帧走」：鼠标 125Hz 的碎采样若逐事件算倍速，抖动会直接进音频。 */
 export class ScratchTracker {
   /** 尚未被帧消费的转角（deg，正 = 唱片顺时针） */
   private pending = 0;

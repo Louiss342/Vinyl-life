@@ -1,9 +1,6 @@
-// 本地网关管理：
-//   一律用 Electron 自带的 Node（utilityProcess）在应用内跑网关 —— 插件不依赖系统 Node.js
-//   （Obsidian 的 Electron 二进制禁用了 ELECTRON_RUN_AS_NODE，utilityProcess 是官方替代通道，
-//   见 in-app-gateway.ts）。
-//   空闲端口探测 → 懒加载 fork → 就绪等待 → 优雅关闭 → 崩溃自愈（限次重启）
-//   所有路径经 gatewayEnv 统一绝对化注入；系统代理随 VINYL_PROXY 一并注入
+// 本地网关管理：用 Electron 自带的 Node（utilityProcess）在应用内跑网关，不依赖系统 Node.js
+//（Obsidian 的 Electron 禁用了 ELECTRON_RUN_AS_NODE，utilityProcess 是官方替代通道，见 in-app-gateway.ts）。
+// 生命周期：空闲端口探测 → 懒加载 fork → 就绪等待 → 优雅关闭 → 崩溃自愈；路径经 gatewayEnv 绝对化注入
 import { Plugin, requestUrl } from 'obsidian';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -22,11 +19,11 @@ import type { UtilityProcessLike, UtilityProcessModuleLike } from './in-app-gate
 
 export type ServerState = 'stopped' | 'starting' | 'running' | 'error';
 
-/** 网关回报真实端口的那一行（gateway.js 末尾的 serverLog）。两处必须同步改：
- *  端口交接靠它把 bind(0) 选中的号传回来，格式一漂父进程就只能超时。 */
+/** 网关回报真实端口的那一行（gateway.js 末尾的 serverLog），两处必须同步改：端口交接靠它把
+ *  bind(0) 选中的号传回来，格式一漂父进程就只能超时 */
 const PORT_RE = /listening on 127\.0\.0\.1:(\d{1,5})/;
 
-// 读进程命令行为文本（失败返回空串，绝不抛）：用于确认待清理 PID 确为本插件网关。
+// 读进程命令行为文本（失败返回空串，绝不抛），供下面的 isVinylGateway 核对身份。
 function execFileText(bin: string, args: string[]): Promise<string> {
   return new Promise((resolve) => {
     try {
@@ -39,8 +36,8 @@ function execFileText(bin: string, args: string[]): Promise<string> {
   });
 }
 
-/** 会话 token：给网关鉴权用。不是加密用途，只需要「猜不到 + 每次启动都换」——
- *  getRandomValues 来自 Web Crypto（渲染进程自带），拿不到时退回时间戳 + 随机串。 */
+/** 会话 token：给网关鉴权用。非加密用途，只要「猜不到 + 每次启动都换」；拿不到 Web Crypto
+ *  （crypto.getRandomValues）时退回时间戳 + 随机串 */
 function randomToken(): string {
   try {
     const buf = new Uint8Array(16);
@@ -54,14 +51,18 @@ function randomToken(): string {
 export class ServerManager {
   state: ServerState = 'stopped';
   lastError = '';
-  /** 网关鉴权 token：随 env 下发给网关（VINYL_TOKEN），所有客户端请求带 x-vinyl-token。
-   *  为什么要它：网关只监听 127.0.0.1，但浏览器里的任意页面都能扫本机端口 —— 没有 token 时，
-   *  扫到就能拿你的网易云/QQ 账号发请求、读搜索结果、改凭据（见 README 的「权限说明」）。 */
+  /** 启动失败时把 lastError 交给宿主说给用户听（不接 = 用户看不到任何提示）；同一条只报一次，
+   *  start() 重新武装，故「坏→好→又坏」仍会报 */
+  onFailure: ((message: string) => void) | null = null;
+  private notifiedError = '';
+  /** 网关鉴权 token：随 env 下发（VINYL_TOKEN），请求带 x-vinyl-token。为什么要它：网关只监听
+   *  127.0.0.1，但浏览器里任意页面都能扫本机端口 —— 没 token 就能拿你的网易云/QQ 账号发请求、
+   *  读结果、改凭据（见 README 的「权限说明」） */
   readonly token: string = randomToken();
 
   /** 应用内网关进程（Electron utilityProcess，见 startInApp） */
   private utility: UtilityProcessLike | null = null;
-  /** 系统代理（启动网关时经 VINYL_PROXY 注入；空串 = 未取到 / 直连） */
+  /** 系统代理（经 VINYL_PROXY 注入；空串 = 未取到 / 直连） */
   private systemProxy = '';
   private port = 0;
   private startPromise: Promise<boolean> | null = null;
@@ -86,9 +87,8 @@ export class ServerManager {
   }
 
   // —— 系统代理（与 Chromium 同一套设置）——
-  // 网关的出口是 Electron 自带的 Node，内置 fetch 不读系统代理；不把这份配置喂给它，
-  // 就会出现「Chromium 能打开封面、网关下载不了」这类同机两链路一好一坏的现象。
-  // 取不到一律按直连处理（网关那边还会退回读 HTTPS_PROXY 等环境变量）。
+  // 网关的出口是 Electron 自带的 Node，内置 fetch 不读系统代理 —— 不喂给它就会出现「Chromium
+  // 能打开封面、网关下载不了」的同机两链路一好一坏。取不到按直连（网关还会退回读 HTTPS_PROXY）。
   async resolveSystemProxy(): Promise<string> {
     try {
       const resolver = loadProxyResolver();
@@ -101,10 +101,9 @@ export class ServerManager {
   }
 
   /** 把库外音频路径登记进网关的供流白名单（见 server/gateway.js 的 /api/local/allow）。
-   *  为什么要登记：那条路由的凭据只能是 URL 里的 ?t=（<audio> 带不了自定义头），
-   *  光有 token 就等于「拿到它的进程能读盘上任意音频文件」；登记过之后，能读的只剩
-   *  「本插件声明过要放的那些路径」。登记一次本会话有效。
-   *  超时按就绪探测那一档（本地一次 POST，不该等 30s）。 */
+   *  为什么要登记：那条路由的凭据只能是 URL 里的 ?t=（<audio> 带不了自定义头），光有 token 就
+   *  等于「拿到它的进程能读盘上任意音频文件」；登记后能读的只剩声明过要放的路径。登记一次本
+   *  会话有效。超时按就绪探测那一档（本地一次 POST，不该等 30s）。 */
   async allowStreamPaths(paths: string[]): Promise<boolean> {
     if (!this.base || !paths.length) return false;
     try {
@@ -137,9 +136,9 @@ export class ServerManager {
         );
         if (r.status >= 200 && r.status < 300) return true;
       } catch {
-        // 探测失败（进程没了 / 端口已关）→ 下面归零重来
+        // 进程没了 / 端口已关
       }
-      // 进程已换/僵死 → 归零重来
+      // 进程已换 / 僵死 → 归零重来
       this.state = 'stopped';
     }
     if (this.startPromise !== null) return this.startPromise;
@@ -149,24 +148,36 @@ export class ServerManager {
     return this.startPromise;
   }
 
+  /** 把 lastError 报给宿主一次（同一条只报一次）；只在 start() 的失败出口调。 */
+  private notifyFailure(): void {
+    const msg = this.lastError;
+    if (!msg || msg === this.notifiedError) return;
+    this.notifiedError = msg;
+    try {
+      this.onFailure?.(msg);
+    } catch (e) {
+      // 回调抛了不能把网关生命周期带崩
+      console.error('[vinyl] 网关失败回调抛异常', e);
+    }
+  }
+
   private async start(): Promise<boolean> {
     if (this.disposed) return false;
     this.state = 'starting';
     this.lastError = '';
+    this.notifiedError = ''; // 重新武装：这一趟若也失败要重报
     this.stopping = false;
-    // 旧版本（≤1.0.8）用系统 Node spawn 的网关进程不会随插件重载消失 → 按 PID 记录清掉遗留。
-    // 应用内网关不需要这条兜底：随插件卸载 / Obsidian 退出一起回收。
+    // 清掉 ≤1.0.8 遗留的网关进程（见下方「旧网关 PID 记录与清理」一节）；
+    // 应用内网关没有这个包袱：随插件卸载 / Obsidian 退出一起回收。
     await this.killStaleGateway();
     this.systemProxy = await this.resolveSystemProxy();
     // 端口不再由这里预先探测：那要先 bind 再 close 才能把号交给网关，中间有一段被别人抢走的
-    // 窗口（抢到就 EADDRINUSE，用户看到「在线音源莫名其妙不可用」）。改由网关自己 bind(0)
-    // 并回报真实端口（见 startInApp 的 waitPort）；拿不到 stdout 时退回老路（见 ensurePortFallback）。
+    // 窗口（抢到就 EADDRINUSE，表现为「在线音源莫名其妙不可用」）。改由网关自己 bind(0) 并回报
+    // 真实端口（见 startInApp）；拿不到 stdout 时退回预探测那条老路。
     return this.startInApp();
   }
 
   // —— 应用内网关 ——
-  // 用 Electron 自带的 Node（utilityProcess.fork）跑网关产物：扫码登录 / 导入 / 播放
-  // 等在线能力不要求用户安装 Node.js（发布形态只带 main.js，网关源码内联其中）。
   private async startInApp(): Promise<boolean> {
     if (this.disposed) return false;
     const up = loadUtilityProcess();
@@ -174,6 +185,7 @@ export class ServerManager {
       this.state = 'error';
       this.lastError = t('gateway.inAppUnavailable');
       console.error('[vinyl] ' + this.lastError);
+      this.notifyFailure();
       return false;
     }
     let gateway = '';
@@ -183,6 +195,7 @@ export class ServerManager {
       this.state = 'error';
       this.lastError = (e as Error).message;
       console.error('[vinyl] ' + this.lastError);
+      this.notifyFailure();
       return false;
     }
     // 第一选择：端口交接 —— 网关自己 bind(0)，把真实端口写回 stdout，父进程读它。
@@ -190,17 +203,18 @@ export class ServerManager {
     const first = await this.forkGateway(up, gateway, { handoff: true });
     if (first.ok) return true;
     if (!first.forked) {
-      // fork 这个动作本身就没成（模块路径 / 权限 / 通道问题）：再来一次也一样，如实报错
+      // fork 调用本身抛了（模块路径 / 权限 / 通道问题）：再来一次也一样，如实报错 ——
+      // lastError 已由 forkGateway 的 catch 写成具体原因，此处不再重新赋值。
       this.state = 'error';
       console.error('[vinyl] ' + this.lastError);
+      this.notifyFailure();
       return false;
     }
 
-    // 退回：拿不到 stdout 的通道（旧 Electron / remote 不给流）只能预探测一个端口显式传进去。
-    // 那条老路仍有 TOCTOU，但网关现在会把「监听失败」写进日志并退出（见 gateway.js 的
-    // server.on('error')），父进程的自愈会换一个端口重来 —— 不再是无声无息地死掉。
-    // 这一步之前再问一次：第一轮 fork 与等端口可能耗掉十几秒，期间插件可能已经卸载了 ——
-    // 那一轮 fork 会留下一个没人回收的网关（见 dispose）。
+    // 退回：拿不到 stdout 的通道（旧 Electron / remote 不给流）只能预探测一个端口显式传进去 ——
+    // 仍有 TOCTOU，但网关会把「监听失败」写进日志并退出（见 gateway.js 的 server.on('error')），
+    // 自愈会换端口重来，不再是无声无息地死掉。这里再问一次 disposed：第一轮 fork 与等端口可能
+    // 耗掉十几秒，期间插件可能已卸载 —— 那一轮 fork 会留下一个没人回收的网关（见 dispose）。
     if (this.disposed) return false;
     try {
       this.port = await this.findFreePort();
@@ -208,6 +222,7 @@ export class ServerManager {
       this.state = 'error';
       this.lastError = tf('gateway.inAppStartFailed', { msg: (e as Error).message });
       console.error('[vinyl] ' + this.lastError);
+      this.notifyFailure();
       return false;
     }
     const second = await this.forkGateway(up, gateway, { handoff: false });
@@ -215,13 +230,13 @@ export class ServerManager {
     this.state = 'error';
     this.lastError = second.forked ? t('gateway.notReady') : this.lastError;
     console.error('[vinyl] ' + this.lastError);
+    this.notifyFailure();
     return false;
   }
 
-  /** fork 一次网关并等它就绪（ping 通）。
-   *  handoff = true 时用 stdio: 'pipe' 读网关回报的端口；false 时用预探测好的 this.port。
-   *  失败会把这一轮 fork 出来的进程收干净（不然它会挂在那儿占着端口）。
-   *  返回 forked = false 表示「fork 调用本身抛了」——那种情况重试没有意义，调用方直接报错。 */
+  /** fork 一次网关并等它就绪（ping 通）：handoff 读 stdout 回报的端口，否则用预探测的 this.port。
+   *  失败会把这一轮 fork 出来的进程收干净（否则它会挂在那儿占着端口）；forked = false 表示
+   *  「fork 调用本身抛了」—— 那种情况重试没有意义，调用方直接报错。 */
   private async forkGateway(
     up: UtilityProcessModuleLike,
     gateway: string,
@@ -249,8 +264,8 @@ export class ServerManager {
         this.stop();
         return { ok: false, forked: true };
       }
-      // 没回报端口：要么进程没起来（原因写在 gateway.log），要么这条通道不给流。
-      // 两种都不猜端口 —— 交给调用方决定是退回预探测还是报失败。
+      // 没回报端口：进程没起来（原因写在 gateway.log）或这条通道不给流。两种都不猜端口，
+      // 交给调用方决定是退回预探测还是报失败。
       if (!port) {
         this.stop();
         return { ok: false, forked: true };
@@ -282,7 +297,7 @@ export class ServerManager {
     return { ok: false, forked: true };
   }
 
-  /** 等网关把真实端口写进 stdout。格式由 gateway.js 末尾那一行固定（改格式要同步改这里）。
+  /** 等网关把真实端口写进 stdout（格式由 gateway.js 末尾那一行固定，改格式要同步改这里）；
    *  超时返回 0：调用方按「这一轮没成」处理，不猜端口。 */
   private waitReportedPort(proc: UtilityProcessLike, timeoutMs: number): Promise<number> {
     const stream = proc.stdout ?? null;
@@ -327,8 +342,8 @@ export class ServerManager {
   }
 
   /** 网关退出后的自愈：限次重启；超过上限进入 error（独立进程与应用内共用同一策略）。
-   *  定时器存句柄：stop / dispose 要能撤掉它 —— 网关崩在卸载前一瞬的话，
-   *  500ms 后那次重启会把网关拉到一个已经没人管得着它的世界里（见 dispose）。 */
+   *  定时器存句柄，stop / dispose 要能撤掉它 —— 否则网关崩在卸载前一瞬的话，500ms 后那次
+   *  重启会把它拉到一个已经没人管得着它的世界里（见 dispose）。 */
   private scheduleRestart(code: number | undefined): void {
     if (this.disposed) return;
     if (this.restarts < this.maxRestarts) {
@@ -341,19 +356,21 @@ export class ServerManager {
     } else {
       this.state = 'error';
       this.lastError = tf('gateway.crashLoop', { code: code ?? t('gateway.exitCodeUnknown') });
+      console.error('[vinyl] ' + this.lastError);
+      this.notifyFailure();
     }
   }
 
-  // 网关源码内联在 main.js 里（社区市场只安装 main.js / manifest.json / styles.css），
-  // 首次使用时把源码落盘到系统临时目录再 fork；文件名带源码 hash，升级自动换新文件。
+  // 网关源码内联在 main.js 里（社区市场只装 main.js / manifest.json / styles.css）：首次使用时
+  // 落盘到系统临时目录再 fork，文件名带源码 hash，升级自动换新文件。
   private materializeGateway(): string {
     const dir = path.join(os.tmpdir(), 'vinyl-life');
     const file = path.join(dir, `gateway-${GATEWAY_HASH}.js`);
     try {
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-      // 已存在也要比对内容再决定用不用（不再只看 existsSync）：文件名里的 hash 可以从
-      // 公开的 main.js 复算，共享 /tmp 上预置一个同名文件就等于让插件以本进程权限执行
-      // 任意代码。一致才复用 —— 另一个 Obsidian 窗口可能正跑着这份；不一致就覆盖掉。
+      // 已存在也要比对内容，不只是 existsSync：文件名里的 hash 能从公开的 main.js 复算，共享
+      // /tmp 上预置一个同名文件就等于让插件以本进程权限执行任意代码。一致才复用（别的窗口
+      // 可能正跑着这份），不一致就覆盖掉。
       if (!this.gatewayFileMatches(file)) {
         const tmp = `${file}.${process.pid}.tmp`;
         // 内联的是 gzip+base64，这里还原成源码再落盘（内容与构建时的 server.js 逐字节一致）
@@ -396,8 +413,8 @@ export class ServerManager {
     }
   }
 
-  // 网关路径注入统一封装：COOKIE / ANON / QQ 凭据 / LOG / 代理 全部绝对化。
-  // handoff = true 时 VINYL_PORT 给 0：让网关自己 bind(0)，端口从 stdout 回报（见 forkGateway）。
+  // 网关路径注入统一封装：COOKIE / ANON / 各平台凭据 / LOG / 代理全部绝对化。handoff 时
+  // VINYL_PORT 给 0，让网关自己 bind(0)，端口从 stdout 回报（见 forkGateway）。
   private gatewayEnv(handoff = false): NodeJS.ProcessEnv {
     return {
       ...process.env,
@@ -421,11 +438,10 @@ export class ServerManager {
     };
   }
 
-  /** 插件卸载时调用（onunload）：先关闸，再停进程。**顺序反了就有缝** ——
-   *  网关恰好在卸载前一瞬崩掉时，scheduleRestart 已经挂好了 500ms 后的那次重启，
-   *  而卸载之后没有任何人再持有这个 manager 去 stop 它：那个网关会活到 Obsidian 退出
-   *  （监听 127.0.0.1、继续写日志、按需读凭据文件），重载插件则新旧两个网关并存。
-   *  注释里那句「应用内网关随插件卸载一起回收」靠的就是这道闸。 */
+  /** 插件卸载时调用（onunload）：先关闸（disposed），再停进程。**顺序反了就有缝** —— 网关恰好
+   *  在卸载前一瞬崩掉时，scheduleRestart 已挂好 500ms 后的那次重启，而卸载之后没有任何人再持有
+   *  这个 manager 去 stop 它：那个网关会活到 Obsidian 退出（监听 127.0.0.1、继续写日志、按需读
+   *  凭据文件），重载插件则新旧两个网关并存。start() 里那句「随插件卸载回收」靠的就是这道闸。 */
   dispose() {
     this.disposed = true;
     this.abortPortWait?.();
@@ -466,14 +482,13 @@ export class ServerManager {
   }
 
   // —— 旧网关 PID 记录与清理（只服务升级路径）——
-  // ≤1.0.8 的版本用系统 Node spawn 网关：它不随插件重载消失，会常驻堆积，所以按 PID 记录清理。
+  // ≤1.0.8 用系统 Node spawn 网关：它不随插件重载消失、会常驻堆积，所以按 PID 记录清理；
   // 现行（应用内）网关随插件卸载 / Obsidian 退出回收，不再写 PID 记录。
   //
-  // 这里是全插件唯一用到 child_process 的地方，审核会把它列为「Shell Execution」能力披露。
-  // 非用不可：要确认一个 PID 确实是本插件的网关，只能读它的命令行 —— 只认 PID 的话，
-  // 号被系统复用之后就会杀掉无关进程（杀错别人的进程远比留一个僵尸网关严重）。
-  // 只在 .gateway.pid 存在时跑一次（即从 ≤1.0.8 升上来的那次启动），不是常驻能力。
-  // 为什么留着，见 CONTRIBUTING 的「审核的能力披露」一节。
+  // 这里是全插件唯一用 child_process 的地方，审核披露为「Shell Execution」能力，非用不可：
+  // 要确认一个 PID 确实是本插件的网关**只能读它的命令行** —— PID 会被系统复用，只认号就会
+  // 杀掉无关进程（杀错别人的进程远比留一个僵尸网关严重）。只在 .gateway.pid 存在、即从
+  // ≤1.0.8 升上来的那次启动跑一次，不是常驻能力；为什么留着见 CONTRIBUTING 的「审核的能力披露」。
 
   private stalePidFile(): string {
     return pluginAbsPath(this.plugin, '.gateway.pid');

@@ -1,14 +1,8 @@
 // 库外音频的 Range 供流回归（第 5 条的正面解）：
-//   ① 网关侧：**真起进程**跑 server/gateway.js、真发 HTTP —— 200 / 206 / 416、
-//      Content-Range 与字节正确性、Accept-Ranges、四类拒绝（相对路径 / 非音频 / **没登记** / 不存在）、
-//      无 token 401、路径里的空格与中文能原样找回；
-//   ①b 供流白名单：没登记的路径一律 403（碰文件系统之前就挡下，不给探测面），
-//      登记只收「绝对路径 + 音频扩展名」，重复登记不加量；
-//   ② 插件侧：LocalSource 的选路 —— 能给网关就发 Range 地址（一次字节都不读），
-//      起不来 / 没注入宿主才退回整文件 Blob；失败一次后本次会话不再主动启动网关，
-//      但网关后来因别的功能起来了就照用；
-//   ③ 引擎接线：local-external 走的是新口径（resolveExternalPlayableUrl），不是旧的 Blob 那条；
-//   ④ 两张手抄的扩展名表（src/util.ts 与 server/gateway.js）必须一致。
+//   ① 网关侧（**真起进程**跑 server/gateway.js、真发 HTTP）：200 / 206 / 416、Content-Range 与切片字节、Accept-Ranges、四类拒绝
+//      （相对路径 / 非音频 / 没登记 / 不存在）、无 token 401、空格与中文路径往返；没登记的路径在碰文件系统之前就 403，登记只收「绝对路径 + 音频扩展名」；
+//   ② 插件侧 LocalSource 选路：能给网关就发 Range 地址（一次字节都不读），起不来 / 没注入宿主才退回整文件 Blob，失败一次后本次会话不再主动启动网关（网关后来起来了照用）；
+//   ③ 引擎 local-external 走 resolveExternalPlayableUrl（不是旧的 Blob 那条）；④ 两张手抄的扩展名表（src/util.ts 与 server/gateway.js）必须一致。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

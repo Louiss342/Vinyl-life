@@ -1,12 +1,8 @@
-// 发布元数据：manifest.json 是版本真源，versions.json 与 package.json 必须跟着它走。
-//
-// 为什么要有这一条（2026-09 审计）：release.yml 此前只比对 tag 与 manifest.version，
-// 另外两份文件全程无人校验 —— 改了 manifest、打 tag、发布成功，但 versions.json 少一条目时，
-// 社区市场（据 versions.json 判断「这个版本的最低 Obsidian 版本」）不会给任何用户推更新，
-// 而且从头到尾没有任何报错。正是 version-bump.mjs 第 18 行警告的那种静默失败。
-//
-// release.yml 的「Check versions.json / package.json match manifest」直接跑这个文件
-// （同一份实现，不另写一套 YAML 断言），本地 `npm test` 与 CI 每次推送也都会跑到。
+// 发布元数据：manifest.json 是版本真源，versions.json 与 package.json 必须跟着它走。守的是
+// version-bump.mjs 第 18 行警告的那种静默失败：改了 manifest、打 tag、发布成功，但 versions.json
+// 少一条目时，社区市场（据它判断「这个版本的最低 Obsidian 版本」）不会给任何用户推更新，且全程无报错。
+// release.yml 的「Check versions.json / package.json match manifest」直接跑这个文件（同一份实现，
+// 不另写一套 YAML 断言），本地 `npm test` 与 CI 每次推送也都会跑到。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

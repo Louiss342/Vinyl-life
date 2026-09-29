@@ -126,8 +126,7 @@ export interface NeteaseSearchResponse {
   };
 }
 
-/** 搜索结果的一页：要多少条（limit）、从第几条开始（offset，网易云用；QQ 那边换算成页码，见 album-discovery）。
- *  搜索页会一直往深处要（「加载更多」），所以翻页参数得穿过整条链路，不能在某一层写死。 */
+/** 搜索结果的一页：limit = 要多少条、offset = 从第几条（网易云用；QQ 换算成页码，见 album-discovery）—— 搜索页会一直往深处要，翻页参数不能在某一层写死 */
 export interface SearchPage {
   limit: number;
   offset: number;

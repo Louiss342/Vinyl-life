@@ -1,6 +1,4 @@
-// 导出笔记（历史页 → 一键导出为笔记）的版式回归：
-//   摘要做成 callout、每个榜带一行字符柱状、播放最多的前五张给封面条（只有库内封面才嵌）、
-//   结尾一段说明口径与导出时间的 callout。这里跑真 main.ts，用假库拼出几档数据。
+// 导出笔记（历史页 → 一键导出为笔记）的版式回归：跑真 main.ts，用假库拼出几档数据（有 / 无封面、空统计）。
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -54,7 +52,7 @@ const COVER = 'Vinyl Life/Covers/A.jpg';
 function boot({ withNote = true, withCover = true } = {}) {
   const files = new Map();
   if (withNote) files.set(NOTE, new TFile(NOTE));
-  // 封面文件本身也要按开关存在：不然「同名图片自动认封面」的约定分支会把它找回来
+  // 封面文件本身也要按开关存在（口径见下面 getFirstLinkpathDest 那段）
   if (withCover) files.set(COVER, new TFile(COVER));
   const app = {
     vault: {
@@ -69,8 +67,7 @@ function boot({ withNote = true, withCover = true } = {}) {
         f.path === NOTE
           ? { frontmatter: { tags: ['album'], cover: withCover ? `[[${COVER}]]` : null } }
           : null,
-      // 只认 frontmatter 里那个 cover 链接（「同名图片自动认封面」的约定探测一律不命中，
-      // 否则 withCover:false 那档会从约定分支把封面找回来）
+      // 只认 frontmatter 里那个 cover 链接：否则 withCover:false 那档会被「同名图片自动认封面」找回来
       getFirstLinkpathDest: (linkpath) =>
         withCover && linkpath === COVER ? files.get(COVER) : null,
     },

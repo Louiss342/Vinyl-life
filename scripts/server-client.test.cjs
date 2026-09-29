@@ -1,16 +1,8 @@
-// 网关客户端回归（本轮审计点名的零覆盖安全面）：src/core/server-client.ts / qq.ts / kugou.ts。
-//
-// 三个 Service 是同一套写法的三份拷贝 —— 网关会话 token（ServerManager 生成，网关据此放行，
-// 见 server/gateway.js 的鉴权）由它们的 authHeaders() 注入，这是插件里唯一持有该 token 的地方。
-// 此前 620 条用例没有一条碰过它们（同名测试 netease-search / qq-auth / kugou-auth 跑的都是网关侧）。
-//
-// 钉住四件事：
-//   ① 每一个出站请求都带头 —— 含 DELETE 与封面下载这两条最容易漏的路径；
-//   ② token 只进 header，不进 URL（URL 会进日志、进错误文案、进用户的复制粘贴）；
-//   ③ base / token 都是回调，每次现取 —— 网关重启换端口、token 轮换之后仍要跟着走；
-//   ④ 失败如实报错（带上 HTTP 状态与网关给的原因），不把错误当空结果吞掉；
-//   ⑤ 出站请求有超时护栏（requestUrl 没有超时参数）：网关卡住时按超时拒绝，
-//      而不是让界面一直转圈（见 core/request-error 的 withRequestTimeout）。
+// 网关客户端回归（审计点名的零覆盖安全面）：src/core/server-client.ts / qq.ts / kugou.ts。
+// 三个 Service 各自实现 authHeaders()，是插件里唯一持有网关会话 token 的地方（网关鉴权见 server/gateway.js）；
+// 同名测试 netease-search / qq-auth / kugou-auth 跑的是网关侧，插件侧这一套此前无人守。
+// 钉住五件事：① 每个出站请求都带头（含 DELETE 与封面下载这两条易漏路径）；② token 只进 header 不进 URL
+//（URL 会进日志与错误文案）；③ base / token 是回调，每次现取；④ 失败如实报错；⑤ 有超时护栏（见文末一节）。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -58,8 +50,7 @@ function load() {
       }
       return require(name);
     },
-    // 插件纪律：定时器走 window.*（弹出窗口场景下才指得对）。这里给一个可控的 window ——
-    // 超时用例自己决定何时到点，其余用例的定时器永不触发
+    // 插件纪律：定时器走 window.*（弹出窗口场景下才指得对）；这里给可控的 window，到点时机由用例自己定
     window: {
       setTimeout: (fn, ms) => {
         timers.push({ fn, ms });
@@ -100,8 +91,6 @@ const BASE = 'http://127.0.0.1:41234';
 const TOKEN = 'tok-8f3a1c';
 const base = () => BASE;
 const token = () => TOKEN;
-
-// —— ① + ④：三个客户端的「每个请求都带头 / token 不进 URL / 失败如实报错」——
 
 const CLIENTS = [
   {
@@ -257,7 +246,6 @@ test('网易云取流：无损请求落空时逐级降档，返回实际到手�
   m.setRespond((opts) => {
     const level = new URL(opts.url).searchParams.get('level');
     levels.push(level);
-    // lossless 空（无 VIP）、exhigh 空、higher 有地址
     return level === 'higher'
       ? { status: 200, json: { data: [{ url: 'http://cdn/h.mp3', br: 320000, type: 'mp3' }] } }
       : { status: 200, json: { data: [{ url: null, code: 200 }] } };
@@ -343,8 +331,6 @@ test('QQ 搜索：requiresLogin 要抛错（未登录时不能静默返回空列
   await assert.rejects(() => client.search('jay'), /登录/);
 });
 
-// —— 曲目归一化（三个来源各一套）——
-
 test('songsToTracks：网易云曲目 → 统一 Track', () => {
   const m = load();
   const [t] = m.songsToTracks(
@@ -376,10 +362,8 @@ test('qqSongsToTracks / kugouSongsToTracks：字段归一 + hash 归一化', () 
   assert.equal(k.duration, 180);
 });
 
-// —— ⑤：出站请求的超时护栏 ——
-// requestUrl 没有超时参数：网关卡住时（进程僵住 / 端口被占却没人应答）这个 Promise 永远
-// 不落地，界面就跟着一直转圈，而错误处理链一次都不会触发。三条用例钉住：会拒绝、
-// 拒绝时的话说得清（状态码 0，与 429 / 404 那几条分开）、响应回来时把定时器清掉。
+// —— ⑤ 超时护栏：requestUrl 没有超时参数，网关卡住时 Promise 永不落地、界面一直转圈（见 core/request-error）——
+// 三条用例：按超时拒绝、状态码 0（与限流 429 / 404 分得开）、响应回来清掉定时器（withRequestTimeout）。
 
 test('请求超时：网关卡住时按超时拒绝（界面不再一直转圈）', async () => {
   const { ServerClient, calls, fireTimers, setRespond } = load();

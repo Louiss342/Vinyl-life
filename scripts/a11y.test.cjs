@@ -1,12 +1,7 @@
-// 可访问性回归（源码 + 样式文本扫描，不需要 Obsidian）：
-//   ① 卡片 / 队列行可键盘操作（role=button + aria-label，Enter / 空格等价点击；专辑墙是
-//      roving tabindex + 方向键网格：整墙只占一个 Tab 停靠点；卡片保留 aria-label 但关掉
-//      悬停气泡 —— --no-tooltip，用户 2026-09-27）
-//   ② :focus-visible 焦点圈与 prefers-reduced-motion 兜底存在于 styles.css
-//   ③ 所有 WAAPI 动画（element.animate）所在文件都引用减少动效判定（防新增动画绕过）
-//   ④ 浮层打开时焦点跟着进去、并报出「这是什么浮层」（挂在 body 末尾的面板，
-//      不搬焦点的话键盘用户得从头 Tab 一整圈才进得来）
-//   ⑤ 异步替换的状态行（搜索 / 批量已选 / 导入进度）标成 status 区，读屏软件才播报
+// 可访问性回归（只扫源码 + styles.css 文本，不跑 DOM、不需要 Obsidian）：
+//   ① 卡片 / 队列行可键盘操作（role=button + aria-label，Enter / 空格等价点击）；专辑墙是 roving tabindex + 方向键网格，整墙只占一个 Tab 停靠点（卡片保留 aria-label，悬停气泡靠 --no-tooltip 关掉）
+//   ② :focus-visible 焦点圈、prefers-reduced-motion 兜底，以及所有 WAAPI 动画（element.animate）所在文件都要有 prefersReducedMotion 判定（防新增动画绕过）
+//   ③ 浮层打开要把焦点搬进去并报出「这是什么浮层」（面板挂在 body 末尾，不搬焦点键盘用户得从头 Tab 一整圈）；异步状态行（搜索 / 批量已选 / 导入进度）标 role=status 读屏才播报
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -26,8 +21,7 @@ function tsFiles(dir = path.join(root, 'src'), out = []) {
 
 test('可访问性：专辑墙卡片可聚焦、有语义、键盘等价点击', () => {
   const src = read('src/views/shelf-view.ts');
-  // 2026-09-26：卡片从「每张都是 Tab 停靠点」改成 roving —— 默认 -1，唯一的 0 由 syncRoving
-  // 指派给光标那张（网格导航本身在下一条用例里守着）。
+  // 卡片默认 -1，唯一的 0 由 syncRoving 指派给光标那张（网格导航在下一条用例里守着）
   assert.match(src, /card\.tabIndex = -1/, '卡片默认退出 Tab 序（停靠点由 syncRoving 指派）');
   assert.match(
     src,
@@ -60,8 +54,7 @@ test('可访问性：专辑墙是方向键网格（整墙一个停靠点，100 �
   assert.match(src, /ev\.stopPropagation\(\);\s*\/\/ 别漏给全局快捷键/, '处理完别漏给全局快捷键');
   // 每轮渲染后把停靠点补回去（卡片可能刚建出来 / 刚被重画）
   assert.match(src, /this\.syncRoving\(\)/, '渲染后要同步停靠点');
-  // 卡片菜单必须有键盘入口（标准「菜单按钮」模式）。这枚「⋯」按钮 2026-09-27 已从卡片上删掉，
-  // 于是这条成了唯一一条不靠鼠标的路 —— 没有它，「设置封面 / 在源站打开」对键盘用户不可达。
+  // 卡片菜单必须有键盘入口（标准「菜单按钮」模式）：「⋯」按钮已删（用户 2026-09-27），这条成了唯一一条不靠鼠标的路 —— 没有它，「设置封面 / 在源站打开」对键盘用户不可达
   assert.doesNotMatch(src, /vinyl-shelf-card-menu/, '卡片上不再挂「⋯」按钮（用户 2026-09-27）');
   assert.match(
     src,
@@ -91,8 +84,7 @@ test('长文本可读性：专辑墙卡片标题的悬停滚动走共享模块',
   assert.match(shelf, /'pointerover'[\s\S]{0,60}onMarqueeOver/, '要注册悬停进入');
   assert.match(shelf, /'pointerout'[\s\S]{0,60}onMarqueeOut/, '要注册悬停离开');
   assert.match(shelf, /vinyl-shelf-card-title vinyl-marquee/, '卡片标题要挂 marquee 类');
-  // 键盘等价（2026-09-26）：读全一张卡片的完整专辑名曾经只有鼠标一条路 —— 焦点进卡片什么都不发生。
-  // 现在焦点进入时同样量一遍（CSS 那条 :focus-visible 分支才有变量可用），离开时复位。
+  // 焦点进入卡片也要量一遍（CSS 那条 :focus-visible 分支才有变量可用），离开复位 —— 否则读全一张卡片的完整专辑名只有鼠标一条路
   const marquee = read('src/views/marquee.ts');
   assert.match(marquee, /export function measureMarqueesIn/, '要有「量一块宿主里的 marquee」的入口');
   assert.match(marquee, /export function resetMarqueesIn/, '要有对应的复位入口');
@@ -109,8 +101,7 @@ test('长文本可读性：专辑墙卡片标题的悬停滚动走共享模块',
     /\.vinyl-marquee\.is-overflowing:hover[\s\S]{0,400}white-space:\s*normal/,
     '减少动效下不滚，但要换成换行把全文读出来（只关动画会把长标题裁掉）'
   );
-  // 播放器这边目前没有 marquee 元素（Vinyl order 行不放专辑名，用户 2026-09-25 定稿）：
-  // 委托监听也跟着撤了。真要再挂一个 marquee 元素，记得把 contentEl 上的 pointerover / pointerout 接回来
+  // 播放器不放 marquee 元素（Vinyl order 行不放专辑名，用户 2026-09-25 定稿），委托监听也一并撤了；真要再挂 marquee 元素，记得把 contentEl 上的 pointerover / pointerout 接回来
   assert.doesNotMatch(
     read('src/views/player-view.ts'),
     /vinyl-marquee/,
@@ -222,8 +213,7 @@ test('可访问性：载入 / 缓冲状态位是 live 区，且文案走 i18n', 
 });
 
 // ============ 1.1.0 之后新增界面的覆盖（上面几条停在 1.0.16，见 e74fe9a）============
-// 这一批补的是 1.1.0 / 1.2.0 / 1.3.0 三版界面里从没被门禁覆盖过的交互：
-// 浮层焦点与 Tab 陷阱、拖拽的键盘等价、aria-current、菜单落点、卡片的菜单入口、翻面后的焦点。
+// 补的是 1.1.0 / 1.2.0 / 1.3.0 三版界面里从没被门禁覆盖过的交互：浮层焦点与 Tab 陷阱、拖拽的键盘等价、aria-current、菜单落点、卡片的菜单入口、翻面后的焦点
 
 test('可访问性：陈列浮层打开后焦点进入，且 Tab 在浮层内循环（曾整层不可达）', () => {
   const src = read('src/views/shelf-view.ts');
@@ -256,8 +246,7 @@ test('可访问性：每处拖拽都有键盘等价（tabIndex + Alt+方向键�
 });
 
 test('可访问性：状态行都带 live 语义（role=status 与容器写在同处）', () => {
-  // 判据：凡是建了一个 class 里带 status 的容器，同一处就要写 role: 'status'。
-  // 比「按文件判定」严：同一文件里新加一个状态行而忘了 role，这条会点名它。
+  // 判据：凡 class 带 status 的容器，同一处就要写 role: 'status'（比按文件判定严：同一文件里新加一个状态行而忘了 role，这条会点名它）
   const offenders = [];
   let live = 0;
   for (const f of tsFiles()) {
@@ -295,9 +284,8 @@ test('可访问性：菜单落点不能用鼠标事件坐标（键盘触发时 c
 
 test('可访问性：卡片菜单不靠右键独占（「⋯」按钮 2026-09-27 删掉，键盘那条路得留住）', () => {
   const src = read('src/views/shelf-view.ts');
-  // 卡片上不再挂那枚「⋯」按钮（用户 2026-09-27：每张封面角上都压着一枚，是最吵的装饰）。
-  // 菜单本身没消失：右键（鼠标）与 Shift+F10 / 菜单键（键盘）共用同一个 showMenu，
-  // 键盘那条用卡片矩形算落点（键盘触发的坐标恒为 0，见上一条用例）。
+  // 卡片上不挂「⋯」按钮（用户 2026-09-27，理由见「专辑墙是方向键网格」用例）。菜单本身没消失：右键（鼠标）与
+  // Shift+F10 / 菜单键（键盘）共用同一个 showMenu，键盘那条按卡片矩形算落点（键盘触发坐标恒为 0，见上一条用例）
   assert.doesNotMatch(src, /vinyl-shelf-card-menu/, '卡片上不再挂「⋯」按钮（用户 2026-09-27）');
   assert.match(
     src,
@@ -322,13 +310,12 @@ test('可访问性：命令面板能触达只有鼠标路径的那些动作，�
                     'insert-now-playing', 'player-toggle', 'player-next', 'player-prev']) {
     assert.match(cmds, new RegExp(`id: '${id}'`), `命令 ID '${id}' 不能改（用户绑的快捷键会失效）`);
   }
-  // 此前只有鼠标路径的五个动作，现在都要能从命令面板触达
+  // 原本只有鼠标路径的五个动作，现在都要能从命令面板触达
   for (const id of ['append-listening-note', 'set-album-cover', 'open-album-in-source',
                     'import-local-to-current', 'queue-move-segment-up']) {
     assert.match(cmds, new RegExp(`'${id}'`), `${id} 必须可从命令面板触达`);
   }
-  // 默认快捷键刻意不配（插件规范建议别设，键位交给用户在「设置 → 快捷键」里绑）。
-  // 去注释再看：文件头会点名 keys?: KeyChord[] 说明为什么不留它，那不是违规
+  // 默认快捷键刻意不配（插件规范建议别设，键位交给用户在「设置 → 快捷键」里绑）；去注释再看（同前一条用例）：文件头点名 keys?: KeyChord[] 说明为什么不留它，那不是违规
   const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   assert.doesNotMatch(src, /hotkeys:/, '不设默认快捷键');
   assert.doesNotMatch(strip(cmds), /\bkeys\s*[?:]/, '命令表里也不留 keys 字段');
@@ -398,9 +385,8 @@ test('可访问性：截断文本的可读性靠 aria-label（title 在本仓库
     /card\.setAttribute\('aria-label', album\.title\)/,
     '卡片同样用 aria-label 报完整专辑名'
   );
-  // 悬停气泡（用户 2026-09-27：鼠标扫过墙面不该挨张弹专辑名）靠 --no-tooltip 关掉，而不是
-  // 摘掉 aria-label —— 名字是读屏软件的，气泡才是碍事的那个。宿主的提示模块读这条自定义属性
-  // （Obsidian 自己的堆叠标签 / 自动补全也这么关），所以两边都留得住。
+  // 悬停气泡（用户 2026-09-27：鼠标扫过墙面不该挨张弹专辑名）靠 --no-tooltip 关掉，而不是摘掉 aria-label ——
+  // 名字是读屏软件的，气泡才是碍事的那个；宿主的提示模块读这条自定义属性（Obsidian 的堆叠标签 / 自动补全也这么关），两边都留得住
   const css = read('styles.css');
   assert.match(
     css,

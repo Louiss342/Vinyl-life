@@ -1,12 +1,7 @@
 // 播放失败与等待状态的回归（两条真缺陷 + 两条防线）：
-//   ① 一首放不出来时**自动跳下一首** —— 旧写法落 status='error' 就停在那一首，
-//      一张专辑里坏一首（链接过期 / 单个文件损坏）就卡住整张，得手动一首首点过去；
-//   ② 队尾按「下一首」：循环 / 随机有去处（回队首 / 重洗一遍），只有单次才真的没有下一首。
-//      旧写法在队尾无声返回 —— 按了下一首什么都没发生；
-//   ③ 防线一：整条队列都放不出来时不打转（同一首在一次播放回合里只自动跳一次，见 autoSkipped）；
-//   ④ 防线二：取址失败（会员 / 未绑定音源）**不**跳 —— 那是语义问题，用户要看的是原因，
-//      不是一首首刷提示。同一份队列里，两种情况的表现必须分得开。
-// 另加缓冲态：只在真的在播时报（暂停时元素也在等数据，那不是用户眼里的卡顿）。
+//   ① 放不出来就自动跳下一首（旧写法落 status='error' 停在那一首：一张专辑里坏一首就卡住整张）；
+//   ② 队尾按「下一首」：循环 / 随机有去处，只有单次真的没有下一首（旧写法在队尾无声返回）。
+//   防线一：整队都放不出来时不打转（同一首一次播放回合只自动跳一次，见 autoSkipped）；防线二：取址失败（会员 / 未绑定音源）不跳 —— 那是语义问题，用户要看原因；同一份队列里两种情况必须分得开。缓冲态只在真的在播时报（暂停时元素也在等数据）。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -61,8 +56,7 @@ function loadModule(entry, globals = {}) {
     clearTimeout,
     setInterval,
     clearInterval,
-    // 马达斜坡（暂停的滑停）在 window 上排定时器：这里的用例不考斜坡本身，
-    // 给一组「排了但不响」的替身即可 —— 状态在按下的那一刻就翻，其余断言不依赖斜坡走完
+    // 马达斜坡在 window 上排定时器：本批不考斜坡，给一组「排了但不响」的替身即可（状态在按下那刻就翻）
     window: { setInterval: () => 0, clearInterval: () => {}, setTimeout: () => 0, clearTimeout: () => {} },
     console,
     ...globals,
@@ -128,7 +122,6 @@ function albumOf(id, title) {
   };
 }
 
-/** 每张专辑的曲目表（album 桩按 id 取） */
 const songList = {};
 
 function makeEngine({ songUrl, failAll = false } = {}) {
@@ -168,7 +161,7 @@ async function setup(ids, opts) {
 test('播放失败：兜底救不回来就自动跳下一首（旧写法停在那一首）', async () => {
   const { audio, snap } = await setup([11, 12]);
   assert.equal(snap().index, 0, '先放着第一首');
-  // 第一首「放着放着坏了」：重取回来的地址同样放不出来（元素报 error → 引擎重取 → 还是放不出来）
+  // 「放着放着坏了」：重取回来的地址同样放不出来（元素报 error → 引擎重取 → 还是不行）
   audio.failPlayFor = (src) => src.includes('/11.');
   notices.length = 0;
   audio.emit('error');
@@ -211,7 +204,6 @@ test('缓冲态：waiting 亮起、canplay 收掉；暂停时不报', async () =
   assert.equal(snap().buffering, true, '元素在等数据 → 报缓冲');
   audio.emit('canplay');
   assert.equal(snap().buffering, false, '能接着放了 → 收掉');
-  // 暂停：元素也会继续取数据，但那不是用户眼里的卡顿
   audio.emit('waiting');
   engine.pause();
   audio.emit('pause');

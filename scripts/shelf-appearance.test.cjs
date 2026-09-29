@@ -1,6 +1,5 @@
 // 专辑墙外观回归：黑胶动画方向（四方互为镜像）+ 每行卡片数 + applyAppearance 接线。
-// A 部分解析 styles.css 真值（设置改方向时最容易改错的几何关系）；
-// B 部分带假元素跑 shelf-view.applyAppearance（esbuild + vm，stub obsidian）。
+// A 解析 styles.css 真值（改方向时最容易错的几何关系）；B 带假元素跑 shelf-view.applyAppearance（esbuild + vm，stub obsidian）。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -23,10 +22,7 @@ const source = esbuild.buildSync({
   external: ['obsidian'],
 }).outputFiles[0].text;
 
-// —— 极简 CSS 块与变量提取 ——
-/** 命中处是否在顶层：@container / @media 里还有同名规则（窄窗格让位那几条），
- *  朴素地取「第一个同名块」会静默比到嵌套的那一份。计数时跳过注释块，
- *  免得注释里出现的花括号把深度算歪。 */
+/** 极简 CSS 块 / 变量提取。命中处是否在顶层：@container / @media 里还有同名规则（窄窗格让位那几条），朴素地取「第一个同名块」会静默比到嵌套的那一份；计数时跳过注释块，免得注释里的花括号把深度算歪。 */
 function atTopLevel(css, index) {
   let depth = 0;
   for (let i = 0; i < index; i++) {
@@ -68,7 +64,6 @@ function cssVar(css, block, name) {
   return m[1].trim();
 }
 
-// translate(x%, y%) 取数；rotate(deg) 取数
 function tx(t) {
   const m = /translate\(\s*(-?[\d.]+)%\s*,\s*(-?[\d.]+)%/.exec(t);
   assert.ok(m, `transform 解析失败：${t}`);
@@ -175,8 +170,7 @@ test('几何：向上 / 向下 = 纵向镜像，横向居中在 -50%', () => {
 });
 
 test('几何：探出方向正确（右/左/下/上各自的常驻位探出封面该侧）', () => {
-  // 唱片宽高 95%、贴 left/top 50%：translate 百分比相对唱片自身；
-  // 常驻位探出量 ≈ 26%（探出侧），即中心偏移 ~0.285 个封面宽度。
+  // 唱片宽高 95%、贴 left/top 50%，translate 百分比相对唱片自身：常驻位探出 ≈ 26%（探出侧），中心偏移 ~0.285 个封面宽度。
   const out = (dir, axis) => {
     const [x, y] = tx(varsOf(dir).rest);
     return axis === 'x' ? x : y;
@@ -243,9 +237,8 @@ test('接线：applyAppearance 写方向类 + 列数变量 + 唱片配色类 + �
   );
 });
 
-// 窄窗格：固定列数不能写成 repeat(N, minmax(0, 1fr)) —— 实测 200px 窗格里四列 =
-// 4 条 0px 轨道，封面整块消失（用户报的「窗口很小的时候专辑墙上的内容会消失不见」）。
-// 改成 auto-fill + 卡片下限：宽窗格与固定列数完全等价，窄了按装得下的张数让位。
+// 窄窗格：固定列数不能写成 repeat(N, minmax(0, 1fr)) —— 实测 200px 窗格里四列 = 4 条 0px 轨道、封面整块消失
+//（用户报的「窗口很小的时候专辑墙上的内容会消失不见」）。改成 auto-fill + 卡片下限：宽窗格与固定列数等价，窄了按装得下的张数让位。
 test('窄窗格：固定列数按卡片下限逐级让位，不做 0 宽轨道', () => {
   const mod = makeStub();
   const auto = mod.shelfColumnsTemplate('auto');

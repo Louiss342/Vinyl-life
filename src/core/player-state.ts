@@ -39,19 +39,16 @@ export type PlayerStatus = 'idle' | 'loading' | 'playing' | 'paused' | 'error';
 /** 在线地址的保鲜期（见 urlCache）：平台签名地址约一刻钟到期，取 10 分钟留足余量 */
 const URL_TTL_MS = 10 * 60 * 1000;
 
-/** 播放模式：单次（播完停）/ 循环（播完回到开头）/ 随机（打乱后一直放）。
- *  作用对象是当前队列：单专辑时就是这张专辑的曲目，队列模式下是整条列表的曲目。 */
+/** 播放模式：单次（播完停）/ 循环（回开头）/ 随机（打乱后一直放）；作用对象是当前队列 —— 单专辑时是这张专辑的曲目，队列模式下是整条列表。 */
 export type PlayMode = 'once' | 'loop' | 'shuffle';
 
-/** 队列里的一段 = 同一张专辑连续的一段曲目。专辑队列模式下可以有多个段（同一张专辑也可以出现多次）。 */
+/** 队列里的一段 = 同一张专辑连续的一段曲目（队列模式下同专辑可以出现多次）。 */
 export interface QueueSegment {
   /** 专辑笔记路径（分组键；曲目没带路径时回落到当前专辑） */
   albumPath: string;
   albumTitle: string;
-  /** 在整条队列里的起始下标与长度 */
   start: number;
   count: number;
-  /** 当前播放的曲目是否落在这一段里 */
   current: boolean;
 }
 
@@ -69,18 +66,15 @@ export interface PlayerSnapshot {
   segments: QueueSegment[];
   /** 当前播放模式（顶部模式按钮按它显示图标与提示） */
   playMode: PlayMode;
-  /** 当前队列来源（本地 / 网易云） */
   sourceLabel?: string;
   /** 当前曲目实际拿到的音质档（standard/higher/exhigh/lossless；本地音轨为空） */
   quality?: string;
   error?: string;
-  /** 元素在等数据（waiting / stalled）：界面据此报「缓冲中」。
-   *  只看 status 是不够的 —— 网速跟不上时状态仍是 playing，唱机看着像死了。 */
+  /** 元素在等数据（waiting / stalled）：界面据此报「缓冲中」——只看 status 不够，网速跟不上时状态仍是 playing。 */
   buffering: boolean;
-  /** 转盘马达的当前状态（缺省 = 稳速）。暂停是**断电滑停**：状态按用户的指令立刻翻成暂停，
-   *  但盘面还要滑零点几秒、声音还要淡出 —— 那一段的下文在这里，视图据此接管盘面旋转
-   *  （曲线见 core/motor：两边共用同一份纯函数，画面与声音才是同一条时间轴）。
-   *  rate = 这一段起点（这次快照那一刻）的转速：斜坡是「差多少补多少」的，从当前值接着走即正确。 */
+  /** 转盘马达的当前状态（缺省 = 稳速）：暂停是**断电滑停**，状态立刻翻但盘面与声音还要滑零点几秒
+   *  —— 那一段的下文在这里，视图据此接管盘面旋转（曲线见 core/motor，两边共用同一份纯函数）。
+   *  rate = 这次快照那一刻（这一段起点）的转速：斜坡「差多少补多少」，从当前值接着走即正确。 */
   motor?: { phase: MotorPhase; rate: number };
 }
 
@@ -103,9 +97,7 @@ export interface EngineDeps {
   onAlbumLoadFailed?: (album: AlbumInfo, policy: SourcePolicy, reason: string) => void;
 }
 
-/** 从抛出来的东西里取一句人话：Error 取 message（跨 realm 的 Error instanceof 会失败 ——
- *  vm / 弹窗窗口里抛出来的就是这种，所以按鸭子类型读 message），标量直接用，
- *  其余（对象）回空串 —— String(对象) 会得到 "[object Object]"，看着像文案、其实没人看得懂。 */
+/** 从抛出来的东西里取一句人话：按鸭子类型读 message（跨 realm 的 Error instanceof 会失败），标量直接用，对象回空串（"[object Object]" 没人看得懂） */
 function errorText(e: unknown): string {
   const msg = (e as { message?: unknown } | null | undefined)?.message;
   if (typeof msg === 'string' && msg) return msg;
@@ -126,14 +118,12 @@ export class PlaybackEngine {
   /** 专辑路径 → 标题：追加多张专辑后，界面要按段显示各自的名字（曲目上只有路径） */
   private albumTitles = new Map<string, string>();
   private quality = '';
-  /** 音量分两层：userVolume = 用户设的那一档（快照 / 落盘 / 电平表读的都是它），
-   *  motorGain = 马达斜坡的淡入淡出系数。元素实际音量 = 两者相乘 ——
-   *  滑停 / 起转期间电平表不该跟着抖（抖的是唱片转速，不是用户的音量）。 */
+  /** 音量分两层：userVolume = 用户设的那一档（快照 / 落盘 / 电平表读的都是它），motorGain = 马达
+   *  斜坡的淡入淡出系数；元素实际音量 = 两者相乘（滑停 / 起转期间电平表不该跟着抖）。 */
   private userVolume = 0.8;
   private motorGain = 1;
   /** 转盘马达：暂停 = 断电滑停、复播 = 马达起转（曲线见 core/motor）。null = 稳速（1 倍转速）。
-   *  rate = 当前转速，from / startedAt = 这一段的起点转速与起点时刻。
-   *  timer = 推进的步进表，watch = 后台节流时的兜底（见 motorBegin）。 */
+   *  rate = 当前转速，from / startedAt = 这一段起点的转速与时刻；timer = 步进表，watch = 后台节流兜底。 */
   private motor: {
     phase: MotorPhase;
     from: number;
@@ -143,12 +133,9 @@ export class PlaybackEngine {
     watch: number;
   } | null = null;
   private listeners = new Set<(s: PlayerSnapshot) => void>();
-  // 在线源 URL 缓存：按 trackKey 区分来源（netease id 为数字、qq id 为 mid 字符串，
-  // 无法共用裸 id 键，否则跨源会命中错误缓存）。
-  // 值带时间戳：平台给的地址是**签名**的，约一刻钟就过期（URL 里那串 20260927203050 就是
-  // 它自己的到期时刻）。过期地址起播会先报一次错、再由 onAudioError 重取 —— 那道兜底是给
-  // 「正放着的时候过期」准备的，不该让「预热好的地址放久了」也去走它：超过 URL_TTL_MS
-  // 就当没缓存、重新取一次（这本来就是没有预热时每次都会发生的事）。
+  // 在线源 URL 缓存：按 trackKey 键控（netease 数字 id 与 qq 的 mid 无法共用裸 id 键）。值带时间戳：
+  // 平台地址是**签名**的、约一刻钟过期，超过 URL_TTL_MS 就当没缓存重取 —— onAudioError 里那道重取
+  // 兜底是给「正放着的时候过期」准备的，不该由放久了的预热地址去走。
   private urlCache = new Map<string, { url: string; at: number }>();
   /** 同一首正在取址的那趟网络（见 resolveUrl 的去重说明）：落地即摘 */
   private urlInflight = new Map<string, Promise<string>>();
@@ -158,27 +145,23 @@ export class PlaybackEngine {
   private urlRefetched = new Set<string>();
   /** 元素是否在等数据（waiting / stalled）——对外报 buffering，见 snapshot 与构造函数里的监听 */
   private buffering = false;
-  /** 已经自动跳过的曲目（trackKey）：一次播放回合里同一首只跳一次。
-   *  没有这条记账的话，整条队列都取不到流时会一首接一首地打转（每首都失败 → 每首都跳）。 */
+  /** 已经自动跳过的曲目（trackKey）：一次播放回合里同一首只跳一次 —— 没这条记账，整条队列都取不到流时会一首接一首地打转 */
   private autoSkipped = new Set<string>();
   /** 已经提示过「这是试听片段」的曲目（trackKey）：同一首只提示一次（换队列作废） */
   private trialNoticed = new Set<string>();
   private lastTimeEmit = 0;
   // 加载代次：快速连点两张专辑时，先发起的在线队列构建可能后返回，须丢弃以免覆盖新选择
   private loadSeq = 0;
-  /** 单曲加载代次（与队列构建的 loadSeq 分开）：每次 playIndex 进一轮，A→B→A 来回点时
-   *  让先发起的那一趟作废（否则两趟一起写 src、一起记播放事件）。 */
+  /** 单曲加载代次（与队列构建的 loadSeq 分开）：每次 playIndex 进一轮，A→B→A 来回点时让先发起的那一趟作废（否则两趟一起写 src、一起记播放事件） */
   private trackSeq = 0;
-  /** 搓碟会话（null = 没在搓）：搓碟期间元素暂停、位置由视图逐帧喂进来（见 beginScratch）。
-   *  状态字段在搓碟期间不跟着元素的 play / pause 事件抖（见构造函数里的两个监听）。
-   *  pitchFollow = 本会话把元素的「保音高」关掉了（松手要还回去，见 setPitchFollow）。 */
+  /** 搓碟会话（null = 没在搓）：搓碟期间元素暂停、位置由视图逐帧喂进来（见 beginScratch），
+   *  状态字段不跟着元素的 play / pause 事件抖（见构造函数里的两个监听）。 */
   private scratch: {
     live: boolean;
     resumePlaying: boolean;
     time: number;
     pitchFollow: boolean;
-    /** 搓碟期间用户按过媒体键（播 / 停）：这时松手以会话里的意图为准，
-     *  而不是视图记下的「起手那一刻」的姿态 —— 两个会打架，见 endScratch。 */
+    /** 搓碟期间用户按过媒体键（播 / 停）：松手时以会话里的意图为准，而不是视图记下的「起手那一刻」的姿态（两个会打架，见 endScratch） */
     intentChanged: boolean;
   } | null = null;
 
@@ -189,8 +172,7 @@ export class PlaybackEngine {
     this.audio.addEventListener('loadedmetadata', () => this.emit());
     this.audio.addEventListener('timeupdate', () => this.emitThrottled());
     this.audio.addEventListener('ended', () => this.onEnded());
-    // 搓碟期间元素的 play / pause 是「手在盘上」的中间态（轻量音效会随倍速反复起停），
-    // 一律不写状态：对外报的是起手前的姿态（见 snapshot）。
+    // 搓碟期间元素的 play / pause 是「手在盘上」的中间态（轻量音效会随倍速反复起停），一律不写状态（对外报的是起手前的姿态）
     this.audio.addEventListener('play', () => {
       if (this.scratch) return;
       if (this.status !== 'playing') {
@@ -208,9 +190,7 @@ export class PlaybackEngine {
     this.audio.addEventListener('error', () => {
       void this.onAudioError();
     });
-    // 缓冲：元素要等字节（waiting）时亮起，能接着放（playing / canplay）就收掉。
-    // waiting 与 canplay 是成对的（Chromium 在卡住 / 恢复时各发一次），playing 再兜一遍底 ——
-    // 缺了兜底，一次漏掉的 canplay 会让「缓冲中」一直挂在那里。
+    // 缓冲：要等字节（waiting / stalled）时亮起，能接着放（playing / canplay）就收掉 —— 漏掉一次 canplay 会让「缓冲中」一直挂着，playing 是兜底。
     this.audio.addEventListener('waiting', () => this.setBuffering(true));
     this.audio.addEventListener('stalled', () => this.setBuffering(true));
     this.audio.addEventListener('playing', () => this.setBuffering(false));
@@ -244,8 +224,7 @@ export class PlaybackEngine {
       current: this.index >= 0 ? this.queue[this.index] : undefined,
       currentTime: this.scratch ? this.scratch.time : this.audio.currentTime || 0,
       duration: this.audioDuration(),
-      // 报用户设的那一档，不是元素此刻的实际音量：滑停 / 起转期间元素在淡出，
-      // 那是唱片的事 —— 电平表跟着抖、还把抖出来的值落盘就说不通了
+      // 报用户设的那一档，不是元素此刻的实际音量：滑停 / 起转期间淡出是唱片的事，电平表跟着抖、还把抖出来的值落盘就说不通
       volume: this.userVolume,
       motor: this.motor ? { phase: this.motor.phase, rate: this.motor.rate } : undefined,
       // 专辑信息按「当前曲目」推：多专辑队列里播放会跨段，用最后一次 loadAlbum 的那张会串
@@ -272,8 +251,7 @@ export class PlaybackEngine {
     return { path, title };
   }
 
-  /** 队列按专辑分段：连续且 albumNotePath 相同的曲目算一段（同一张专辑可以出现多次）。
-   *  段是界面分组与「移除整张专辑 / 跨段排序」的操作单位。 */
+  /** 队列按专辑分段：连续且 albumNotePath 相同的曲目算一段（同专辑可多次出现）；段是界面分组与「移除整张专辑 / 跨段排序」的操作单位 */
   segments(): QueueSegment[] {
     const out: QueueSegment[] = [];
     for (let i = 0; i < this.queue.length; i++) {
@@ -320,8 +298,7 @@ export class PlaybackEngine {
     };
   }
 
-  /** opts.autoplay 缺省时看设置（「加载队列后立即播放」）；恢复上次会话传 false
-   *  —— 重启 Obsidian 时突然出声是惊吓，不是功能。 */
+  /** opts.autoplay 缺省时看设置（「加载队列后立即播放」）；恢复上次会话传 false —— 重启 Obsidian 时突然出声是惊吓，不是功能 */
   async loadAlbum(album: AlbumInfo, opts?: { autoplay?: boolean; source?: SourcePolicy }): Promise<BuildQueueResult> {
     const seq = ++this.loadSeq;
     const res = await buildAlbumQueue(
@@ -354,10 +331,8 @@ export class PlaybackEngine {
     // 换专辑：先停旧曲（否则关闭「自动播放」时旧曲会一直响，而界面已是新专辑）
     this.unloadAudio();
     this.errorMsg = '';
-    // 切换专辑：回收上一张的 Blob，保留本队列需要的
     this.deps.local.clearBlobs(this.deps.local.keysOf(tracks));
-    // 队列一律按构建出来的自然顺序（发行顺序）：用户拖拽只改本次会话的排列，
-    // 不落盘、也不在下次播这张专辑时复现（设计稿要求「不记忆拖拽导致的顺序变化」）
+    // 队列一律按构建出来的自然顺序（发行顺序）：拖拽只改本次会话的排列，不落盘、也不在下次播这张专辑时复现（设计稿要求「不记忆拖拽导致的顺序变化」）
     this.queue = tracks;
     this.index = -1;
     this.albumNotePath = albumNotePath;
@@ -379,8 +354,7 @@ export class PlaybackEngine {
     this.emit();
   }
 
-  /** 专辑队列模式：构建这张专辑的队列并追加到队尾（界面只调这一句）。
-   *  与 loadAlbum 共用代次：快速连点两张专辑时，先发起的构建后返回会被丢弃。 */
+  /** 专辑队列模式：构建这张专辑的队列并追加到队尾（界面只调这一句）；与 loadAlbum 共用代次 —— 快速连点两张专辑时，先发起的构建后返回会被丢弃 */
   async enqueueAlbum(album: AlbumInfo): Promise<BuildQueueResult> {
     const seq = ++this.loadSeq;
     const res = await buildAlbumQueue(album, this.queueDeps());
@@ -394,14 +368,11 @@ export class PlaybackEngine {
     return res;
   }
 
-  /** 进随机之前的那份队列顺序（退出随机时还原，见 restoreShuffledOrder）。
-   *  设计稿删掉了「恢复发行顺序」按键，所以还原挂在**模式切换**上：
-   *  随机是一次可逆的试听，而不是把用户排好的队列永久打乱 —— 打乱之后连专辑分段都没了，
-   *  「移除整段」也跟着够不着。手动拖拽过就以用户的顺序为准（见 moveTrack）。 */
+  /** 进随机之前的那份队列顺序（退出随机时还原，见 restoreShuffledOrder）。设计稿删掉了「恢复发行顺序」
+   *  按键，所以还原挂在**模式切换**上：随机是一次可逆的试听，而不是把用户排好的队列永久打乱。 */
   private orderBeforeShuffle: Track[] | null = null;
 
-  /** 专辑队列模式：把一张专辑的队列追加到队尾（不动当前播放，允许同一张专辑重复排入）。
-   *  队列原本是空的 → 按普通换碟处理（否则用户点了专辑却什么都不发生，比排队更奇怪）。 */
+  /** 专辑队列模式：把一张专辑的队列追加到队尾（不动当前播放，允许同专辑重复排入）；队列原本是空的 → 按普通换碟处理（否则用户点了专辑却什么都不发生） */
   async appendAlbum(
     tracks: Track[],
     albumPath: string,
@@ -428,8 +399,7 @@ export class PlaybackEngine {
     if (!albumPath) return;
     const kept = this.queue.filter((track) => (track.albumNotePath || this.albumNotePath) === albumPath);
     if (!kept.length || kept.length === this.queue.length) return;
-    // clearBlobs 的参数是「要留的」（见 local-source）：传被移除的那批会把**正在播的**
-    // 那份 Blob 一起回收掉 —— 元素手里的 src 变成废 URL，之后再取流要整文件重读一遍
+    // clearBlobs 的参数是「要留的」（见 local-source）：传被移除的那批会把**正在播的**那份 Blob 也回收掉，元素手里的 src 就成废 URL 了
     this.deps.local.clearBlobs(this.deps.local.keysOf(kept));
     this.queue = kept;
     this.index = current ? kept.indexOf(current) : -1;
@@ -438,14 +408,12 @@ export class PlaybackEngine {
     this.emit();
   }
 
-  /** 移除队列里的一段（整张专辑）。正在播（或在加载）的曲目落在这一段里时，顺延到同位置
-   *  剩下的那一首（删的是队尾段就往前退一首）；队列空了就复位成「没在播」。 */
+  /** 移除队列里的一段（整张专辑）：正在播（或在加载）的曲目落在这一段里时顺延到同位置剩下的那首（删的是队尾段就往前退一首）；队列空了就复位成「没在播」 */
   removeRange(start: number, count: number) {
     if (start < 0 || count <= 0 || start >= this.queue.length) return;
     const end = Math.min(this.queue.length, start + count);
     const wasCurrent = this.index >= start && this.index < end;
-    // 暂停中删掉当前这首 = 用户只是要把它拿掉，不是「那就放下一首」——
-    // 引擎不该替他按播放键（原来无条件顺延播放，暂停的播放器会自己响起来）
+    // 暂停中删掉当前这首 = 用户只是要把它拿掉，不是「那就放下一首」—— 引擎不该替他按播放键（旧写法无条件顺延播放，暂停的播放器会自己响起来）
     const wasPlaying = this.status === 'playing' || this.status === 'loading';
     const currentKey = this.index >= 0 ? trackKey(this.queue[this.index]) : '';
     const nextQueue = [...this.queue.slice(0, start), ...this.queue.slice(end)];
@@ -486,15 +454,13 @@ export class PlaybackEngine {
       const i = this.queue.findIndex((tr) => trackKey(tr) === currentKey);
       if (i >= 0) this.index = i;
     }
-    // 与 moveTrack 同一条口径：手动搬过 = 用户自己认下了这个顺序，
-    // 进随机前存的那份不再算数（否则退出随机时这次调整会被静默还原）
+    // 与 moveTrack 同一口径：手动搬过 = 用户认下了这个顺序，进随机前存的那份不再算数（否则退出随机时会被静默还原）
     this.orderBeforeShuffle = null;
     this.emit();
   }
 
-  /** 拖拽重排队列：把 from 处的曲目移到 to 位（to = 结果下标）。
-   *  正在播放的那首歌必须继续是「当前」——先记住它（对象引用 + trackKey 双保险），
-   *  重排后按新位置重置 index，否则 UI 高亮 / next() 的推进基准会跟着下标漂到别的曲子上。 */
+  /** 拖拽重排队列：把 from 处的曲目移到 to 位（to = 结果下标）。当前曲目必须继续是「当前」
+   *（对象引用 + trackKey 双保险）—— 重排后按新位置重置 index，否则 UI 高亮 / next() 的推进基准会漂到别的曲子上。 */
   /** 曲目在队列里的所属段（供拖拽约束与界面分组用） */
   private segmentOf(index: number): QueueSegment | undefined {
     return this.segments().find((x) => index >= x.start && index < x.start + x.count);
@@ -512,11 +478,9 @@ export class PlaybackEngine {
       if (i < 0 && currentKey) i = this.queue.findIndex((tr) => trackKey(tr) === currentKey);
       if (i >= 0) this.index = i;
     }
-    // 手动拖过 = 用户自己认下了这个顺序：进随机前存的那份不再算数
-    //（否则退出随机时会把他的调整吃掉）
+    // 手动拖过 = 用户自己认下了这个顺序：进随机前存的那份不再算数（否则退出随机会吃掉他的调整）
     this.orderBeforeShuffle = null;
-    // 音频不动（同一首歌继续播），只广播新队列 → 视图重建行并重贴 is-current。
-    // 拖动只改「这一次会话」的排列：不落盘、也不在下次播这张专辑时复现（设计稿要求）
+    // 音频不动（同一首歌继续播），只广播新队列 → 视图重建行并重贴 is-current；排列口径见 setQueue
     this.emit();
   }
 
@@ -559,14 +523,10 @@ export class PlaybackEngine {
   // —— 控制 ——
   async playIndex(i: number, opts?: { retry?: boolean; silent?: boolean }) {
     if (i < 0 || i >= this.queue.length) return;
-    // 已在播的这一首不重起（点队列里正在放的那一行不该从头开始）。
-    // retry 例外：兜底链要重新取址、重新起播 —— 元素出错时引擎不一定收过 pause 事件，
-    // 状态还停在 playing，按这条守卫会让「重取一次」变成空操作（旧写法就是这样：出错后
-    // 界面还在转、却没有声音，也没有任何下文）。
-    // loading 也归这条守卫管：从点下到出声之间（在线源要整趟取址 + 缓冲）再点同一行会重入，
-    // 第二次重写 audio.src 会被浏览器的加载算法当成换源 —— 上一次还挂着的 play() 以
-    // AbortError 被拒，下面的 catch 把「被自己打断」读成「这首放不出来」→ 跳下一首 + 谎报故障，
-    // 统计里记的也成了下一首。用户侧的表现就是「双击队列里的一行 = 无缘无故跳歌」。
+    // 已在播的这一首不重起（点正在放的那一行不该从头开始）；retry 例外 —— 元素出错时引擎不一定
+    // 收过 pause 事件，状态还停在 playing，按这条守卫会让「重取一次」变成空操作。
+    // loading 也归它管：取址 + 缓冲期间再点同一行会重入，第二次写 audio.src 被当成换源，上一次挂着
+    // 的 play() 以 AbortError 被拒 → catch 读成「这首放不出来」→ 跳下一首 + 谎报故障（= 双击跳歌）。
     if (
       !opts?.retry &&
       this.index === i &&
@@ -575,8 +535,7 @@ export class PlaybackEngine {
       return;
     }
     this.abortScratch(); // 点队列切歌 / 媒体键下一首：手里的那张碟换掉了
-    // 马达同理：换曲不做斜坡（真实唱机上换曲时转盘一直在转，只有「开始 / 停止」才动马达），
-    // 但上一条留下的斜坡必须收干净 —— 否则旧曲线会接着写新曲子的倍速与音量
+    // 马达同理：换曲不做斜坡（真机换曲时转盘一直在转，只有「开始 / 停止」才动马达），但上一条留下的斜坡必须收干净，否则旧曲线会接着写新曲子的倍速与音量
     this.motorAbort();
     this.index = i;
     this.status = 'loading';
@@ -585,16 +544,12 @@ export class PlaybackEngine {
     this.buffering = false;
     this.emit();
     const track = this.queue[i];
-    // 「还在等这一首吗」按下标判定会在拖拽重排后误判（下标变了、曲子没变）→ 卡在 loading。
-    // 判据用「当前曲目还是不是这一首」：切走 / 换专辑照样丢弃，重排不打断加载。
-    // 再加上这一轮的代次：A→B→A 这样快速来回点，第一次的 A 会被「当前曲目还是 A」判成
-    // 仍然有效，两趟加载一起写 src、一起记播放事件 —— 代次一变，旧的那趟就作废。
-    // 用独立的计数器而不是 loadSeq（那是**专辑队列构建**的代次，借用它会让「点一下队列行」
-    // 把正在载入的那张专辑给取消掉）。
+    // 判据是「当前曲目还是不是这一首」而非下标：拖拽重排只换位置不换曲子，按下标判会卡在 loading。
+    // 再加这一轮的代次：A→B→A 快速来回点时第一次的 A 会被判成仍然有效，两趟加载一起写 src、一起记播放事件。
+    // 用独立计数器而非 loadSeq（那是**专辑队列构建**的代次，借用它会让「点一下队列行」取消正在载入的专辑）。
     const seq = ++this.trackSeq;
     const stillCurrent = () => this.trackSeq === seq && this.queue[this.index] === track;
-    // 取址失败是**语义**问题（会员 / 未绑定音源 / 平台拒绝）：如实报错就停在这儿 ——
-    // 一张会员专辑不该一首首跳过去刷一屏提示，用户要看到的是「为什么放不了」。
+    // 取址失败是**语义**问题（会员 / 未绑定音源 / 平台拒绝）：如实报错、停在这儿 —— 一张会员专辑不该一首首跳过去刷一屏提示
     let url: string;
     try {
       url = await this.resolveUrl(track);
@@ -606,12 +561,10 @@ export class PlaybackEngine {
     if (!stillCurrent()) return;
     // 实际音质档（网易云可能已逐级降档；本地音轨无此项）
     this.quality = this.levelCache.get(trackKey(track)) || '';
-    // 播放失败是**技术**问题（解码 / 格式 / 链接过期）：地址都拿到了却放不出来，
-    // 能跳就跳到下一首（见 skipBrokenTrack），跳不动才落 error。
+    // 播放失败是**技术**问题（解码 / 格式 / 链接过期）：能跳就跳到下一首（见 skipBrokenTrack），跳不动才落 error
     try {
       this.audio.src = url;
-      // silent：只把这一首挂到元素上，不出声、不记播放事件（删除暂停中的当前曲目时用 ——
-      // 用户没按播放，引擎就不该自己开播；元素备好，他按播放能立刻接上）。
+      // silent：只把这一首挂到元素上，不出声、不记播放事件（删除暂停中的当前曲目时用 —— 用户没按播放，引擎就不该自己开播）
       if (opts?.silent) {
         this.status = 'paused';
         this.emit();
@@ -622,8 +575,7 @@ export class PlaybackEngine {
       this.emit();
       // 这一首开声了：下一首的地址现在就去取（藏在它正在放的这几分钟里，见 prefetchNext）
       this.prefetchNext();
-      // 试听片段（会员曲目匿名取流只给一段）：说一次，别让用户以为「放到一半断了」。
-      // 一首只提示一次：单曲循环 / 来回切不会刷屏（角标是常驻的那份，见 player-view 的队列行）
+      // 试听片段（会员曲目匿名取流只给一段）：说一次，别让用户以为「放到一半断了」——一首只提示一次，单曲循环 / 来回切不刷屏（常驻角标见 player-view 的队列行）
       if (isTrialTrack(track) && !this.trialNoticed.has(trackKey(track))) {
         this.trialNoticed.add(trackKey(track));
         notice(t('player.trialNotice'));
@@ -648,8 +600,7 @@ export class PlaybackEngine {
     notice(tf('player.cannotPlay', { title: track.title, msg: this.errorMsg }));
   }
 
-  /** 恢复队列位置（不播放）：加载曲目地址并停在 positionSec 处，等用户自己按播放。
-   *  位置要等元数据到位才设得上（duration 未就绪时赋值会被忽略），所以挂在 loadedmetadata 上。 */
+  /** 恢复队列位置（不播放）：加载曲目地址并停在 positionSec 处，等用户自己按播放。位置要等元数据到位才设得上（duration 未就绪时赋值会被忽略），所以挂在 loadedmetadata 上 */
   async preloadIndex(i: number, positionSec = 0) {
     if (i < 0 || i >= this.queue.length) return;
     this.index = i;
@@ -686,15 +637,12 @@ export class PlaybackEngine {
     await this.toggle();
   }
 
-  /** 系统媒体键「暂停」 */
   pause() {
     if (this.status === 'playing' || this.motor?.phase === 'starting') this.pauseWithMotor();
   }
 
   async toggle() {
-    // 手还按在盘上：媒体键的播 / 停只改「松手之后接不接着放」的意图 —— 声音与元素都归手势，
-    // 这里碰不得。不挡的话，按住搓碟时按暂停会变成「松手有声、状态却是暂停」，
-    // 按住时按播放则相反（状态在播、元素被松手时的收尾停住，成了没声）。
+    // 手还按在盘上：媒体键的播 / 停只改「松手之后接不接着放」的意图（声音与元素都归手势）。不挡的话，按住时按暂停会变成「松手有声、状态却是暂停」，按播放则反过来
     if (this.scratch) {
       const want = this.status !== 'playing';
       this.scratch.resumePlaying = want;
@@ -724,16 +672,15 @@ export class PlaybackEngine {
   }
 
   // —— 马达（暂停的断电滑停 / 复播的起转）——
-  // 真值在 core/motor：引擎与视图按同一条曲线各自推进（这边写元素的倍速与音量，视图写盘面角度）。
+  // 真值在 core/motor：引擎与视图按同一条曲线各自推进（这边写元素倍速与音量，视图写盘面角度）。
   // 状态在**按下的这一刻**就翻（那是用户的指令：播放键该灭就灭、系统面板该翻就翻），
-  // 马达那一段是「还在滑、还在响」的下文 —— 对外由快照的 motor 字段交代。
-  // 斜坡中再按一次就是换个方向接着走（曲线只与此刻的转速有关，见 core/motor 的模型说明）。
+  // 马达那一段是「还在滑、还在响」的下文，对外由快照的 motor 字段交代；斜坡中再按一次
+  // 就是换个方向接着走（曲线只与此刻的转速有关）。
 
-  /** 暂停：断电滑停。元素那边的收尾（停声、归位）都在 motorEnd ——
-   *  这里先把状态翻掉，再让转速滑下去。 */
+  /** 暂停：断电滑停 —— 先翻状态，再让转速滑下去（元素那边的停声、归位都在 motorEnd） */
   private pauseWithMotor() {
     // 手在盘上：只改意图（元素本来就停着，声音归手势）—— 与 toggle 同一口径，
-    // 松手时 endScratch 按这份意图收尾，不会出现「状态暂停、元素却被重新 play()」
+    // 松手时由 endScratch 按它收尾，不会出现「状态暂停、元素却被重新 play()」
     if (this.scratch) {
       this.scratch.resumePlaying = false;
       this.scratch.intentChanged = true;
@@ -751,9 +698,8 @@ export class PlaybackEngine {
     }
   }
 
-  /** 复播：马达起转。先把元素压到地板转速、音量归零，再让它出声 —— 转速与音量一起升起来，
-   *  听到的是「转盘转起来、声音跟着出来」，而不是原速起步再被拽一下。
-   *  滑停到一半按播放：从当时的转速接着升（不是从 0 重来）。 */
+  /** 复播：马达起转。先把元素压到地板转速、音量归零再出声 —— 转速与音量一起升起来，听到的是
+   *  「转盘转起来、声音跟着出来」，而不是原速起步再被拽一下。滑停到一半按播放则从当时的转速接着升。 */
   private async resumeWithMotor() {
     const ramp = !this.scratch && !prefersReducedMotion();
     // 状态先翻（与暂停对称）：盘面这就开始转起来，元素那边出声可能要等缓冲几毫秒到几秒
@@ -779,9 +725,8 @@ export class PlaybackEngine {
     this.writeRate(rate);
     const m = this.motor;
     m.timer = window.setInterval(() => this.motorTick(), MOTOR_TICK_MS);
-    // 兜底：后台的定时器会被节流（隐藏窗口里 setInterval 最慢 1 秒一次），到点必须收 ——
-    // 否则声音卡在半速上一直响。间隙里的每一次 tick 都会按「起点 + 已走时长」重算，
-    // 所以迟到的 tick 自己就落在终点上（曲线是闭式的，不靠帧率积分）。
+    // 兜底：后台的定时器会被节流（隐藏窗口里 setInterval 最慢 1 秒一次），到点必须收，
+    // 否则声音卡在半速上一直响。迟到的 tick 会按「起点 + 已走时长」重算，自己落在终点上。
     m.watch = window.setTimeout(() => this.motorEnd(), MOTOR_MAX_MS + 100);
     this.emit();
   }
@@ -797,8 +742,8 @@ export class PlaybackEngine {
     if (motorDone(m.phase, m.rate, elapsed)) this.motorEnd();
   }
 
-  /** 斜坡收尾：转速、音量、音高都还回原位。滑停的那一段到这里才真正暂停元素 ——
-   *  在此之前声音是一路淡下去的（状态早已翻成暂停，不必再翻）。 */
+  /** 斜坡收尾：转速、音量、音高都还回原位。滑停要到这里才真正暂停元素 ——
+   *  在此之前声音是一路淡下去的（状态早已翻成暂停）。 */
   private motorEnd() {
     const m = this.motor;
     if (!m) return;
@@ -812,8 +757,7 @@ export class PlaybackEngine {
     this.emit();
   }
 
-  /** 收掉斜坡（换曲 / 清队列 / 搓碟起手 / 关视图）：元素归位，位置与状态一概不动 ——
-   *  调用方自己决定这一首接下来怎么走。 */
+  /** 收掉斜坡（换曲 / 清队列 / 搓碟起手 / 关视图）：元素归位，位置与状态一概不动（调用方自己收尾） */
   private motorAbort() {
     if (!this.motor) return;
     this.motorStopTimers();
@@ -833,8 +777,8 @@ export class PlaybackEngine {
     m.watch = 0;
   }
 
-  /** 元素倍速（钳在 [地板, 1]）：地板以下内核会自己钳到 0.0625 并打一条控制台警告，
-   *  而那一档的音量已经是 0（见 motorGain），写下去没有任何听感收益。 */
+  /** 元素倍速（钳在 [地板, 1]）：地板以下内核会自己钳到 0.0625 并打控制台警告，
+   *  而那一档音量已经是 0（见 motorGain），写下去没有听感收益。 */
   private writeRate(rate: number) {
     try {
       this.audio.playbackRate = Math.min(1, Math.max(MOTOR_MIN_RATE, rate));
@@ -848,10 +792,8 @@ export class PlaybackEngine {
     return this.queue.length > 0 && this.playMode !== 'once';
   }
 
-  /** 队尾的去处：循环 → 回队首；随机 → 重洗一遍再从头放（随机的语义是一直放下去）。
-   *  没有去处时什么都不做并返回 false —— 由调用方决定是「停下」（一首放完了）
-   *  还是「什么都不做」（用户手动点下一首，队列已经到底）。三处共用这一份，
-   *  队尾语义才不会一边「回队首」、另一边「静默无效」。 */
+  /** 队尾的去处：循环 → 回队首；随机 → 重洗再从头放。没有去处返回 false（调用方自己决定
+   *  是「停下」还是「什么都不做」）—— 三处共用这一份，队尾语义才不会两处不一致。 */
   private wrapAtTail(): boolean {
     if (!this.tailHasTarget()) return false;
     if (this.playMode === 'shuffle') this.shuffleQueue();
@@ -864,8 +806,7 @@ export class PlaybackEngine {
       await this.playIndex(this.index + 1);
       return;
     }
-    // 队尾：循环 / 随机按各自的语义有去处（旧写法在这里无声返回 —— 按了下一首什么都没发生）；
-    // 单次模式整条队列已经放完，没有下一首，保持不动
+    // 队尾交给循环 / 随机（旧写法在这里无声返回：按了下一首什么都没发生）；单次模式保持不动
     this.wrapAtTail();
   }
 
@@ -904,8 +845,8 @@ export class PlaybackEngine {
   }
 
   // —— 搓碟（视图的手势通道）——
-  // 分工：视图负责手势、视觉与（完整音效的）解码搓碟台；引擎只负责元素的起停与状态口径。
-  // 位置的主人始终是视图 —— 快照里的 currentTime 在搓碟期间读的就是视图喂进来的值。
+  // 分工：视图管手势、视觉与（完整音效的）解码搓碟台，引擎只管元素的起停与状态口径。
+  // 位置的主人是视图 —— 快照里的 currentTime 在搓碟期间读的就是视图喂进来的值。
 
   /** 起手：暂停元素并交出位置。返回 null = 这次不接（没曲目 / 还没就绪 / 已经在搓）。
    *  live = 声音由轻量路出（元素自己按倍速）—— 视图的搓碟台没就绪时走这条。 */
@@ -916,8 +857,7 @@ export class PlaybackEngine {
     if (this.status !== 'playing' && this.status !== 'paused') return null;
     const time = this.audio.currentTime || 0;
     const playing = this.status === 'playing';
-    // 手按上盘：正在走的马达斜坡（滑停 / 起转）到此为止，元素先归位（倍速 / 音量 / 音高都还回去），
-    // 后面那三件套才是在干净的底子上做的
+    // 手按上盘：正在走的马达斜坡到此为止，元素先归位（倍速 / 音量 / 音高）—— 后面几件套要有干净的底子
     this.motorAbort();
     // 先立会话再暂停：pause 事件（异步）回来时看到 scratch 已经存在，就不会把状态写成暂停
     this.scratch = {
@@ -927,8 +867,7 @@ export class PlaybackEngine {
       pitchFollow: false,
       intentChanged: false,
     };
-    // 元素还在出声就得停（含滑停未完的情形 —— 那会儿对外已经是暂停，声音却还响着）：
-    // 手指一按下去，声音就归手势
+    // 元素还在出声就得停（含滑停未完：那会儿对外已是暂停、声音却还响着）—— 手指按下，声音归手势
     if (!this.audio.paused) this.audio.pause();
     if (opts.live) this.applyPitchFollow(true); // 声音要走元素：音高跟着转速（见 setPitchFollow）
     return { time, playing };
@@ -953,9 +892,8 @@ export class PlaybackEngine {
     this.applyPitchFollow(false);
   }
 
-  /** 元素的「保音高」开关：preservesPitch 默认是 true —— 那是给变速不变调用途的时间拉伸，
-   *  0.5 倍速听上去是「慢放」而不是黑胶。唱片的转速变多少、音高就该变多少
-   *  （搓碟与马达斜坡要的都是这一套：一个跟着手变调，一个跟着停下来的转盘降调）。
+  /** 元素的「保音高」开关：preservesPitch 默认 true —— 那是变速不变调的时间拉伸，放 0.5 倍速
+   *  听上去是「慢放」而不是黑胶。唱片的转速变多少、音高就该变多少（搓碟与马达斜坡共用这一套）。
    *  只在元素真的出声时用得上，松手 / 换路 / 收会话 / 斜坡收尾都要还回去。 */
   private setPitchFollow(on: boolean) {
     const a = this.audio as HTMLAudioElement & { webkitPreservesPitch?: boolean };
@@ -986,12 +924,10 @@ export class PlaybackEngine {
   }
 
   /** 轻量音效：元素按倍速出声 —— 只有正向（元素没有反向，倒着拖是它出不了声的那一半，
-   *  不是坏掉；要正反都出声得走视图的搓碟台）。
-   *  两件必须做的事：
-   *    ① 出声前把元素对到针位上：停声期间元素原地不动，而针位一直在跟着手走 ——
-   *       不对齐就出声的话，听到的是手指早就划过的那一段（「声音跟歌没关系」正是这么来的）；
-   *    ② 出声 / 停声之间留迟滞（停声线与出声线两档）：每次切换都是真的 play() / pause()，
-   *       在阈值上抖一下就是一片碎音。 */
+   *  不是坏掉；正反都要出声得走视图的搓碟台）。两件必须做的事：
+   *    ① 出声前把元素对到针位上：停声期间元素原地不动、针位却一直在跟着手走，
+   *       不对齐就出声，听到的是手指早就划过的那一段（「声音跟歌没关系」正是这么来的）；
+   *    ② 出声 / 停声之间留迟滞（两条线）：每次切换都是真的 play() / pause()，在阈值上抖一下就是碎音。 */
   scratchRate(rate: number) {
     const s = this.scratch;
     if (!s || !s.live) return;
@@ -1024,8 +960,7 @@ export class PlaybackEngine {
   }
 
   /** 松手之后要不要接着放：搓碟期间按过媒体键就返回那次的结果，否则 null（调用方用起手时的姿态）。
-   *  视图的盘面动画要跟着这个走 —— 它记的是**起手那一刻**的姿态，而搓碟期间用户可能按过媒体键，
-   *  拿旧姿态去放 / 停盘面就和声音对不上了。 */
+   *  视图的盘面动画要跟着走 —— 它记的是**起手那一刻**的姿态，拿旧姿态去停 / 放盘面就和声音对不上。 */
   scratchResumeIntent(): boolean | null {
     const s = this.scratch;
     return s && s.intentChanged ? s.resumePlaying : null;
@@ -1042,8 +977,8 @@ export class PlaybackEngine {
     const d = this.audioDuration();
     // 别顶到末尾（顶上去会直接触发 ended 切歌）
     const t = Math.max(0, d > 0 ? Math.min(time, Math.max(0, d - 0.05)) : time);
-    // 轻量路抬手时元素本来就在放、位置一路对着针位（见 scratchRate ①）：这点零头不值得
-    // 用一次 seek（那是几十毫秒的断音）去纠。元素停着就得写 —— 完整音效的指针位置全靠这一下。
+    // 轻量路抬手时元素一路对着针位（见 scratchRate ①），这点零头不值得用一次 seek（几十毫秒断音）去纠；
+    // 元素停着就得写 —— 完整音效的指针位置全靠这一下。
     const drift = Math.abs((this.audio.currentTime || 0) - t);
     if (this.audio.paused || drift > SCRATCH_LIVE_ALIGN_TOL) {
       try {
@@ -1058,8 +993,8 @@ export class PlaybackEngine {
     } else if (!this.audio.paused) {
       this.audio.pause();
     }
-    // 状态在这里显式落定：元素那边的事件是**异步**的，而且「元素本来就停着」时压根不会来
-    //（轻量路手停住时元素就是暂停的）—— 只靠它推断，会留下「对外在播、元素却停着」的窗口
+    // 状态在这里显式落定：元素的事件是**异步**的，「元素本来就停着」时压根不会来
+    //（轻量路手停住就是如此）—— 只靠它推断，会留下「对外在播、元素却停着」的窗口
     this.status = wantResume ? 'playing' : 'paused';
     this.emit();
   }
@@ -1083,10 +1018,9 @@ export class PlaybackEngine {
     this.audio.volume = Math.min(1, Math.max(0, this.userVolume * this.motorGain));
   }
 
-  // —— 地址解析（本地 / 网易云 / QQ 三路）——
-  /** 取址入口。本地两条直接走；在线三源先看缓存（没过保的地址）、再看「同一首正在取的那趟网络」：
-   *  预热与起播会撞在一起（刚点完专辑又把指针停回那张卡上、或者连按下一首），共用一趟就只发
-   *  一次请求。 */
+  // —— 地址解析（本地 / 网易云 / QQ / 酷狗四路）——
+  /** 取址入口。本地两条直接走；在线三源先看缓存、再看「同一首正在取的那趟网络」——
+   *  预热与起播会撞在一起（刚点完专辑又停回那张卡、连按下一首），共用一趟就只发一次请求。 */
   async resolveUrl(track: Track): Promise<string> {
     switch (track.source) {
       case 'local-vault':
@@ -1153,8 +1087,7 @@ export class PlaybackEngine {
     }
   }
 
-  /** 缓存里的地址还新鲜吗（过期的一并丢掉，见 urlCache 的说明）。不新鲜返回 null ——
-   *  调用方按「没缓存」处理，也就是重新取一次。 */
+  /** 缓存里的地址还新鲜吗（过期的一并丢掉，见 urlCache）。不新鲜返回 null = 调用方按「没缓存」处理 */
   private freshUrl(key: string): string | null {
     const hit = this.urlCache.get(key);
     if (!hit) return null;
@@ -1170,13 +1103,11 @@ export class PlaybackEngine {
   }
 
   // —— 取址预热（把起播链上的网络藏到用户看不见的地方）——
-  // 起播要等的网络有两段：专辑曲目表（实测 100~150ms，见 session-cache 的服务缓存）与
-  // 这一首的地址（实测 110~350ms）。两段都可以提前做：曲目表在悬停时预热（下面 prefetchAlbum），
-  // 地址在当前这首一开声就取下一首的（prefetchNext）。真正点下去时只剩元素缓冲那一段。
-  /** 把一首在线曲目的播放地址先取回来：只写缓存，不动状态、不出声、不发快照。
-   *  失败一律静默 —— 这是提前量，不是用户动作；真轮到它时 playIndex 会如实报错。
-   *  **本地源不在此列**：它们的「取址」是建 Blob（整文件读进内存，几十 MB），
-   *  不该由悬停或预热顺手触发。 */
+  // 起播要等的网络有两段：专辑曲目表（实测 100~150ms，见 session-cache 的服务缓存）与这一首的地址
+  //（实测 110~350ms）。两段都提前做（prefetchAlbum / prefetchNext），真正点下去时只剩元素缓冲那一段。
+  /** 把一首在线曲目的播放地址先取回来：只写缓存，不动状态、不出声、不发快照，失败一律静默
+   *  （这是提前量，不是用户动作；真轮到它时 playIndex 会如实报错）。
+   *  **本地源不在此列**：「取址」是整文件读进内存建 Blob（几十 MB），不该由悬停或预热顺手触发。 */
   async prefetchTrackUrl(track: Track): Promise<void> {
     if (track.source !== 'netease' && track.source !== 'qq' && track.source !== 'kugou') return;
     if (this.freshUrl(trackKey(track))) return;
@@ -1193,12 +1124,10 @@ export class PlaybackEngine {
     if (next) void this.prefetchTrackUrl(next);
   }
 
-  /** 悬停预热：把一张专辑的队列先搭一遍 —— 在线曲目表进服务缓存、第一首的地址进 urlCache。
-   *  只取数据：引擎状态一律不动（不建队列、不出声）。失败静默。
-   *
-   *  串行化 + 后来居上：指针扫过一面墙会连着报好几张，这里一次只跑一张，且跑到一半时
-   *  只接最新的那一张（`pending`）—— 中途扫过的那些不追（它们多半不是用户想点的那张，
-   *  而每追一张就是一次平台请求）。停在某张卡上不动时，最新的一张就是它。 */
+  /** 悬停预热：把一张专辑的队列先搭一遍（在线曲目表进服务缓存、第一首的地址进 urlCache）——
+   *  只取数据，引擎状态一律不动，失败静默。
+   *  串行化 + 后来居上：指针扫过一面墙会连着报好几张，这里一次只跑一张、只接最新的那张
+   * （`pending`）—— 每追一张就是一次平台请求，而停在某张卡上不动时最新的那张就是它。 */
   private prefetchPending: AlbumInfo | null = null;
   private prefetchChain: Promise<void> = Promise.resolve();
 
@@ -1232,14 +1161,13 @@ export class PlaybackEngine {
       void this.playIndex(this.index + 1);
       return;
     }
-    // 队尾：循环 → 回队首；随机 → 重洗一次再从头放；单次 → 停在这里
+    // 队尾交给 wrapAtTail（循环 / 随机有去处）；单次模式停在这里
     if (this.wrapAtTail()) return;
     this.status = 'paused';
     this.emit();
   }
 
-  /** 单次 → 循环 → 随机 循环切换（播放器顶部那个模式按钮）。切到随机时立刻打乱一次；
-   *  打乱的对象是「队列里的曲目」—— 队列模式下即整条列表的曲目。
+  /** 单次 → 循环 → 随机 循环切换（播放器顶部那个模式按钮）：切到随机立刻打乱一次，
    *  离开随机时把进随机之前的顺序还回去（随机可逆，见 orderBeforeShuffle）。 */
   cyclePlayMode(): PlayMode {
     const order: PlayMode[] = ['once', 'loop', 'shuffle'];
@@ -1272,9 +1200,8 @@ export class PlaybackEngine {
     this.emit();
   }
 
-  /** 还原进随机之前的顺序（当前曲目跟着走，不打断播放）。
-   *  期间队列被增删过（排入专辑 / 移除过曲目）就放弃还原：那份顺序已经对不上现在的曲目集合了，
-   *  硬套回去会丢歌或出现重影 —— 静默放弃比错位好。 */
+  /** 还原进随机之前的顺序（当前曲目跟着走，不打断播放）。期间队列被增删过（排入专辑 / 移除曲目）
+   *  就放弃还原：那份顺序已对不上现在的曲目集合，硬套回去会丢歌或出现重影 —— 静默放弃比错位好。 */
   private restoreShuffledOrder(): void {
     const saved = this.orderBeforeShuffle;
     this.orderBeforeShuffle = null;
@@ -1306,7 +1233,7 @@ export class PlaybackEngine {
     const track = idx >= 0 ? this.queue[idx] : undefined;
     if (!track) return;
     // 出错的是「事件触发时的那一首」：await 之后若已切歌，兜底结果一律丢弃。
-    // 判「当前曲目还是不是这一首」而非下标——拖拽重排只换位置不换曲子，不该丢弃兜底结果。
+    // 判「当前曲目还是不是这一首」而非下标 —— 拖拽重排只换位置不换曲子。
     const stillCurrent = () => this.queue[this.index] === track;
     // vault 流式失败 → readBinary→Blob 兜底
     if (track.source === 'local-vault' && !this.vaultBlobRetried.has(track.file.path)) {
@@ -1340,8 +1267,8 @@ export class PlaybackEngine {
       }
     }
     if (!stillCurrent()) return;
-    // 两轮兜底都没救回来：能跳就跳到下一首 —— 网络抖一下、单个文件坏了都不该让唱片停在那儿
-    // 等用户手动点（旧写法是落 status='error' 就完事，一张专辑里坏一首就卡在那儿）。
+    // 两轮兜底都没救回来：能跳就跳到下一首 —— 网络抖一下、单个文件坏了都不该让唱片停在那儿等用户
+    // 手动点（旧写法是落 status='error' 就完事，一张专辑里坏一首就卡在那儿）。
     if (this.skipBrokenTrack(track)) return;
     this.status = 'error';
     this.errorMsg = tf('player.playFailed', { title: track.title });
@@ -1349,12 +1276,10 @@ export class PlaybackEngine {
     notice(this.errorMsg);
   }
 
-  /** 一首彻底放不出来之后的处置（地址拿到了却放不出来：解码失败 / 格式不支持 / 链接过期，
-   *  两轮兜底也救不回来）：能去别处就跳过去，返回 true。
-   *  去处有两处：后面的下一首；队尾则由循环 / 随机接走（见 wrapAtTail），单次模式没有去处。
-   *  同一首在一次播放回合里只自动跳一次（autoSkipped）：整条队列都失效时，
-   *  这条记账把过程收在「跳满一圈」而不是来回打转；用户手动点回来仍然可以再试。
-   *  跳之前先说一声 —— 自动换歌不解释的话，用户看到的是「播放器自己乱跳」。 */
+  /** 一首彻底放不出来（解码失败 / 格式不支持 / 链接过期，两轮兜底也救不回来）：能去别处就跳过去返回 true。
+   *  去处是下一首，队尾交给循环 / 随机（见 wrapAtTail）。同一首每回合只自动跳一次（autoSkipped）——
+   *  整条队列失效时把过程收在「跳满一圈」，用户手动点回来仍可再试；跳之前先说一声，
+   *  不然用户看到的是「播放器自己乱跳」。 */
   private skipBrokenTrack(track: Track): boolean {
     const key = trackKey(track);
     if (this.autoSkipped.has(key)) return false;

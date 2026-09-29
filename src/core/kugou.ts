@@ -1,7 +1,6 @@
 // 酷狗音乐源客户端：与本地网关（server.js 的 /api/kugou/* 路由）通信。
-// 与 QQ 同构：网关单通道（无网页直连），音质降级 ladder 在网关侧完成，
-// 客户端只做一次请求 → 拿到最终可播地址或中文限制文案。
-// 与 QQ 的唯一结构差异：取流要带 hash + 专辑 id + mixsongid（album_audio_id）三件套。
+// 与 QQ 同构：网关单通道（无网页直连），音质降级 ladder 在网关侧完成，客户端只做一次请求 → 拿到
+// 最终可播地址或中文限制文案。与 QQ 的唯一结构差异：取流要带 hash + 专辑 id + mixsongid 三件套。
 import { requestUrl } from 'obsidian';
 import { Track } from './track';
 import { GatewayError, withRequestTimeout } from './request-error';
@@ -97,8 +96,7 @@ export class KugouService {
     });
   }
 
-  /** 歌词：网关按「关键词 + hash + 时长」去上游挑候选再下载，客户端只给三样线索。
-   *  酷狗没有翻译轨（trans 恒为空）；取不到就是没有 —— 视图按「空」显示，不算错误。 */
+  /** 歌词：网关按「关键词 + hash + 时长」挑候选再下载；酷狗没有翻译轨（trans 恒为空），取不到就是没有 —— 视图按「空」显示不算错误 */
   async lyric(
     hash: string,
     opts: { title?: string; artist?: string; duration?: number; albumAudioId?: string } = {}

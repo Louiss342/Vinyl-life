@@ -1,7 +1,5 @@
-// 样式兜底：styles.css 缺失、或与插件不同版本时，把构建期内联的副本挂成构造样式表。
-// 覆盖：缺失 → 挂上且内容与源文件逐字节一致、可清理 / 版本一致 → 不动 / 旧版本戳 → 挂上 /
-//       没戳（截断）→ 挂上 / 读不到 → 不动 / 坏载荷 → 不抛、不挂 /
-//       老宿主（无 adoptedStyleSheets）→ 静默跳过 / main.ts 接线 / styles.css 版本戳与 manifest 同步。
+// 样式兜底：styles.css 缺失 / 版本不符 / 截断 / 读不到时，把构建期内联的副本挂成构造样式表（内容与源文件逐字节一致、可清理）；
+// 版本一致 → 不动；坏载荷 → 不抛不挂；老宿主（无 adoptedStyleSheets）→ 静默跳过。另守 main.ts 接线与版本戳同 manifest 同步。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -92,7 +90,7 @@ test('styles.css 在位且版本一致 → 什么都不做（Obsidian 自己会�
   assert.deepEqual(logs, [], '正常安装不该有任何日志');
 });
 
-// 「升级时只覆盖了 main.js」——新代码配旧样式：设置面板整块改版过，这时会完全没样式
+// 「升级只覆盖了 main.js」：新代码配旧样式，设置面板整块改版过，这时会完全没样式
 test('styles.css 是旧版本（戳与插件不符）→ 照挂兜底', () => {
   const old = CSS.replace(/vinyl-life styles v[0-9.]+/, 'vinyl-life styles v1.0.9');
   const { mod, doc, created, logs } = loadModule({ read: old });

@@ -1,9 +1,7 @@
 // 封面候选链（纯函数，无依赖）：库内封面 → 曲目远程封面 → QQ 图床备用主机。
-// 背景：网易云的封面地址由接口直给（p*.music.126.net），QQ 的却是按固定模式拼出来的
-// （y.gtimg.cn/music/photo_new/T002R300x300M000<专辑mid>.jpg）。有用户报告部分网络
-// （DNS 拦截 / 系统代理 / IPv6 路由）下 y.gtimg.cn 不可达 —— 所以「只有 QQ 出问题」。
-// 同一路径在 y.qq.com 上可达且是同一张图，于是下载（import.ts）与播放（player-view）
-// 统一按候选列表依次回退：单点故障不再等于封面消失。
+// 网易云的封面地址由接口直给（p*.music.126.net），QQ 的却是按固定模式拼的（y.gtimg.cn 那套），
+// 于是部分网络（DNS 拦截 / 系统代理 / IPv6 路由）下只有 QQ 封面不可达；同一路径在 y.qq.com 上
+// 可达且是同一张图 —— 下载（import.ts）与播放（player-view）统一按候选链回退，单点故障不再等于封面消失。
 
 /** 备用图床（主机名互相回退；只对 /music/photo_new/ 下的 QQ 封面生效） */
 const QQ_COVER_MIRROR: Record<string, string> = {

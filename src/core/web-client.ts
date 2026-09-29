@@ -1,7 +1,5 @@
-// 渲染进程直连网易云：
-//   走 requestUrl 发官方 weapi / eapi 请求，凭据是本机登录时落盘的 .cookie（MUSIC_U）。
-//   （0.6.0 起这里一度靠「内嵌登录页共享 Electron 会话」拿凭据，但登录早已只保留扫码 ——
-//   那条会话永远不会登录，网页通道一直是死的；现在改为直接读凭据文件，见 musicU()。）
+// 渲染进程直连网易云：走 requestUrl 发官方 weapi / eapi 请求，凭据取自本机登录落盘的 .cookie
+//   （MUSIC_U，见 musicU()；此前那条「内嵌登录页共享 Electron 会话」通道是死的，已废）。
 //   任何一步失败都由 NeteaseService 静默回退网关（网关 Cookie 通道）。
 // 加密：node:crypto 原生 weapi（双 AES-CBC + RSA_NO_PADDING）与 eapi（AES-ECB + MD5 签名），
 //   与网关 server.js 完全一致，无额外依赖。
@@ -33,7 +31,6 @@ const UA_API = 'NeteaseMusic 9.0.90/5038 (iPhone; iOS 16.2; zh_CN)';
 
 const QUALITY_LADDER = ['standard', 'higher', 'exhigh', 'lossless'];
 
-// 两条 API 前缀（都带结尾斜杠，见 post() 里的拼接说明）
 const API_BASE = {
   weapi: 'https://music.163.com/weapi/',
   eapi: 'https://interface.music.163.com/eapi/',
@@ -118,8 +115,7 @@ function readOrCreateDeviceId(file: string): string | null {
 }
 
 export class WebClient {
-  // 指纹 deviceId：优先用 .anon-token v2 绑定的 deviceId（与网关共用同一设备身份），
-  // 否则用 .device-id 持久化的值；新用户首次运行即生成并落盘。
+  // 指纹 deviceId：优先用 .anon-token v2 绑定的（与网关共用同一设备身份），否则用 .device-id 落盘的值（新用户首次运行即生成）
   private deviceId = newDeviceId();
   private anonToken = '';
   private cookieFile?: string;
@@ -150,8 +146,8 @@ export class WebClient {
     }
   }
 
-  /** 本机登录凭据（网关扫码登录写下的 .cookie）。
-   *  每次读盘而不是缓存：登录 / 退出账号都会重写这个文件，缓存住会出现「刚扫码登录却说未登录」。 */
+  /** 本机登录凭据（网关扫码登录写下的 .cookie）。每次读盘不缓存：登录 / 退出都会重写该文件，
+   *  缓存住会出现「刚扫码登录却说未登录」。 */
   private musicU(): string {
     if (!this.cookieFile) return '';
     try {
@@ -167,9 +163,8 @@ export class WebClient {
 
   private async post<T>(uri: string, data: Record<string, unknown>, mode: 'weapi' | 'eapi'): Promise<T> {
     await paceUpstream(); // 试播期间才生效（见 core/probe-pacing）：网页直连也是一次上游请求
-    // 前缀必须以斜杠结尾：uri 形如 '/api/v1/album/1'，slice(5) 去掉 '/api/' 后直接拼在后面。
-    // 少这个斜杠时上游回「HTTP 200 + {"code":404,"接口未找到！"}」—— 既不抛错也不报错，
-    // 于是整条「网页会话优先」悄悄失效、全部落回网关（0.6.0 起一直如此，见 netease-search 测试）。
+    // 前缀必须以斜杠结尾（uri 形如 '/api/v1/album/1'，slice(5) 去掉 '/api/' 后拼接）：少了它上游会回
+    // 「200 + {"code":404,"接口未找到！"}」—— 不抛也不报错，「网页会话优先」静默失效（见 netease-search 测试）。
     const base = mode === 'weapi' ? API_BASE.weapi : API_BASE.eapi;
     const musicU = this.musicU();
     if (mode === 'eapi') data.header = this.fingerprint(musicU);
@@ -192,8 +187,8 @@ export class WebClient {
       })
     );
     const json = r.json as { code?: number | string } | null;
-    // 上游用「200 + body.code」表达失败（接口未找到 / 参数错 / 未登录…）。不在这里抛，
-    // 调用方的 catch 就永远不触发 —— 兜底通道形同虚设，坏响应还会被当成正常数据往下传。
+    // 上游用「200 + body.code」表达失败（接口未找到 / 参数错 / 未登录…）：不在这里抛，调用方的
+    // catch 就永远不触发 —— 兜底通道形同虚设，坏响应还会被当成正常数据往下传。
     if (json && json.code != null && Number(json.code) !== 200) {
       throw new Error(`NetEase API ${uri} returned code ${json.code}`);
     }
@@ -259,7 +254,7 @@ export class WebClient {
   }
 
   // 搜索（网页版同款 weapi cloudsearch/get/web；会话 Cookie 由 requestUrl 自动携带）。
-  // 不用旧的 /api/search/get：那条端点在带 MUSIC_U 时会稳定返回 405「操作频繁」（实测）。
+  // 不用旧的 /api/search/get：带 MUSIC_U 时它稳定返回 405「操作频繁」（实测）。
   async searchAlbums(keywords: string, page?: SearchPage): Promise<NeteaseSearchResponse> {
     return this.search(keywords, 10, page);
   }

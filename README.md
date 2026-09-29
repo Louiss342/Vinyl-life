@@ -284,7 +284,7 @@ Vinyl Life/
 
 ##### 6.1.1 工具栏
 
-工具栏是一张紧凑的浮卡，内容多长就多长：带边框和轻投影，毛玻璃底，封面从它下面滚过时会被虚化。左边是标题和手写体的收藏数量，右边四枚图标。
+工具栏是一张紧凑的浮卡，内容多长就多长：不透明主题面 + 发丝边 + 同族投影（12px 圆角，与功能弹层同为「浮在内容上」的一族）。左边是标题和手写体的收藏数量，右边四枚图标。
 
 点搜索，输入框在中间出现；清空或失焦再收回去。
 
@@ -1027,7 +1027,7 @@ What follows is a walk through the interface, screen by screen. To just get it r
 
 ##### 6.1.1 Toolbar
 
-The toolbar is one compact floating card that grows and shrinks with its contents: bordered, softly shadowed, on frosted glass, so covers blur as they scroll underneath. On the left, the title and the collection count in a handwriting face; on the right, four icons.
+The toolbar is one compact floating card that grows and shrinks with its contents: an opaque theme surface with a hairline border and a matching shadow (12px radius, the same family as the popover panels). On the left, the title and the collection count in a handwriting face; on the right, four icons.
 
 Click search and the input grows out of the middle while the card stretches with it; clear it or lose focus and both retract.
 

@@ -1,11 +1,7 @@
-// 样式内联载荷：构建期把 styles.css 压缩（去注释 / 收空白）后再 gzip，塞进 main.js 的
-// STYLE_GZIP；运行时由 style-fallback 还原成构造样式表兜底（styles.css 缺失或版本不符时）。
-// 这份载荷坏了 / 落后一版时，插件照常启动、界面裸奔或样式错位 —— 属于「用户先发现」的故障，
-// 所以两处都钉住：
-//   ① 构建脚本自己在写出产物前解压回验（见下面第二个用例）；
-//   ② 产物与「styles.css 压缩后」逐字节一致（挡的是构建期校验挡不住的那种状态：
-//      改了 styles.css 却没重新构建，工作区里的产物还是旧的）。
-//   ③ 压缩只动记号、不动规则 —— 用例三盯住用户看得见的两个证据：版本戳与两个字体子集。
+// 样式内联载荷：构建期把 styles.css 压缩后 gzip 进 main.js 的 STYLE_GZIP，运行时由 style-fallback 还原成
+// 构造样式表兜底（styles.css 缺失或版本不符时）。载荷坏了 / 落后一版属于「用户先发现」的故障（插件照常启动，
+// 界面裸奔或样式错位），所以钉三处：① 构建脚本写出产物前解压回验（第二个用例）；② 产物与「styles.css 压缩后」
+// 逐字节一致（挡「改了 styles.css 没重新构建」）；③ 压缩只动记号、不动规则 —— 用例三看版本戳与两个字体子集。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -50,8 +46,7 @@ test('压缩后的载荷仍带版本戳与两个字体子集（压缩不能吃�
   const stamp = /\/\*! vinyl-life styles v([0-9][0-9.]*)/.exec(payload);
   assert.ok(stamp, '兜底副本丢了版本戳：esbuild 若改成丢弃 /*! 注释，这里要跟上');
 
-  // 字体子集：两处 @font-face 的 base64 载荷必须逐字节不变 —— 手写体是设计的一部分，
-  // 兜底路径同样要长出手写体（丢了不会报错，只会静默回落到系统字体）
+  // 字体子集：两处 @font-face 的 base64 载荷必须逐字节不变 —— 手写体是设计的一部分，兜底路径同样要长出手写体（丢了不报错，只会静默回落到系统字体）
   const fonts = (s) => [...s.matchAll(/url\(data:font\/woff2;base64,([A-Za-z0-9+/=]+)\)/g)].map((m) => m[1]);
   const before = fonts(source);
   const after = fonts(payload);
@@ -71,8 +66,7 @@ test('构建脚本在写出样式产物之前自己做一遍解压回验', () =>
   );
 });
 
-// 端到端：拿**真实构建出来的载荷**走一遍兜底挂载（前面几条用的是测试自己压的那份）。
-// 这条把「构建产物 → 运行时还原 → 挂成构造样式表」整段串起来 —— 用户装漏 styles.css 时走的就是它。
+// 端到端：拿**真实构建出来的载荷**走一遍「构建产物 → 运行时还原 → 挂成构造样式表」（前面几条用的是测试自己压的那份）—— 用户装漏 styles.css 时走的就是它。
 test('用真实载荷挂兜底：挂上去的样式 == styles.css 压缩后（含字体）', () => {
   const source = esbuild.buildSync({
     stdin: {

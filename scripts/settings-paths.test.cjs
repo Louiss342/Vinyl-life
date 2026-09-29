@@ -1,8 +1,6 @@
-// 设置页「路径」与统计导出目录回归（1.3.0）：
-//   A 接线（源码扫描）：通用页「路径」卡四类目录齐全；音频根目录从「源」页移来、不再两处各一份；
-//     收藏健康检查不再放「刷新专辑墙」（专辑墙「更多」里那枚是唯一入口）。
-//   B 行为（main.ts 实跑）：旧 data.json 没有 statsFolder 时按原推导口径补齐
-//     （专辑笔记目录的上一级 + Stats），显式设置照用，导出笔记落在设置的目录里。
+// 设置页「路径」与统计导出目录回归（1.3.0）：A 接线（源码扫描）—— 通用页「路径」卡五类目录齐全、音频根目录只在通用页出现一次、
+// 收藏健康检查只留专辑墙「更多」里那枚入口；B 行为（main.ts 实跑）—— 旧 data.json 没有 statsFolder 时按原推导口径补齐
+// （专辑笔记目录的上一级 + Stats），显式设置照用，导出笔记落在设置的目录里。
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -25,7 +23,7 @@ test('设置：通用页「路径」卡五类目录齐全（顺序即卡片排�
     SETTINGS.indexOf('private renderAppearanceTab')
   );
   assert.ok(general.length > 0, '探针：没截到通用页');
-  // 每行都走带即时校验的 pathRow（校验细节见下一条）：专辑笔记 / 封面 / 音频 / 统计导出 / 队列笔记
+  // 扫的是各 pathRow 的标签键（顺序即卡片刻意排布）；五类目录的行都带即时校验，校验细节见下一条
   const keys = [...general.matchAll(/this\.pathRow\(body, t\('(settings\.\w+)'\), '\w+'\)/g)].map(
     (m) => m[1]
   );
@@ -118,8 +116,7 @@ test('目录校验：库内相对路径放行，盘符 / 绝对路径 / .. / 保
   assert.equal(issue('Music[1]'), 'chars');
 });
 
-// 目录行刻意保持「就是一个输入框」：只有填错时才描一圈告警色，不加状态行、不加卡片说明
-// （早先版本加过「最终：… · 已存在」那种状态行和一句底部说明，用户嫌乱，已撤）
+// 目录行刻意保持「就是一个输入框」：只有填错时才描一圈告警色，不加状态行 / 说明（早先那套状态行与底部说明用户嫌乱，已撤）
 test('设置：目录行只在填错时描告警色，不加多余的状态行 / 说明', () => {
   assert.match(SETTINGS, /private pathRow\(/, '五类目录共用同一个带校验的行');
   assert.equal(
@@ -205,8 +202,7 @@ vm.runInNewContext(source, {
 
 const EMPTY_STATS = { totalPlays: 0, albums: {}, tracks: {}, events: [] };
 
-/** 起一个只够跑设置与导出的插件壳：vault.create 记录落点，不真写盘。
- *  opts.folders 里的目录「已存在」，改名走 fileManager.renameFile 并被记下来。 */
+/** 起一个只够跑设置与导出的插件壳：vault.create 记录落点、不真写盘；opts.folders 里的目录算「已存在」，改名走 fileManager.renameFile 并被记下来。 */
 function boot(data, opts = {}) {
   const created = [];
   const renames = [];

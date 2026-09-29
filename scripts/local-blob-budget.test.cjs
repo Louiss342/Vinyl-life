@@ -1,8 +1,6 @@
-// 库外音频的 Blob 缓存预算回归（驱动真实 LocalSource + 假 vault / 假 fs / 假 URL）：
-//   Blob 缓存按「切专辑」清是不够的：一张 20 首的库外 FLAC 专辑能留到 GB 级内存。
-//   现在按字节预算回收最久没用过的那份，正在用的那份永不回收。
-//   ① 预算内全留（不白清）；② 超预算先丢最久没用过的；③ 命中即「最近使用」（保住它，丢下一个）；
-//   ④ 单曲就超预算时也得放行（正在播的那份不能被回收）；⑤ clearBlobs 的账要与预算一致。
+// 库外音频的 Blob 缓存预算回归（驱动真实 LocalSource + 假 vault / 假 fs / 假 URL）：只按「切专辑」清不够 ——
+// 一张 20 首的库外 FLAC 专辑能留到 GB 级内存；现在按字节预算回收最久没用过的，正在用的那份永不回收。
+// ① 预算内全留（不白清）；② 超预算先丢最久没用过的；③ 命中即「最近使用」（保住它，丢下一个）；④ 单曲超预算也放行（正在播的不能回收）；⑤ clearBlobs 的账要与预算一致。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -133,7 +131,7 @@ test('命中即最近使用：再摸一下 a，接下来被丢的就是 b', () =
   const a = src.resolveExternalUrl('D:/m/a.flac');
   const b = src.resolveExternalUrl('D:/m/b.flac');
   assert.equal(src.resolveExternalUrl('D:/m/a.flac'), a, '命中缓存：还是同一个 URL');
-  src.resolveExternalUrl('D:/m/c.flac'); // 超预算：a 刚被摸过，该丢 b
+  src.resolveExternalUrl('D:/m/c.flac');
   assert.deepEqual(revoked, [b]);
 });
 

@@ -1,10 +1,8 @@
 // 播放队列拖拽排序：
-//   A 部分纯函数：reorderTracks（含越界）；
-//   B 部分引擎：moveTrack 后「正在播的那首仍是当前曲目」；
-//   C 部分设置归一化：音量 / 上次播放位置（队列顺序已不再持久化 —— 设计稿要求不记忆拖拽顺序）；
-//   D 部分视图：落点换算（行前/后 → 结果下标）+ 落点视觉复用专辑墙的同一套 CSS；
-//   E 部分「不记忆拖拽顺序」的源码防护：data.json 不写 queueOrder、引擎不接顺序钩子、
-//          恢复发行顺序 / 清空后面的专辑两个按键已删除。
+//   A 纯函数 reorderTracks（含越界）；B 引擎 moveTrack（正在播的那首仍是当前曲目）；
+//   C 设置归一化：音量 / 上次播放位置（队列顺序已不持久化 —— 设计稿要求不记忆拖拽顺序）；
+//   D 视图：落点换算（行前/后 → 结果下标）+ 落点视觉复用专辑墙的同一套 CSS；
+//   E「不记忆拖拽顺序」的源码防护：data.json 不写 queueOrder、引擎不接顺序钩子、恢复发行顺序 / 清空后面的专辑两个按键已删除。
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -71,8 +69,7 @@ function loadModule(entry, globals = {}) {
   return mod.exports;
 }
 
-// vm 里造出的数组 / 对象与测试进程不是同一个 realm，直接 deepStrictEqual 会因原型不同而失败：
-// 比较前一律搬回本 realm（数组 Array.from，对象 JSON 往返）。
+// vm 里造出的数组 / 对象不是同一个 realm，直接 deepStrictEqual 会因原型不同而失败 —— 比较前一律搬回本 realm（数组 Array.from，对象 JSON 往返）
 const keys = (list) => Array.from(list, (t) => trackKey(t));
 const plain = (v) => JSON.parse(JSON.stringify(v));
 
@@ -285,34 +282,28 @@ const { normalizeLastPlayback, normalizeVolume, DEFAULT_SETTINGS } = settingsMod
 test('resolveSegmentDropIndex：整段拖拽落点（块先摘掉，下标按摘后算）', () => {
   // 落点数学已从 player-view 抽到 core/queue-move：拖拽、键盘、命令层共用一份
   const { resolveSegmentDropIndex } = loadModule('src/core/queue-move.ts');
-  // A(0,2) B(2,1) C(3,1)：把 A 拖到 C 之后 → 摘掉 A 后是 [B,C]，插到 C 后 = 2
+  // A(0,2) B(2,1) C(3,1)：块先摘掉、下标按摘后算 —— A 拖到 C 之后 = 2（摘后 [B,C] 插到 C 后），A 拖到 B 之前 = 0，C 拖到 A 之前 = 0，B 拖到 A 之后 = 2
   assert.equal(resolveSegmentDropIndex(0, 2, 3, 1, true), 2);
-  // 把 A 拖到 B 之前 → 摘掉 A 后是 [B,C]，插到 B 前 = 0
   assert.equal(resolveSegmentDropIndex(0, 2, 2, 1, false), 0);
-  // 把 C 拖到 A 之前 → 摘掉 C 后是 [A,B]，插到 A 前 = 0
   assert.equal(resolveSegmentDropIndex(3, 1, 0, 2, false), 0);
-  // 把 B 拖到 A 之后 → 摘掉 B 后是 [A,C]，插到 A 后 = 2
   assert.equal(resolveSegmentDropIndex(2, 1, 0, 2, true), 2);
 });
 
 test('segmentMoveBy：整段上下移一格（键盘路径，与拖拽同一份落点数学）', () => {
   const { segmentMoveBy } = loadModule('src/core/queue-move.ts');
-  // A(0,2) B(2,3) C(5,1)：当前曲目在 B 段里（下标 3）
+  // A(0,2) B(2,3) C(5,1)：当前曲目在 B 段里（下标 3）；落点同样按摘后算 —— B 下移与 C 换位 = 3，B 上移与 A 换位 = 0
   const segs = [
     { start: 0, count: 2 },
     { start: 2, count: 3 },
     { start: 5, count: 1 },
   ];
-  // B 下移（与 C 换位）：摘掉 B 后是 [A1,A2,C1]，插到 C 之后 = 3
   assert.deepEqual({ ...segmentMoveBy(segs, 3, 1) }, { start: 2, count: 3, to: 3 });
-  // B 上移（与 A 换位）：摘掉 B 后是 [A1,A2,C1]，插到 A 之前 = 0
   assert.deepEqual({ ...segmentMoveBy(segs, 3, -1) }, { start: 2, count: 3, to: 0 });
-  // 首段上移 / 末段下移：没有可去的地方 → null（别夹到边界再发一次等价移动，界面会白闪一下）
+  // 首段上移 / 末段下移没有可去的地方 → null（别夹到边界再发一次等价移动，界面会白闪一下）
   assert.equal(segmentMoveBy(segs, 0, -1), null);
   assert.equal(segmentMoveBy(segs, 5, 1), null);
-  // 移的是「当前曲目所在的那一段」：同一段里换一首，结果相同
+  // 移的是「当前曲目所在的那一段」：同一段里换一首，结果相同；边界：空队列 / 下标不在任何段内 / delta 非法
   assert.deepEqual({ ...segmentMoveBy(segs, 2, 1) }, { ...segmentMoveBy(segs, 4, 1) });
-  // 边界：空队列 / 下标不在任何段内 / delta 非法
   assert.equal(segmentMoveBy([], 0, 1), null);
   assert.equal(segmentMoveBy(segs, 99, 1), null);
   assert.equal(segmentMoveBy(segs, 3, 0), null);
@@ -363,16 +354,14 @@ const viewMod = loadModule('src/views/player-view.ts');
 const { resolveQueueDropIndex } = viewMod;
 
 test('resolveQueueDropIndex：行前/后落点 → 结果下标（等效于「先移除再插入」）', () => {
-  // 往后拖：落在第 2 行前 → 结果下标 1（被拖行先移除，后面左移一位）
+  // 一律「先移除再插入」：往后拖落在第 2 行前/后 → 1 / 2（被拖行先移除，后面左移一位），往前拖落在第 0 行前/后 → 0 / 1
   assert.equal(resolveQueueDropIndex(0, 2, false), 1);
   assert.equal(resolveQueueDropIndex(0, 2, true), 2);
-  // 往前拖：落在第 0 行前/后 → 0 / 1
   assert.equal(resolveQueueDropIndex(2, 0, false), 0);
   assert.equal(resolveQueueDropIndex(2, 0, true), 1);
-  // 落到自己身上 = 原位（拖动无副作用）
+  // 落到自己身上 = 原位（拖动无副作用）；拖到最后一行之后 → 3
   assert.equal(resolveQueueDropIndex(1, 1, false), 1);
   assert.equal(resolveQueueDropIndex(1, 1, true), 1);
-  // 拖到最后一行之后
   assert.equal(resolveQueueDropIndex(0, 3, true), 3);
 });
 

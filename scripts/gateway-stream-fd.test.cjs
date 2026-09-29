@@ -1,10 +1,7 @@
-// 音频供流的中断路径（真网关、注入式 I/O）：
-//   <audio> 拖进度条 / 切曲 / 关播放器都会**中断**上一次 Range 请求。中断走的是响应的
-//   close 事件（不是读流的 error）：只 pipe 的话 Node 把读流 unpipe 掉就完了，
-//   fs.ReadStream 不 destroy 就一直攥着 fd —— 每中断一次漏一个，几百次之后进程的
-//   fd 预算见底，之后所有供流 / 写凭据 / 建连一起失败，而进程还活着（自愈只看进程退出）。
-//   这里不数操作系统的句柄（跨平台不稳），而是把 fs.createReadStream 换成探针，
-//   直接看「中断之后读流有没有被销毁」这个不变量。
+// 音频供流的中断路径（真网关、注入式 I/O）：<audio> 拖进度条 / 切曲 / 关播放器会**中断**上一次 Range
+// 请求，走的是响应的 close 事件（不是读流的 error）—— 只 pipe 的话 Node 把读流 unpipe 掉就完了，
+// fs.ReadStream 不 destroy 就一直攥着 fd：每中断一次漏一个，几百次后 fd 预算见底，所有供流 / 写凭据 /
+// 建连一起失败（自愈只看进程退出）。这里不数 OS 句柄（跨平台不稳），改用探针看「中断之后读流有没有被销毁」。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

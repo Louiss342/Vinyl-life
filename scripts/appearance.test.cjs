@@ -1,6 +1,5 @@
 // 外观选项（播放器配色 / 唱片配色）回归：类名映射 + 脏 data.json 回落。
-// 同 shelf-props.test.cjs 套路：esbuild 从真实 TS 编译进 node:vm（stub obsidian），不吃盘、不依赖 Obsidian。
-// 本模块刻意不依赖 settings.ts，脚本测试才能只 bundle 这一小块。
+// 同 shelf-props.test.cjs 套路：esbuild 从真实 TS 编译进 node:vm（stub obsidian），不吃盘；模块刻意不依赖 settings.ts，才能只 bundle 这一小块。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
@@ -8,7 +7,6 @@ const esbuild = require('esbuild');
 
 const source = esbuild.buildSync({
   stdin: {
-    // 一并导出 i18n：下面要查「配色显示名的词典键齐备」（文案归词典，这里只查键）
     contents: `export * from '../src/core/appearance';\nexport * as i18n from '../src/core/i18n';\n`,
     resolveDir: __dirname,
     loader: 'ts',

@@ -1,8 +1,7 @@
-// 专辑删除：专辑墙右键「删除专辑…」（单张）与工具栏「批量删除」（多张）的资产盘点 + 清理。
-// 批量走 collectAlbumBatchDeleteTargets：把「同一批要删的专辑」互相视为不存在，
-// 它们共用的音频目录才不会被误判成「还有别张在用」而留下。
-// 原则（与 import.ts 对称）：
-//   1. 只动 vault 内文件——外链绝对路径音频（link 模式）永不删除，仅提示；
+// 专辑删除：专辑墙右键「删除专辑…」（单张）与工具栏「批量删除」（多张）的资产盘点 + 清理。批量走
+// collectAlbumBatchDeleteTargets：同批要删的专辑互相视为不存在，共用音频目录才不会被误判成「还有别张在用」。
+// 原则：
+//   1. 只动 vault 内文件（与 import.ts 对称）——外链绝对路径音频（link 模式）永不删除，仅提示；
 //   2. 仍被其他专辑引用的音频/封面不删（两种嵌套都算：他人的文件夹在本文件夹内、本专辑的文件在他人文件夹里）；
 //   3. 文件夹内混有非音频文件时，只删音频、文件夹保留（整目录进回收站会连带删掉笔记/PDF 等）；
 //   4. 删除走 app.fileManager.trashFile，尊重 Obsidian「已删除文件」设置（回收站 / 永久删除）。
@@ -61,8 +60,7 @@ function resolveCoverFile(app: App, album: AlbumInfo): TFile | null {
   return fallback instanceof TFile ? fallback : null;
 }
 
-/** 其他专辑占用的 vault 内资源。文件夹与文件分开装：文件夹占的是一条**范围**（它底下的一切都算
- *  他人占用），文件只占它自己 —— 混在一个集合里就没法区分「路径本身被引用」与「落在别人目录下」。 */
+/** 其他专辑占用的 vault 内资源。文件夹占的是**范围**（底下一切都算他人占用）、文件只占自己 —— 混在一个集合里就分不清「路径本身被引用」与「落在别人目录下」。 */
 interface OtherAlbumResources {
   files: Set<string>;
   folders: Set<string>;
@@ -92,8 +90,7 @@ function otherAlbumResourcePaths(
   return { files, folders };
 }
 
-// 路径是否被他人占用：自身被引用，或落在他人引用的文件夹之下。
-// 后半条必须认——本专辑的音频文件落在别人的音频文件夹里时，只比路径本身会把它当成本专辑资产删掉。
+// 路径是否被他人占用：自身被引用，或落在他人引用的文件夹之下 —— 只比路径本身，会把「落在别人音频文件夹里的本专辑音频」当成本专辑资产删掉。
 function claimedByOthers(res: OtherAlbumResources, path: string): boolean {
   if (res.files.has(path) || res.folders.has(path)) return true;
   for (const folder of res.folders) if (path.startsWith(folder + '/')) return true;
@@ -109,7 +106,7 @@ function folderClaimedByOthers(folderPath: string, res: OtherAlbumResources): bo
   return false;
 }
 
-// 资产盘点。opts.alsoRemoving：同一批要删的专辑路径集合（批量删除时传，单张删除不用传）
+// 资产盘点。alsoRemoving：同批要删的专辑路径集合（批量传，单张不传）
 export function collectAlbumDeleteTargets(
   app: App,
   album: AlbumInfo,
@@ -122,7 +119,7 @@ export function collectAlbumDeleteTargets(
   const externalAudioRefs: string[] = [];
   const keptFolders: { path: string; audios: number; others: string[] }[] = [];
   const seen = new Set<string>();
-  // 本专辑自己的音频文件夹：里面的零散文件不另行列进共享提示（文件夹那一档已经说了它是共享的）
+  // 本专辑自己的音频文件夹（下面用它过滤重复的共享提示）
   let ownFolderPath = '';
 
   const folderRef = album.audioFolderRef?.trim();
@@ -165,7 +162,7 @@ export function collectAlbumDeleteTargets(
     }
     const f = resolveVaultRef(app, ref);
     if (!(f instanceof TFile) || !isAudioFile(f.name) || seen.has(f.path)) continue;
-    // 共享提示不必列本专辑自己的音频文件夹里的文件：文件夹那一档已经把「共享」说清了
+    // 共享提示不重复列自己文件夹里的文件：文件夹那一档已经说了它是共享的
     const inOwnFolder = ownFolderPath !== '' && f.path.startsWith(ownFolderPath + '/');
     if (claimedByOthers(used, f.path)) {
       if (!inOwnFolder) sharedAudioPaths.push(f.path);
@@ -212,11 +209,8 @@ export interface AlbumBatchDeleteTargets {
   keptFolders: { path: string; audios: number; others: string[] }[];
 }
 
-/** 批量盘点：把「同一批要删的专辑」互相视为不存在 ——
- *  两张选中专辑共用的音频目录不该因为「还有别张在引用」（其实是同批要删的那张）而被留下；
- *  与未选中专辑共用的资源照旧保护（used 里仍然算它们）。
- *  聚合时再做一次收敛：被别的待删目录包住的子目录、位于待删目录内的零散文件都不单独列出
- *  （否则会先删子项、再删父目录，或 trash 一个已经不在的路径）。 */
+/** 批量盘点：同一批要删的专辑互相视为不存在（与未选中专辑共用的资源照旧保护）。聚合时再收敛一次：被别的待删目录
+ *  包住的子目录、位于待删目录内的零散文件都不单独列出，否则会先删子项、再删父目录，或 trash 一个已经不在的路径。 */
 export function collectAlbumBatchDeleteTargets(
   app: App,
   albums: AlbumInfo[]
@@ -319,7 +313,6 @@ async function trashAssets(
   return removed;
 }
 
-// 单张专辑的资产清理
 export function deleteAlbumAssets(
   app: App,
   targets: AlbumDeleteTargets,
@@ -334,7 +327,7 @@ export function deleteAlbumAssets(
   );
 }
 
-// 批量删除的资产清理（多种封面走同一个入口）
+// 批量删除的资产清理：与单张走同一个 trashAssets 入口（顺序纪律只写一处）
 export function deleteAlbumBatchAssets(
   app: App,
   targets: AlbumBatchDeleteTargets,

@@ -1,8 +1,6 @@
 // 音源检测的缓存回归（驱动真实 detectAlbumSources + 假 vault）：
-//   ① 同一份结论不重算 —— 专辑墙每次刷新对每张专辑调一遍，缓存前是每次 N 次目录遍历
-//   ② frontmatter 变了（id / 引用路径）不等作废就重算：sig 兜住
-//   ③ 作废之后重算 —— 库内结构事件、专辑墙「刷新」、健康检查打开都走这个口子
-//   ④ 返回的是副本：调用方改一处不会串到缓存里的结论
+//   ① 同一份结论不重算（专辑墙每刷一次就对每张调一遍，缓存前是每次 N 次目录遍历）；② frontmatter 变了（id / 引用路径）不等作废就重算：sig 兜住；
+//   ③ 作废后重算 —— 库内结构事件、专辑墙「刷新」、健康检查打开都走这个口子；④ 返回副本，调用方改一处不会串到缓存里的结论。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -44,7 +42,7 @@ function load() {
         return { App: class {}, TFile, TFolder, normalizePath: (p) => p };
       }
       if (name === 'fs') {
-        // 库外路径那条分支在这条用例里用不到：给了也只回「什么都没有」
+        // 库外路径那条分支这里用不到：fs 桩只回「什么都没有」
         return { existsSync: () => false, statSync: () => ({}), readdirSync: () => [] };
       }
       if (name === 'path') return nodePath;

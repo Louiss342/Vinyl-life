@@ -1,13 +1,6 @@
-// 数据安全网的四条：读不出来的 data.json、追加听歌记录的原子性、恢复备份后的写入闸门、
-// 重命名专辑时的键迁移。每一条都对着一次「不可逆」：
-//   ① data.json 解析失败时 loadData 返回 null，与「文件不存在」不可区分 —— 一律按全新安装
-//      处理的话，用户唯一一份设置与统计会被默认值盖掉；更糟的是自动备份还会写出一份空备份，
-//      按保留份数把上一份真正的好备份挤掉（等于用一次坏读毁掉仅有的退路）。
-//   ② vault.read + vault.modify 之间，编辑器里敲的字（约 2 秒防抖）会被后一次整篇写回盖掉。
-//   ③ 恢复备份到重启之间 saveSettings 是早退的：这期间「先删文件、再写盘」的动作会留下
-//      删了文件却没写盘的半截状态（封面副本没了，统计重启后又「复活」）。
-//   ④ 统计与失败记录按「笔记路径」键控：重命名不搬键，统计页就会给出一颗会把专辑复制一份的
-//      「恢复」按钮。
+// 数据安全网四条，每条都对着一次「不可逆」：① data.json 解析失败与「文件不存在」在 loadData 里同样返回 null，
+// 按全新安装处理就盖掉用户唯一一份设置与统计、自动备份还会挤掉上一份好备份；② read + modify 会吞掉编辑器里
+// 刚敲的字；③ 恢复备份后早退、先删封面再写盘留下半截状态；④ 重命名不搬统计键，统计页给出会复制专辑的「恢复」按钮。
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -80,7 +73,6 @@ vm.runInNewContext(source, {
   },
 });
 
-/** 一次性装配：data.json 的盘面 + 库 API 都按用例给定 */
 function boot(opts = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vinyl-data-'));
   const written = new Map(); // adapter.write 落下的文件（data.json / corrupt 副本）

@@ -1,6 +1,6 @@
 // QQ 音乐源客户端：与本地网关（server.js 的 /api/qq/* 路由）通信。
-// 与网易云不同：QQ 只有网关单通道（无网页直连），且音质降级 ladder 在网关侧完成，
-// 客户端只做一次请求 → 拿到最终可播地址或中文限制文案。
+// 与网易云不同：QQ 只有网关单通道（无网页直连），音质降级 ladder 也在网关侧完成 —— 客户端只做一次
+// 请求，拿到最终可播地址或中文限制文案。
 import { requestUrl } from 'obsidian';
 import { Track } from './track';
 import { GatewayError, withRequestTimeout } from './request-error';

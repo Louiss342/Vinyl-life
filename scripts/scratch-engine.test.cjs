@@ -1,10 +1,6 @@
-// 引擎的搓碟通道回归：起手交位置、搓碟期间状态不抖（对外仍是起手前的姿态）、
-// 轻量倍速只有正向出声、抬手写回位置，以及换曲 / 清队列一律收掉会话。
-// 盯住的坑：
-//   ① 元素在搓碟期间会被反复起停（轻量音效按倍速走），若照旧上报状态，
-//      播放键会闪、系统媒体面板会翻成暂停 —— 对外必须报「起手前的姿态」；
-//   ② 反向与「按住不放」在元素上出不了声（负速率没普及），位置由视图积分，
-//      抬手必须一次性写回元素，否则音乐从旧位置继续。
+// 引擎的搓碟通道回归：起手交位置、搓碟期间状态不抖（对外仍报起手前的姿态）、轻量倍速只有正向出声、抬手写回位置、
+// 换曲 / 清队列一律收掉会话。两个坑：① 搓碟期间元素被反复起停，照旧上报状态会让播放键闪、系统媒体面板翻成暂停；
+// ② 反向与「按住不放」在元素上出不了声（负速率没普及），位置由视图积分，抬手必须一次性写回元素。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -24,8 +20,7 @@ const source = esbuild.buildSync({
   external: ['obsidian'],
 }).outputFiles[0].text;
 
-// 假元素：引擎用到的那几个成员 + 事件可手动触发（真机的 play / pause 事件是异步的，
-// 这里同步触发更严苛：起手时先立会话再暂停，正是为了扛住这个时序）
+// 假元素：引擎用到的那几个成员 + 事件可手动触发（真机的 play / pause 是异步的，这里同步触发更严苛）
 class FakeAudio {
   constructor() {
     FakeAudio.last = this;
@@ -36,7 +31,6 @@ class FakeAudio {
     this.duration = 100;
     this.paused = true;
     this.playbackRate = 1;
-    // 真元素默认「保音高」（变速不变调的时间拉伸）；搓碟期间要关掉它，见下面的用例
     this.preservesPitch = true;
     this.playCalls = 0;
     this._src = '';
@@ -90,8 +84,7 @@ function setup(overrides = {}) {
     console,
     Buffer,
     Audio: FakeAudio,
-    // 马达斜坡（暂停的滑停）在 window 上排定时器：这里的用例不考斜坡本身，
-    // 给一组「排了但不响」的替身即可 —— 搓碟起手会先把斜坡收掉（motorAbort），断言与它无关
+    // 马达斜坡在 window 上排定时器：用例不考斜坡本身，给一组「排了但不响」的替身即可（搓碟起手会先 motorAbort 收掉它）
     window: { setInterval: () => 0, clearInterval: () => {}, setTimeout: () => 0, clearTimeout: () => {} },
   });
   const mod = module.exports;
@@ -218,7 +211,7 @@ test('轻量音效：出声 / 停声两档迟滞（换向的那一瞬不抖元�
   engine.scratchRate(0.5);
   assert.equal(audio.paused, false);
   const calls = audio.playCalls;
-  engine.scratchRate(0.08); // 落在两档之间：保持现状（还在出声）
+  engine.scratchRate(0.08);
   assert.equal(audio.paused, false, '中间地带不动元素');
   assert.equal(audio.playCalls, calls, '不重复 play');
   engine.scratchRate(0.3);
@@ -249,13 +242,12 @@ test('换出声路线：搓碟台中途接手 → 元素让位（倍速复位、
   assert.equal(audio.paused, true, '元素让位：两边一起响会叠成回声');
   assert.equal(audio.playbackRate, 1);
   assert.equal(audio.preservesPitch, true);
-  engine.scratchRate(0.5); // 换过去之后，轻量路的话一句都不该再听
+  engine.scratchRate(0.5);
   assert.equal(audio.paused, true, '已经切到搓碟台：不再动元素');
 });
 
 test('搓碟期间按媒体键：松手按那一次的意图收尾（不是起手时的姿态）', async () => {
-  // 播放中按住唱片 → 按一次「暂停」（元素本来就停着，媒体键只改意图）→ 松手：
-  // 不能被起手时的「在播」带回播放（那样状态是暂停、声音却在放），反向同理。
+  // 播放中按住唱片 → 按一次「暂停」（元素本就停着，媒体键只改意图）→ 松手不能被起手时的「在播」带回播放（那样状态是暂停、声音却在放），反向同理。
   const a = await playing();
   a.engine.beginScratch({ live: true });
   a.engine.pause();

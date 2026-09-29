@@ -11,6 +11,7 @@ import {
   normalizePlayMode,
   normalizeVolume,
 } from './settings';
+import { pruneRemovedSettings } from './core/settings-legacy';
 import { ServerManager } from './core/server-manager';
 import { installStyleFallback } from './core/style-fallback';
 import { STYLE_GZIP } from './core/style-bundle';
@@ -29,6 +30,7 @@ import { setUpstreamPacing } from './core/probe-pacing';
 import { syncMediaSession } from './core/media-session';
 import { VinylPlayerView, PLAYER_VIEW_TYPE } from './views/player-view';
 import { VinylShelfView, SHELF_VIEW_TYPE } from './views/shelf-view';
+import { registerBrandIcons } from './views/brand-icons';
 import { HandoffController } from './animation/handoff';
 import {
   AlbumInfo,
@@ -97,15 +99,12 @@ import { parseQueueEntries, pickTrackByTitle, queueNoteLines } from './core/queu
 import type { ActiveSource } from './core/queue';
 import { LibraryHealthModal, SourceSwitchModal } from './views/library-health';
 
-// wikilink 里不能安全出现的字符：|（别名分隔）与 [ ]（链接定界）、换行。
-// 专辑名理论上可能含「]]」，路径也可能被手改成怪样子 —— 这类值一律不硬塞进链接。
+// wikilink 危险字符：|（别名分隔）、[ ]（链接定界）、换行 —— 专辑名 / 路径都可能含，一律不硬塞进链接。
 const WIKILINK_UNSAFE = /[|[\]\r\n]/;
 
-/** 「插入此刻正在听」用：专辑名 → 可点击的 wikilink。
- *  有专辑笔记路径时生成 [[路径|专辑名]]（带别名：源码模式不至于太长，阅读时显示专辑名）；
- *  别名或路径含 wikilink 语法字符时不硬凑，逐级降级：
- *    别名不安全（空 / 含 | [ ] 换行）→ [[路径]]（仍可点开笔记，显示名 = 笔记文件名）；
- *    路径不安全或没有路径 → 纯专辑名（宁可不能点，也不生成 [[|名]] 这类坏链接）。 */
+/** 「插入此刻正在听」用：专辑名 → 可点击的 wikilink，路径安全时带别名 [[路径|专辑名]]（源码不至于太长，
+ *  阅读时显示专辑名）。不安全就逐级降级：别名不安全（空 / 含 | [ ] 换行）→ [[路径]]（显示名 = 笔记文件名），
+ *  路径不安全 / 无路径 → 纯专辑名（宁可不能点，也不生成 [[|名]] 这类坏链接）。 */
 function albumWikiLink(path: string | undefined, title: string): string {
   const name = (title || '').trim();
   const p = (path || '').trim();
@@ -116,9 +115,8 @@ function albumWikiLink(path: string | undefined, title: string): string {
   return name;
 }
 
-/** 历史封面副本（`.stats-covers/<hash>.<扩展名>`）的文件名判据：扩展名从 util 的 IMAGE_EXTENSIONS
- *  取（缓存名直接用封面文件的原扩展名）。手抄一份白名单会漏掉 avif / bmp —— 备份里静默跳过副本、
- *  恢复时也写不回，换设备后那张已删除专辑的封面就永久没了。 */
+/** 历史封面副本（`.stats-covers/<hash>.<扩展名>`）的名字判据：扩展名必须取自 util 的 IMAGE_EXTENSIONS ——
+ *  手抄白名单漏掉 avif / bmp 会让备份静默跳过副本、恢复也写不回，换设备后那封面就永久没了。 */
 const STATS_COVER_NAME_RE = new RegExp(
   `^\\.stats-covers/[0-9a-f]{1,8}\\.(?:${IMAGE_EXTENSIONS.join('|')})$`,
   'i'
@@ -128,14 +126,11 @@ const STATS_COVER_NAME_RE = new RegExp(
 const AUTO_BACKUP_PREFIX = 'Vinyl Life auto backup';
 const AUTO_BACKUP_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
 
-/** 音量 / 播放位置 / 播放明细的落盘节奏：平时 5 秒防抖；连续播放时防抖会被一直推后，
- *  所以另加一条 30 秒的最长等待（见 scheduleStatsSave）。 */
+/** 落盘节奏：平时 5 秒防抖；连续播放会一直推后防抖，故另加一条 30 秒的最长等待（见 scheduleStatsSave）。 */
 const STATS_SAVE_DEBOUNCE_MS = 5000;
 const STATS_SAVE_MAX_WAIT_MS = 30 * 1000;
 
-/** 健康检查的试播节奏：取流固定按最低档（只问「拿不拿得到地址」，不跟用户的音质设置走 ——
- *  取流是逐级降档的，按无损试会把四档全走一遍，QQ 还要 ×2 个 mid），
- *  并且每次上游请求之间留一个最小间隔（试播是唯一会成串打平台的路径，见 core/probe-pacing）。 */
+/** 健康检查的试播节奏：取流固定按最低档、请求之间留最小间隔（理由见 checkOnlineSource）。 */
 const PROBE_QUALITY = 'standard';
 const PROBE_REQUEST_GAP_MS = 250;
 
@@ -177,17 +172,15 @@ export default class VinylLifePlugin extends Plugin {
   handoff!: HandoffController;
   private lastReportedSourceFailure = '';
   private pendingSourceSwitch: { path: string; source: ActiveSource } | null = null;
-  /** 恢复备份后到重启前：saveSettings 会一直早退（见下面 saveSettings 的第一行）。
-   *  这段时间里新的播放事件与设置改动只留在内存 —— UI 必须常驻说出来，
-   *  一条几秒的 Notice 兜不住「用户没重启就接着用了几小时」这个场景。 */
+  /** 恢复备份后到重启前：saveSettings 一直早退（见其第一行），新的播放事件与设置改动只留在内存 ——
+   *  UI 必须常驻说出来（一条几秒的 Notice 兜不住「用户没重启就接着用了几小时」这个场景）。 */
   awaitingRestartAfterRestore = false;
   /** 本轮会话里播放明细归档失败过（播放中反复触发时只提示一次） */
   private archiveFailedThisSession = false;
   /** 本轮会话里自动备份失败过（同上：每小时检查一次，失败别反复弹） */
   private autoBackupFailedThisSession = false;
-  /** 本次启动读不出 data.json、已经把原文件另存了一份（见 readSettingsFile）。
-   *  这段会话里绝不能自动备份：内存中是默认值，那份「备份」是空的，而保留份数一裁
-   *  就会把上一份真正的好备份挤掉 —— 等于用一次坏读毁掉仅有的退路。 */
+  /** 本次启动读不出 data.json、已把原文件另存（见 readSettingsFile）。这段会话绝不能自动备份：
+   *  内存中是默认值，那份「备份」是空的，而保留份数一裁就会把上一份好备份挤掉 —— 用一次坏读毁掉仅有的退路。 */
   private dataQuarantined = false;
   /** 歌词缓存（trackKey → 行；null = 这首歌确实没有歌词）。一首几十 KB，见 rememberLyrics 的上限 */
   private lyricsCache = new Map<string, LyricLine[] | null>();
@@ -195,8 +188,11 @@ export default class VinylLifePlugin extends Plugin {
   private lyricsInflight = new Map<string, Promise<LyricLine[] | null>>();
 
   async onload() {
-    // 样式兜底：styles.css 缺失、或与插件版本不一致（只覆盖了 main.js / 同步到一半）时，
-    // 挂上构建期内联的副本（版本一致且文件在位时返回 null，什么都不做）
+    // 品牌图标：设置面板「源」页按图标名取用，必须赶在面板第一次渲染之前注册
+    // （样式兜底 / 读设置 / 建目录那几步都在后面，谁先谁后都不影响它）
+    registerBrandIcons();
+
+    // 样式兜底：styles.css 缺失、或与插件版本不一致（只覆盖了 main.js / 同步到一半）时挂上内联副本
     const disposeStyleFallback = installStyleFallback(
       pluginAbsPath(this, 'styles.css'),
       STYLE_GZIP,
@@ -206,16 +202,11 @@ export default class VinylLifePlugin extends Plugin {
 
     await this.loadSettings();
 
-    // 音源检测的缓存作废（为什么有缓存、口径是什么，见 album-index 的 invalidateSourceCache）：
-    // 专辑墙开着时它自己那次刷新就够，但播放器、健康检查、失败提示这些入口在墙关着的时候
-    // 也会读这份结论 —— 所以在插件层再兜一道。
-    //
-    // **只认会影响结论的那几类变化**：一次作废 = 下一次刷新对**每张**专辑重算，而重算要碰文件
-    // 系统（库外引用走 fs.existsSync / 递归 readdir）。曾经这里不看路径一律作废 —— 别的插件
-    // 写一篇日记、同步客户端落地一个文件，500 张的墙就要对 500 张专辑各来一遍同步系统调用。
-    // 判据与专辑墙的 onVaultChanged 同一口径（文件夹 / 音频 / 图片），再加上「专辑笔记目录里的
-    // md」（增删改名会影响这张专辑在不在）。其余（普通笔记、canvas、插件文件、配置）直接早退。
-    // 「库外目录自己变了」听不到（没有事件源），用户显式点刷新 / 打开健康检查时会再作废一次。
+    // 音源检测缓存作废（口径见 album-index 的 invalidateSourceCache）：墙开着时它自己刷新就够，但
+    // 播放器 / 健康检查 / 失败提示在墙关着时也读这份结论，故在插件层再兜一道。
+    // **只认会影响结论的那几类变化**（判据同专辑墙的 onVaultChanged，另加「专辑笔记目录里的 md」）：一次
+    // 作废 = 对每张专辑重算并碰文件系统（库外引用走 fs.existsSync / 递归 readdir）—— 曾经不看路径一律
+    // 作废，别的插件写篇日记就让 500 张的墙各来一遍同步调用。其余早退；库外目录自己变了听不到。
     const onVaultStructureChanged = (f: TAbstractFile, oldPath?: string) => {
       const isFolder = f instanceof TFolder;
       const isFile = f instanceof TFile;
@@ -241,18 +232,20 @@ export default class VinylLifePlugin extends Plugin {
       })
     );
 
-    // 首次运行自动搭好目录结构（默认 Vinyl Life/{Vinyl Note, covers, audio, Stats}）：
-    // 新装用户装完即用；已有目录不动，失败不阻塞加载（导入流程里还会再兜一次）
+    // 首次运行搭好目录结构（新装即用；已有目录不动，失败不阻塞加载 —— 导入流程里还会再兜一次）
     await this.ensureDataFolders();
 
     // 服务层：网关（Cookie 通道）+ 网页直连（渲染进程 requestUrl）统一路由
     this.server = new ServerManager(this);
+    // 网关起不来必须说出来（各调用方只会各自降级）：文案点明本地音频不受影响，免得用户以为插件坏了
+    this.server.onFailure = (msg) => {
+      notice(tf('gateway.unavailable', { msg }), 10_000);
+    };
     this.client = new ServerClient(
       () => this.server.base,
       () => this.server.token
     );
-    // 第三个参数是登录凭据文件：网页直连通道用它带 MUSIC_U（网关扫码登录写的同一份），
-    // 不接的话渲染进程永远处于「未登录」，网页通道形同虚设
+    // 第三个参数是登录凭据文件：不接的话渲染进程永远「未登录」，网页直连通道形同虚设
     this.web = new WebClient(
       pluginAbsPath(this, '.anon-token'),
       pluginAbsPath(this, '.device-id'),
@@ -273,7 +266,6 @@ export default class VinylLifePlugin extends Plugin {
     // 第三个参数是网关：库外音频按 HTTP Range 供流（整轨不进内存），起不来时 LocalSource 自行退回 Blob
     this.local = new LocalSource(this.app, BLOB_BUDGET_BYTES, this.server);
 
-    // 播放引擎
     this.engine = new PlaybackEngine({
       app: this.app,
       local: this.local,
@@ -305,8 +297,7 @@ export default class VinylLifePlugin extends Plugin {
     });
     // 音量沿用上次（引擎默认 0.8，这里覆盖成用户自己的值）
     this.engine.setVolume(this.settings.volume);
-    // 系统媒体键（媒体键 / 耳机按键 / 系统媒体面板）：挂在插件层，播放器关着也管用。
-    // 顺带把「音量 + 播放位置」防抖落盘（与统计、队列顺序共用同一条 5 秒防抖）。
+    // 系统媒体键挂在插件层（播放器关着也管用）；顺带把「音量 + 播放位置」落进同一条 5 秒防抖
     this.engine.subscribe((s) => {
       syncMediaSession(s, {
         play: () => void this.engine.play(),
@@ -320,17 +311,14 @@ export default class VinylLifePlugin extends Plugin {
     });
     this.handoff = new HandoffController(this);
 
-    // 视图与命令
     this.registerView(PLAYER_VIEW_TYPE, (leaf) => new VinylPlayerView(leaf, this));
     this.registerView(SHELF_VIEW_TYPE, (leaf) => new VinylShelfView(leaf, this));
-    // 图标与播放器视图一致（disc-3），方便一眼认出是 Vinyl Life
+    // 图标与播放器视图一致（disc-3），一眼认出是 Vinyl Life
     this.addRibbonIcon('disc-3', t('cmd.ribbonShelf'), () => this.openShelf());
-    // 命令面板：命令表在 core/commands.ts（宿主中立，独立壳将来直接吃同一份），
-    // 这里只做 Obsidian 这一侧的接线 —— 名字与回调两样机械映射。
-    // 登录 / 退出统一从「设置 → 源」操作，不再额外占用命令面板。
-    // 命令 id 不得改动（改了会让已绑定的快捷键失效）。
-    // 也**不给默认快捷键**：插件规范建议别设（可能撞上用户自己的键），想用键的去
-    // 「设置 → 快捷键」绑一次，README 的「命令与快捷键」列了推荐键位。
+    // 命令表在 core/commands.ts（宿主中立，独立壳将来直接吃同一份），这里只做 Obsidian 这一侧的接线；
+    // 登录 / 退出统一从「设置 → 源」操作，不占命令面板。
+    // 命令 id 不得改动（改了会让已绑定的快捷键失效）；也**不给默认快捷键**（可能撞上用户自己的键）
+    // —— 想用键的去「设置 → 快捷键」绑，README 的「命令与快捷键」列了推荐键位。
     const commandHost = this.commandHost();
     for (const cmd of COMMANDS) {
       this.addCommand({
@@ -339,8 +327,8 @@ export default class VinylLifePlugin extends Plugin {
         callback: () => void cmd.run(commandHost),
       });
     }
-    // 笔记里的播放位置 → 跳回音乐（写感想时把位置写成 obsidian:// 链接，见 appendListeningNote）。
-    // 这是「听到这里 → 记下 → 日后重听」闭环里最后那一跳。
+    // 笔记里的播放位置 → 跳回音乐（写感想时把位置写成 obsidian:// 链接，见 appendListeningNote）：
+    // 「听到这里 → 记下 → 日后重听」闭环里最后那一跳。
     this.registerObsidianProtocolHandler('vinyl-life', (params) => void this.resumeFromNote(params));
 
     this.addSettingTab(new VinylSettingTab(this.app, this));
@@ -365,11 +353,10 @@ export default class VinylLifePlugin extends Plugin {
     this.local?.clearAllBlobs();
   }
 
-  /** data.json 的读取：区分「还没有这个文件」（新装 / 首次运行）与「文件在、但读不出来」
-   *  （同步工具写到一半、断电、手改坏了）。这个区别很要紧 —— Obsidian 的 loadData 在
-   *  JSON 解析失败时返回 null，与「文件不存在」是同一个返回值；一律按全新安装处理的话，
-   *  用户唯一一份设置与统计会在启动后几秒内被默认值盖掉（顺带写出一份空备份，还可能按
-   *  保留份数把上一份好备份挤掉）。所以坏文件先原样另存一份，再退回默认值。 */
+  /** data.json 的读取：「还没有这个文件」（新装）与「文件在、但读不出来」（同步工具写到一半 / 断电 /
+   *  手改坏了）必须区分 —— loadData 在 JSON 解析失败时返回的也是 null。一律按全新安装处理，用户唯一
+   *  一份设置与统计会在启动后几秒内被默认值盖掉（顺带写出一份空备份，还可能按保留份数挤掉上一份好的）
+   *  —— 所以坏文件先原样另存一份，再退回默认值。 */
   private async readSettingsFile(): Promise<Partial<VinylSettings>> {
     const dir = this.manifest.dir || '';
     const dataPath = dir ? `${dir}/data.json` : 'data.json';
@@ -403,26 +390,24 @@ export default class VinylLifePlugin extends Plugin {
   async loadSettings() {
     const data: Partial<VinylSettings> = await this.readSettingsFile();
     this.settings = { ...DEFAULT_SETTINGS, ...data };
-    // 1.0.10 之前的调试命令开关已移除；清掉旧 data.json 残留，避免下次保存继续带回。
-    delete (this.settings as VinylSettings & { debugCommands?: unknown }).debugCommands;
-    // 统计导出 / 队列笔记目录：1.2.0 之前没有这两项，按当时的推导口径补齐
-    // （专辑笔记目录的上一级 + Stats / Queues）—— 改过专辑笔记目录的用户，落点不会凭空换地方。
+    // 已移除功能的旧键：清掉再往下走，否则会被原样写回下一份 data.json（清单见 settings-legacy）
+    pruneRemovedSettings(this.settings);
+    // 统计 / 队列目录：按旧口径补默认值（专辑笔记目录的上一级 + Stats / Queues），老用户落点不换地方
     const statsRoot = this.settings.albumFolder.split('/').slice(0, -1).join('/') || 'Vinyl Life';
     const savedStatsFolder = typeof data?.statsFolder === 'string' ? data.statsFolder.trim() : '';
     this.settings.statsFolder = savedStatsFolder || `${statsRoot}/Stats`;
     const savedQueueFolder = typeof data?.queueFolder === 'string' ? data.queueFolder.trim() : '';
     this.settings.queueFolder = savedQueueFolder || `${statsRoot}/Queues`;
-    // 播放明细裁剪：**先归档，再裁**。两年保留规则一旦执行就再也回不来了，
-    // 而「很久没打开插件」的用户根本没有机会手动备份 —— 所以把要被裁掉的那批明细
-    // 连同一份完整设置写成可恢复的备份 JSON（恢复流程原样能用），再裁内存里的。
+    // 播放明细裁剪：**先归档，再裁**。两年保留规则一旦执行就再也回不来，而「很久没打开插件」的
+    // 用户根本没机会手动备份 —— 故把要被裁的明细连同一份完整设置写成可恢复的备份 JSON，再裁内存里的。
     const allEvents = normalizePlayEvents(data?.stats?.events);
     this.settings.stats = ensureStats(data?.stats);
     // **先归档成功，才认裁剪结果**（启动路径；播放中的那条在 recordPlay 里走同一个函数）
     await this.retainEventsOrKeepAll(allEvents, this.settings.stats.events);
     this.settings.sourceFailures = data?.sourceFailures && typeof data.sourceFailures === 'object' && !Array.isArray(data.sourceFailures)
       ? { ...data.sourceFailures } : {};
-    // 卡片属性：数组结构必须显式归一化——Object.assign 对数组会产出 {0:…,length:…} 类数组怪物，
-    // 且浅拷贝会让设置与 DEFAULT_SETTINGS 共享引用（push 即污染默认值）；归一化同时完成旧 boolean 结构迁移
+    // 卡片属性：必须显式归一化 —— Object.assign 对数组会产出 {0:…,length:…} 的类数组怪物，
+    // 浅拷贝还会让设置与 DEFAULT_SETTINGS 共享引用（push 即污染默认值）；顺带迁移旧 boolean 结构
     this.settings.shelfProps = normalizeShelfProps(data?.shelfProps);
     this.settings.shelfPropLabels = normalizeShelfPropLabels(data?.shelfPropLabels);
     // 音量与上次播放位置：脏数据一律回落（data.json 可能被手改或来自旧版本）
@@ -442,9 +427,8 @@ export default class VinylLifePlugin extends Plugin {
     if (!Object.keys(SPIN_SPEEDS).includes(this.settings.turntableSpeed)) {
       this.settings.turntableSpeed = DEFAULT_SETTINGS.turntableSpeed;
     }
-    // 七个目录名统一（旧默认名 → 首字母大写）：设置都归一完了再改名，
-    // 改名后的 saveSettings 落的就是干净数据；它也可能把模板路径改掉，
-    // 所以必须排在下面「模板文件路径注入索引层」之前。
+    // 七个目录名统一（旧默认名 → 首字母大写）：设置都归一完了再改名，saveSettings 落的就是干净
+    // 数据；它也可能把模板路径改掉，故必须排在下面「模板文件路径注入索引层」之前。
     await this.migrateFolderNames();
     // 模板文件路径注入索引层（避免它自己被当成专辑）
     setAlbumTemplatePath(this.settings.albumNoteTemplate);
@@ -530,29 +514,27 @@ export default class VinylLifePlugin extends Plugin {
   refreshLanguage() {
     for (const leaf of this.app.workspace.getLeavesOfType(SHELF_VIEW_TYPE)) {
       const v = leaf.view as unknown as { applyLanguage?: () => void; render?: () => void };
-      // 专辑墙的工具栏与卡片文案也是建的时候写死的：走 applyLanguage（强制重建一次），
-      // 光调 render 会落到增量分支上 —— 文案停在旧语言（见 shelf-view 的 applyLanguage）
+      // 工具栏与卡片文案是建的时候写死的：必须走 applyLanguage（强制重建），光调 render 会落到
+      // 增量分支上，文案停在旧语言（见 shelf-view 的 applyLanguage）
       if (typeof v.applyLanguage === 'function') v.applyLanguage();
       else if (typeof v.render === 'function') v.render();
     }
-    // 播放器的壳只建一次（见 player-view 的增量渲染）：不能重建 DOM（会打断转盘旋转与入场动画、
-    // 丢掉播放进度），改为就地重放文案标签——按钮 aria-label / title 与队列提示随语言切换
+    // 播放器的壳只建一次（见 player-view 的增量渲染）：重建 DOM 会打断转盘旋转与入场动画、
+    // 丢掉播放进度 —— 改为就地重放文案标签（按钮 aria-label / title 与队列提示）
     for (const leaf of this.app.workspace.getLeavesOfType(PLAYER_VIEW_TYPE)) {
       const v = leaf.view;
       if (v instanceof VinylPlayerView) v.applyLanguage();
     }
   }
 
-  /** 模板文件的默认落点：专辑笔记目录的上一级 + Template/（与其它六个目录同一套命名；
-   *  文件名仍是中文，用户在文件列表里一眼认得） */
+  /** 模板文件默认落点：专辑笔记目录的上一级 + Template/（与其它目录同一套命名；文件名仍是中文） */
   defaultTemplatePath(): string {
     const root = this.settings.albumFolder.split('/').slice(0, -1).join('/');
     return normalizePath(`${root ? root + '/' : ''}Template/专辑笔记模板.md`);
   }
 
-  /** 打开模板文件；配置的路径上没有文件就按内置模板生成一份再打开。
-   *  顺带把 1.3.0 之前的旧默认目录（模板/）迁到 template/ —— 那是最常见的「设置里指着一个
-   *  不存在的文件、导入却静默用内置模板」的来源。 */
+  /** 打开模板文件；配置的路径上没有文件就按内置模板生成一份再打开。顺带认下 1.3.0 之前的旧默认
+   *  目录（模板/）—— 那是「设置里指着不存在的文件、导入却静默用内置模板」最常见的来源。 */
   async openAlbumTemplate(): Promise<void> {
     const configured = String(this.settings.albumNoteTemplate || '').trim();
     if (configured) {
@@ -583,9 +565,8 @@ export default class VinylLifePlugin extends Plugin {
     notice(tf('notice.templateReady', { path }));
   }
 
-  /** 目录名统一（1.3.0）：旧默认名 → 新默认名，七个目录一律首字母大写。
-   *  **只迁仍是旧默认值的那一项**：用户改过路径的一律不碰；旧目录不在 / 新目录已存在也跳过
-   *  （绝不做合并，宁可不动）。改名走 fileManager，笔记里的链接会跟着更新。 */
+  /** 目录名统一（1.3.0）：旧默认名 → 首字母大写。**只迁仍是旧默认值的那一项** —— 用户改过路径的
+   *  一律不碰，旧目录不在 / 新目录已存在也跳过（绝不合并，宁可不动）。走 fileManager，链接跟着更新。 */
   private async migrateFolderNames(): Promise<void> {
     const root = this.settings.albumFolder.split('/').slice(0, -1).join('/') || 'Vinyl Life';
     const renamed: string[] = [];
@@ -670,11 +651,9 @@ export default class VinylLifePlugin extends Plugin {
   }
 
   // —— 命令层（core/commands.ts 的 CommandHost 实现）——
-  // 命令表只声明「做什么」，具体怎么做留在这里：命令因此能在纯 Node 的测试里跑（交一个假宿主），
-  // 也能在独立壳里换一套动作实现，而命令 id 与默认键只有一份。
+  // 命令表只声明「做什么」：因此能在纯 Node 测试里跑（交假宿主），也能在独立壳里换实现，id 只有一份。
 
-  /** 正在播放的那张专辑：命令层的统一目标（与写感想同一条口径，见 appendListeningNote）。
-   *  没在播、笔记被删或被改名时返回 null —— 调用方如实报错，别静默什么都不做。 */
+  /** 正在播放的那张专辑（口径同 appendListeningNote）；没在播 / 笔记被删或改名时返回 null，调用方如实报错。 */
   private currentAlbum(): AlbumInfo | null {
     const path = this.engine.snapshot().albumNotePath;
     if (!path) return null;
@@ -704,9 +683,8 @@ export default class VinylLifePlugin extends Plugin {
     window.open(links[0].url);
   }
 
-  /** 给当前专辑导入本地音频（命令）。
-   *  与「导入本地音频」那条的差别：这条**要求**有当前专辑 —— 否则打开的是一个没有目标的导入面板，
-   *  用户以为导给了这张专辑，实际落到了别处（拖到卡片上的动作在键盘上要有个说得清的等价物）。 */
+  /** 给当前专辑导入本地音频（命令）。与「导入本地音频」的差别是这条**要求**有当前专辑 —— 否则
+   *  打开的是没有目标的导入面板，用户以为导给了这张专辑（卡片拖拽在键盘上要有个说得清的等价物）。 */
   private importLocalToCurrent(): void {
     const album = this.currentAlbum();
     if (!album) {
@@ -759,8 +737,7 @@ export default class VinylLifePlugin extends Plugin {
     new LocalImportModal(this.app, this.importCtx(), albums, preset).open();
   }
 
-  // 拖拽入库入口（专辑墙调用）：album 为 null 时从文件新建本地专辑。
-  // 返回落库到的专辑笔记路径（拿不到 / 失败为 null）—— 专辑墙拿它给新卡片描边
+  // 拖拽入库入口（专辑墙调用）：album 为 null 时从文件新建专辑；返回落库到的笔记路径，供墙描边新卡片
   async importAudioFromFiles(
     files: File[],
     album: AlbumInfo | null,
@@ -839,9 +816,9 @@ export default class VinylLifePlugin extends Plugin {
     new DeleteBatchModal(this.app, this, albums, onDeleted).open();
   }
 
-  // 执行删除：历史快照 → 连带资产（可选）→ 笔记 → 播放态复位。
-  // 单张与批量共用这一条路径：批量时同批专辑互相视为「不存在」，
-  // 它们共用的音频目录才不会被误判成「还有别张在用」而留下（见 collectAlbumBatchDeleteTargets）。
+  // 执行删除：历史快照 → 连带资产（可选）→ 笔记 → 播放态复位。单张与批量共用这一条路径 ——
+  // 批量时同批专辑互相视为「不存在」，共用的音频目录才不会被误判成「还有别张在用」（见
+  // collectAlbumBatchDeleteTargets）。
   async deleteAlbums(albums: AlbumInfo[], opts: { audio: boolean; cover: boolean }) {
     if (!albums.length) return;
     // 统计是历史，不应随专辑删除：先保留封面副本和 YAML，日后可从统计页重建。
@@ -869,8 +846,8 @@ export default class VinylLifePlugin extends Plugin {
     await this.deleteAlbums([album], opts);
   }
 
-  // 感想联动：在目标专辑笔记正文末尾追加时间戳条目并定位光标。
-  // albumPath 缺省 = 正在播放的那张（命令面板等旧入口）；队列里每张专辑的小按钮会传自己的路径。
+  // 感想联动：在目标专辑笔记正文末尾追加时间戳条目并定位光标。albumPath 缺省 = 正在播放的那张
+  //（命令面板等旧入口）；队列里每张专辑的小按钮会传自己的路径。
   async appendListeningNote(albumPath?: string) {
     const snap = this.engine.snapshot();
     const target = albumPath || snap.albumNotePath;
@@ -892,15 +869,14 @@ export default class VinylLifePlugin extends Plugin {
       ? ` · [${fmtTime(snap.currentTime)}](${this.resumeLink(target, snap.current.title, snap.currentTime)})`
       : '';
     const line = tf('note.listeningLine', { ts, title, position });
-    // 走 process（读改写是原子的）：read + modify 两步之间，编辑器里敲的字（约 2 秒防抖）
-    // 或同一篇笔记的另一次追加都会被后一次写回整篇盖掉 —— 而「边听边写感想」正是主路径。
+    // 走 process（读改写是原子的）：read + modify 两步之间，编辑器里敲的字（约 2 秒防抖）或同一篇
+    // 笔记的另一次追加都会被后一次写回整篇盖掉 —— 而「边听边写感想」正是主路径。
     try {
       await this.app.vault.process(file, (content) => {
         return content.trimEnd() + (content.trim() ? '\n\n' : '') + line + '\n';
       });
     } catch (e) {
-      // 写不进去（文件被占用 / 磁盘满 / 权限）时必须说出来：这条记录是用户手动触发的，
-      // 静默失败会让他以为已经写上了
+      // 写不进去（占用 / 磁盘满 / 权限）必须说出来：记录是用户手动触发的，静默失败会让他以为写上了
       notice(tf('notice.appendFailed', { name: file.basename, msg: (e as Error).message }));
       return;
     }
@@ -914,8 +890,8 @@ export default class VinylLifePlugin extends Plugin {
     notice(tf('notice.appended', { name: file.basename }));
   }
 
-  /** 笔记里那条播放位置的链接：点一下回到那首歌的那一秒。
-   *  走 Obsidian 的协议处理器（obsidian://vinyl-life?…），笔记被同步到别的设备也照样能用。 */
+  /** 笔记里那条播放位置的链接：点一下回到那首歌的那一秒。走 Obsidian 的协议处理器
+   *  （obsidian://vinyl-life?…），笔记被同步到别的设备也照样能用。 */
   resumeLink(albumPath: string, trackTitle: string, posSec: number): string {
     const q = (v: string | number) => encodeURIComponent(String(v));
     return (
@@ -924,8 +900,8 @@ export default class VinylLifePlugin extends Plugin {
     );
   }
 
-  /** 健康检查的「重试并清除」：按那条失败记录的音源策略再试一次。
-   *  成功（能建出队列 / 能拿到播放地址）返回 null，失败返回错误文本。 */
+  /** 健康检查的「重试并清除」：按那条失败记录的音源策略再试一次。成功（能建出队列 / 拿到地址）
+   *  返回 null，失败返回错误文本。 */
   async retryAlbumSource(album: AlbumInfo, source: ActiveSource | 'auto'): Promise<string | null> {
     if (source === 'netease' || source === 'qq' || source === 'kugou') {
       return this.checkOnlineSource(album, source);
@@ -974,9 +950,8 @@ export default class VinylLifePlugin extends Plugin {
     await this.openPlayer();
   }
 
-  // 插入此刻正在听：往「用户当前编辑的笔记」光标处插一行曲目信息。
-  // 与上面的 appendListeningNote 是两件事：那个写专辑笔记正文末尾，这个只动当前编辑器、不碰文件。
-  // 成功不弹通知（插入结果肉眼可见），只有失败路径才提示。
+  // 插入此刻正在听：往当前编辑器光标处插一行曲目信息（只动编辑器、不碰文件 —— 与上面的
+  // appendListeningNote 是两件事，那个写专辑笔记正文末尾）。成功不弹通知（肉眼可见），只在失败时提示。
   insertNowPlaying() {
     const snap = this.engine.snapshot();
     const track = snap.current;
@@ -990,8 +965,8 @@ export default class VinylLifePlugin extends Plugin {
       notice(t('notice.noActiveNote'));
       return;
     }
-    // 专辑名优先取专辑笔记标题（队列加载后一定有）；收藏类队列没有笔记标题时退回曲目自带的专辑名
-    // 有专辑笔记路径时把它做成 wikilink（专辑名可点击打开笔记）；模板本身不变，链接在调用处拼好
+    // 专辑名优先取专辑笔记标题（队列加载后一定有），收藏类队列退回曲目自带的专辑名；
+    // 链接在调用处拼好（模板本身不变）
     const album = albumWikiLink(snap.albumNotePath, snap.albumTitle || track.album || '');
     const line = tf('notice.nowPlayingLine', { album, track: track.title });
     view.editor.replaceSelection(line + '\n');
@@ -1040,8 +1015,8 @@ export default class VinylLifePlugin extends Plugin {
         ? getAlbumInfo(this.app, albumFile, { coverFolder: this.settings.coverFolder })
         : null;
       if (!album) { skipped.push(entry.trackTitle); continue; }
-      // 队列可能混着来源（本地 + 在线）：按「这张笔记实际会用的音源」优先，再依次试其余已关联的。
-      // 以前靠隐藏标记里的来源键知道该解析哪一路，现在以「能不能找到这首」为准。
+      // 队列可能混着来源（本地 + 在线）：按「这张笔记实际会用的音源」优先，再依次试其余已关联的
+      //（旧口径靠隐藏标记里的来源键，已废 —— 现在以「能不能找到这首」为准）
       const sources = detectAlbumSources(this.app, album);
       const order: ActiveSource[] = [];
       const preferred = this.settings.defaultSource !== 'auto' ? this.settings.defaultSource : null;
@@ -1184,9 +1159,9 @@ export default class VinylLifePlugin extends Plugin {
 
   /** 用户主动发起的在线检查：只取少量曲目的播放地址，不启动播放。 */
   async checkOnlineSource(album: AlbumInfo, source: Exclude<ActiveSource, 'local'>): Promise<string | null> {
-    // 取流按 PROBE_QUALITY（最低档）而不是用户设置的音质：这里只问「拿不拿得到地址」，
-    // 而取流是逐级降档的 —— 按无损试，一个没会员的账号会把四档全走一遍，QQ 还要再 ×2 个 mid。
-    // 整段过程另给上游请求加最小间隔（试播是唯一成串打平台的路径，见 core/probe-pacing）。
+    // 取流按 PROBE_QUALITY（最低档）而不是用户设置的音质：这里只问「拿不拿得到地址」，而取流是
+    // 逐级降档的 —— 按无损试，没会员的账号会把四档全走一遍（QQ 还要再 ×2 个 mid）。整段过程另给
+    // 上游请求加最小间隔（试播是唯一会成串打平台的路径，见 core/probe-pacing）。
     setUpstreamPacing(PROBE_REQUEST_GAP_MS);
     try {
       const result = await buildAlbumQueue({ ...album, sourcePref: source }, {
@@ -1217,12 +1192,11 @@ export default class VinylLifePlugin extends Plugin {
     }
   }
 
-  /** 歌词：同一首只取一次（来回翻面、切回来都不重复打网）。
-   *  返回 null = 这首歌没有歌词（上游没收录）或这次没取到：对在线源是稳定结论，照样进缓存；
-   *  网络 / 上游故障也返回 null 但**不进缓存** —— 下次翻回歌词页还能再试一次。
+  /** 歌词：同一首只取一次（在途去重，来回翻面、切回来都不重复打网）。
+   *  返回 null = 这首歌没有歌词（上游没收录，对在线源是稳定结论，照样进缓存）或这次没取到
+   *  （网络 / 上游故障，也返回 null 但**不进缓存**，下次翻回歌词页还能再试一次）。
    *  本地音轨两侧都不进缓存：歌词是与音频同目录的旁挂文件，用户随时可能补一个或改一个，
-   *  而读它只是一次目录扫描 + 一次文件读，不值得为省这点开销让新歌词要重启才认。
-   *  （在途去重照旧：同一首并发问两次仍只读一次文件。） */
+   *  而读它只是一次目录扫描 + 一次文件读，不值得让新歌词要重启才认。 */
   async loadLyrics(track: Track): Promise<LyricLine[] | null> {
     const key = trackKey(track);
     const local = isLocalTrack(track);
@@ -1426,11 +1400,10 @@ export default class VinylLifePlugin extends Plugin {
     }
   }
 
-  /** 重命名专辑笔记（或整个文件夹）时，把以「笔记路径」为键的两张表一起搬过去。
-   *  不搬的话：统计页会把这张专辑显示成「已移除」并给出「恢复」按钮，点下去会在**旧路径**
-   *  重建一篇带 album 标签的笔记 —— 墙上凭空多一张重复专辑、播放次数从此拆成两笔；
-   *  而 sourceFailures 里那条以旧路径为键的记录既不显示也不清除，永久留在 data.json 里。
-   *  文件夹改名按前缀整段搬（里面的专辑笔记全都跟着走了）。 */
+  /** 重命名专辑笔记（或整个文件夹）时，把以「笔记路径」为键的两张表一起搬过去（文件夹按前缀整段搬）。
+   *  不搬的话：统计页会把这张专辑显示成「已移除」，点「恢复」会在**旧路径**重建一篇带 album 标签的
+   *  笔记 —— 墙上凭空多一张重复专辑、播放次数拆成两笔；而 sourceFailures 里那条以旧路径为键的
+   *  记录既不显示也不清除，永久留在 data.json 里。 */
   private migrateAlbumKeys(oldPath: string, newPath: string): void {
     if (!oldPath || oldPath === newPath) return;
     const under = (key: string) => key === oldPath || key.startsWith(oldPath + '/');
@@ -1452,9 +1425,9 @@ export default class VinylLifePlugin extends Plugin {
   }
 
   async clearPlaybackStats(): Promise<void> {
-    // 恢复备份之后到重启之前，saveSettings 是早退的（见它的第一行）：而这里会先把历史封面
-    // 缓存从盘上删掉、统计却写不回去 —— 重启后统计「复活」，引用的封面副本却已经没了
-    //（破图，且「恢复专辑」再也补不回封面）。所以写盘恢复之前，这一步一律不执行。
+    // 恢复备份之后到重启之前，saveSettings 是早退的（见它的第一行）：而这里会先把历史封面缓存
+    // 从盘上删掉、统计却写不回去 —— 重启后统计「复活」而封面副本已没了（破图，且再也补不回）。
+    // 所以写盘恢复之前，这一步一律不执行。
     if (this.awaitingRestartAfterRestore) {
       notice(t('data.writePausedAfterRestore'));
       return;
@@ -1495,14 +1468,13 @@ export default class VinylLifePlugin extends Plugin {
     return file;
   }
 
-  /** 每周自动备份：到点了就写一份，并按保留份数清掉最旧的**自动**备份。
-   *  手动备份与裁剪归档（`Vinyl Life backup` / `Vinyl Life events archive`）一律不碰。
-   *  失败只提示一次，且不更新「最近成功备份」——下次检查会再试。 */
+  /** 每周自动备份：到点了写一份，并按保留份数清掉最旧的**自动**备份（手动备份与裁剪归档
+   *  —— `Vinyl Life backup` / `Vinyl Life events archive` —— 一律不碰）。
+   *  失败只提示一次且不更新「最近成功备份」，下次检查会再试。 */
   private async maybeAutoBackup(): Promise<void> {
     if (!this.settings.autoBackup || this.autoBackupFailedThisSession) return;
-    // 这次启动没读出 data.json（已另存一份，见 readSettingsFile）：内存里是默认值，
-    // 这份「自动备份」是空的，而保留份数一裁就会把上一份真正的好备份挤掉
-    //（pruneAutoBackups 按份数留）—— 等于用一次坏读毁掉仅有的退路。本次会话不备份。
+    // 这次启动没读出 data.json（已另存一份，见 readSettingsFile）：内存里是默认值，这份「自动备份」
+    // 是空的，而 pruneAutoBackups 按份数留 —— 一裁就会挤掉上一份真正的好备份。本次会话不备份。
     if (this.dataQuarantined) return;
     const last = this.settings.lastBackupAt || 0;
     if (Date.now() - last < AUTO_BACKUP_INTERVAL_MS) return;
@@ -1542,9 +1514,8 @@ export default class VinylLifePlugin extends Plugin {
     return normalizePath(`${root}/Backups`);
   }
 
-  /** 备份目录的清单（份数 / 体积）：给「数据管理」当只读状态行。
-   *  只统计不清理 —— 手动备份与裁剪归档刻意不自动删（自动备份那部分见 pruneAutoBackups），
-   *  但用户至少该看得见它在长大，而不是等到网盘同步变慢才发现。 */
+  /** 备份目录清单（份数 / 体积），给「数据管理」当只读状态行：只统计不清理 —— 手动备份与裁剪归档
+   *  刻意不自动删（自动备份那部分见 pruneAutoBackups），但用户至少该看得见它在长大。 */
   backupInventory(): { count: number; bytes: number } {
     const folder = this.app.vault.getAbstractFileByPath(this.backupFolderPath());
     if (!(folder instanceof TFolder)) return { count: 0, bytes: 0 };
@@ -1559,8 +1530,8 @@ export default class VinylLifePlugin extends Plugin {
     return { count, bytes };
   }
 
-  /** 写一份备份格式的 JSON：设置 + 指定统计快照 + 历史封面缓存。
-   *  手动备份与「裁剪前归档」共用它 —— 归档出来的文件能直接用「恢复备份」载回。 */
+  /** 写一份备份格式的 JSON：设置 + 指定统计快照 + 历史封面缓存。手动备份与「裁剪前归档」共用它
+   *  —— 归档出来的文件能直接用「恢复备份」载回。 */
   private async writeBackupFile(prefix: string, stats: VinylStats): Promise<TFile> {
     const folder = this.backupFolderPath();
     await ensureFolder(this.app, folder);
@@ -1585,14 +1556,12 @@ export default class VinylLifePlugin extends Plugin {
     return this.app.vault.create(target, content);
   }
 
-  /** 播放明细的保留流程：**先归档成功，才认裁剪结果**。
-   *  归档写不出去（磁盘满 / 权限 / 同步冲突）就把完整明细留在内存里，并提示用户 ——
-   *  之后的保存会把它们原样写回，绝不会出现「没归档、明细还被裁掉」。
-   *  启动时与播放中（到达明细上限 / 有超期明细）共用这一条流程。
-   *  归档要写文件、是异步的，而播放还在继续：这段时间 recordPlay 会往**同一个** events 数组里
-   *  接着 push（stats.recordTrackPlay 是原地 push，不是换数组）。所以裁完不能拿发起归档前算好的
-   *  kept 整段替换 —— 那会把期间新记的明细一起丢掉（既不在归档文件里、也不在内存里）。
-   *  收口时按「归档前那一段里留下哪些」+「归档之后新来的全部」重新拼一次。 */
+  /** 播放明细的保留流程：**先归档成功，才认裁剪结果** —— 归档写不出去（磁盘满 / 权限 / 同步冲突）
+   *  就把完整明细留在内存里并提示，之后的保存会原样写回，绝不会「没归档、明细还被裁掉」；
+   *  启动时与播放中（到达上限 / 有超期明细）共用这一条。
+   *  归档是异步的而播放还在继续：期间 recordPlay 会往**同一个** events 数组里接着 push（原地 push、
+   *  不换数组），故裁完不能拿发起前算好的 kept 整段替换 —— 会丢掉期间新记的明细（既不在归档文件
+   *  里、也不在内存里）；收口时按「归档前留下的」+「归档后新来的全部」重新拼一次。 */
   private async retainEventsOrKeepAll(allEvents: PlayEvent[], kept: PlayEvent[]): Promise<void> {
     const dropped = allEvents.length - kept.length;
     if (dropped <= 0) return;
@@ -1610,8 +1579,7 @@ export default class VinylLifePlugin extends Plugin {
     this.settings.stats = { ...this.settings.stats, events: survivors };
   }
 
-  /** 播放中检查一次：达到明细上限或有超期明细就走上面对那条流程（归档失败只提示一次，
-   *  不每条播放都弹；下一轮启动会再试）。 */
+  /** 播放中检查一次：到上限或有超期明细就走上面那条流程（归档失败只提示一次，下次启动再试）。 */
   private maybeRetainEvents(): void {
     if (this.archiveFailedThisSession) return;
     if (!needsRetention(this.settings.stats.events)) return;
@@ -1619,8 +1587,8 @@ export default class VinylLifePlugin extends Plugin {
     void this.retainEventsOrKeepAll(this.settings.stats.events, kept);
   }
 
-  /** 裁剪前的自动归档（见 loadSettings）。**返回是否成功** —— 调用方据此决定保留还是丢掉
-   *  未裁剪的明细：归档失败必须让用户知道，而且要保住明细，不能只是一行 console.warn。 */
+  /** 裁剪前的自动归档（见 loadSettings）。**返回值就是归档成功与否** —— 调用方据此决定保住还是
+   *  丢掉未裁剪的明细：归档失败必须让用户知道，不能只是一行 console.warn。 */
   private async archivePrunedEvents(allEvents: PlayEvent[], dropped: number): Promise<boolean> {
     try {
       const file = await this.writeBackupFile('Vinyl Life events archive', {
@@ -1674,16 +1642,15 @@ export default class VinylLifePlugin extends Plugin {
     notice(t('backup.restartNotice'));
   }
 
-  /** 专辑在导出笔记里的写法：笔记还在就给可点击链接，删了只报名字。
-   *  表格单元格里管道会截断列，统一交给 tableCell 转义。 */
+  /** 专辑在导出笔记里的写法：笔记还在就给可点击链接，删了只报名字；单元格的管道交给 tableCell 转义。 */
   private albumCell(albumPath: string, stat: AlbumPlayStat): string {
     const title = stat.snapshot?.title || albumPath.split('/').pop()?.replace(/\.md$/, '') || albumPath;
     const exists = this.app.vault.getAbstractFileByPath(albumPath) instanceof TFile;
     return tableCell(exists ? albumWikiLink(albumPath, title) : tf('stats.exportRemoved', { title }));
   }
 
-  /** 按卡片属性汇总（取值与统计页「自定义统计」同一套：笔记优先，其次是历史快照）。
-   *  属性多了笔记会很长，最多取前四个；某个属性一条数据都没有就整块略过。 */
+  /** 按卡片属性汇总（取值与统计页「自定义统计」同一套：笔记优先，其次历史快照）。属性多了笔记会
+   *  很长，最多取前四个；某个属性一条数据都没有就整块略过。 */
   private statsNotePropBlocks(stats: VinylStats): string[] {
     const out: string[] = [];
     for (const prop of this.settings.shelfProps.slice(0, 4)) {
@@ -1710,8 +1677,8 @@ export default class VinylLifePlugin extends Plugin {
     return out;
   }
 
-  /** 专辑封面在笔记里的嵌入写法：只有**库内**文件或 http(s) 图能嵌（快照里的缓存副本在插件目录，
-   *  笔记够不着）；拿不到就返回空串，那一行不显示图。 */
+  /** 专辑封面在笔记里的嵌入写法：只有**库内**文件或 http(s) 图能嵌（快照的缓存副本在插件目录，
+   *  笔记够不着）；拿不到返回空串。 */
   private albumCoverEmbed(albumPath: string, stat: AlbumPlayStat): string {
     const current = this.app.vault.getAbstractFileByPath(albumPath);
     if (current instanceof TFile) {
@@ -1728,11 +1695,9 @@ export default class VinylLifePlugin extends Plugin {
       : '';
   }
 
-  /** 导出笔记的正文。版式按笔记自己读着舒服来排：
-   *  - 摘要做成 callout（Obsidian 会把标题渲染成带图标的一块），关键数字加粗；
-   *  - 每个榜都带一行字符柱状，一眼看出分布（页面是热力图，笔记里给等价的文字版）；
-   *  - 播放最多的前五张给封面条（库内封面才嵌，嵌不到的自动略过）；
-   *  - 末尾一段「关于这份统计」的 callout 说明口径与导出时间。 */
+  /** 导出笔记的正文，版式按「笔记里读着舒服」排：摘要做成 callout（Obsidian 会渲染成带图标的一块）
+   *  且关键数字加粗；每个榜配一行字符柱状（页面是热力图，笔记里给等价的文字版）；播放最多的前五张
+   *  给封面条（库内封面才嵌，嵌不到就略过）；末尾一段「关于这份统计」的 callout 说明口径与导出时间。 */
   private statsNoteLines(stats: VinylStats): string[] {
     const albumCount = Object.keys(stats.albums).length;
     const trackCount = Object.keys(stats.tracks).length;
@@ -1847,10 +1812,9 @@ export default class VinylLifePlugin extends Plugin {
   }
 
   private statsSaveTimer: number | null = null;
-  /** 这批待落盘改动是从什么时候开始攒的（0 = 没有攒着的改动）。
-   *  为什么需要它：播放中 timeupdate 每 400ms 就调一次 scheduleStatsSave，
-   *  纯防抖永远等不到那 5 秒空闲 —— 崩溃或强杀会丢掉整场明细、音量与播放位置。
-   *  所以从第一次改动起算满 STATS_SAVE_MAX_WAIT_MS 就强制写一次，写完重新起算。 */
+  /** 这批待落盘改动是从什么时候开始攒的（0 = 没有攒着的改动）。为什么需要它：播放中 timeupdate
+   *  每 400ms 就调一次 scheduleStatsSave，纯防抖永远等不到那 5 秒空闲 —— 崩溃或强杀会丢掉整场
+   *  明细、音量与播放位置。所以从第一次改动起算满 STATS_SAVE_MAX_WAIT_MS 就强制写一次。 */
   private statsSaveSince = 0;
   private scheduleStatsSave() {
     const now = Date.now();

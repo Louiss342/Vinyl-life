@@ -1,9 +1,7 @@
 // 唱片区（播放器页面 2 —— 三行唱片架）回归：
-//   A 纯函数：轮转分栏 / 点击意图（换碟 or 多选）；选中的增删与连选在 multi-select.test.cjs
-//     （那对原语已抽到 core/multi-select，与专辑墙「批量删除」共用）；
-//   B 交互（真类 + 假 DOM）：点一张 = 换碟；Ctrl/⌘ 点 = 多选；Shift 点 = 连选；
-//     多选后「加入队列」按点选顺序交给引擎；点箱子空白 / Esc 清空；Esc（无选中）返回；
-//   C 接线与样式：立方体两面 / 悬停平放展开 / 视差 / 减少动效。
+//   A 纯函数：轮转分栏 / 点击意图（换碟 or 多选）—— 选中增删与连选在 multi-select.test.cjs（原语已抽到 core/multi-select，与专辑墙「批量删除」共用）；
+//   B 交互（真类 + 假 DOM）：点一张 = 换碟、Ctrl/⌘ 点 = 多选、Shift 点 = 连选；「加入队列」按点选顺序交给引擎；点箱子空白 / Esc 清空；
+//   Esc（无选中）返回；C 接线与样式：立方体两面 / 悬停平放展开 / 视差 / 减少动效。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -376,8 +374,7 @@ test('视差：只移动鼠标所在行，第一行交互不再带动下方专�
 });
 
 test('整行左移：右半区（第 5 列起）悬停 / 键盘焦点才挂类，左半区与鼠标点选不动', () => {
-  // 原来是两条 :has 选择器（子元素 hover / focus-visible → 父元素行），改成 JS 挂类后
-  // 触发条件必须一一对应：这里就是那份对照表。
+  // 原来是两条 :has 选择器（子元素 hover / focus-visible → 父元素行）；改成 JS 挂类后触发条件必须一一对应，这里就是那份对照表。
   const albums = Array.from({ length: 10 }, (_, i) => entry(`专辑/${i}.md`, String(i)));
   const { picker } = makePicker({ albums });
   const rows = picker.el.querySelectorAll('.vinyl-picker-row');
@@ -421,7 +418,7 @@ test('样式：恢复原来的窄侧脊 → 悬停展开封面，保留纵向视
   assert.match(css, /\.vinyl-pick\s*\{[^}]*border-radius:\s*0/, '全直角（用户点名：与专辑墙上的专辑一致）');
   assert.match(css, /\.vinyl-pick\s*\{[^}]*width:\s*24px[^}]*height:\s*var\(--vinyl-pick-h/, '默认是原来的窄侧脊');
   assert.match(css, /\.vinyl-pick:hover,[\s\S]{0,120}?\.vinyl-pick:focus-visible\s*\{[^}]*width:\s*var\(--vinyl-pick-h/, '悬停展开成完整封面');
-  // 状态类挂在行自己身上，不再用 :has 由子元素反查父元素（审核的性能警告）
+  // 状态类挂在行自己身上：用 :has 由子元素反查父元素会吃到审核的性能警告
   assert.match(
     css,
     /\.vinyl-picker-row\.is-hover-shift\s*\{[^}]*--vinyl-hover-shift:\s*calc\(24px - var\(--vinyl-pick-h, 108px\)\)/,

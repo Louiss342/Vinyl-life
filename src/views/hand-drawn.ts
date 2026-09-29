@@ -1,7 +1,5 @@
-// 手绘笔触的公共件：专辑墙空态教程与设置面板「关于」页共用一套。
-// 参数照 Excalidraw 的 generateRoughOptions 与元素自身取值逐项对齐：虚线 [8,10]、
-// 线宽 2 + 0.5、单笔不叠（disableMultiStroke）、roughness 2 的元素不做顶点保持。
-// 两个页面出自同一份设计稿的手感，参数只留这一份，改一处两边一起变。
+// 手绘笔触的公共件：专辑墙空态教程与设置面板「关于」页共用一套 —— 两页出自同一份设计稿的手感，
+// 参数只留这一份，改一处两边一起变。取值照 Excalidraw 的 generateRoughOptions 逐项对齐（见下）。
 
 /** SVG 命名空间：图形元素必须走 createElementNS，createEl('svg') 出来的是 HTML 元素，属性不生效 */
 export const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -12,7 +10,7 @@ const STROKE_WIDTH = 2.5;
 /** 虚线间隔：图纸的 getDashArrayDashed(2) */
 const DASH = [8, 10];
 
-/** 虚线图形的 roughjs 选项。种子由调用方给：同一个图形固定种子，抖动纹路才每次都一样 */
+/** 虚线图形的 roughjs 选项。种子由调用方给：同一图形固定种子，抖动纹路每次才一样 */
 export const roughDashed = (seed: number, roughness: number) => ({
   seed,
   roughness,

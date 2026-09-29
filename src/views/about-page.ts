@@ -1,13 +1,8 @@
 // 设置面板「关于」页：整页手绘 —— 文本走手写体（Vinyl Hand / Vinyl Hand CJK 两个子集），
 // 便签外框交给 roughjs 现画（与专辑墙空态教程同一套笔触，见 hand-drawn.ts）。
-//
-// 内容全是固定常量：作者手记（core/about.ts 的中英正文，刻意不翻译）、manifest 里的版本号、
-// 词典里的壳文案（版本行 / 许可行）。正因为固定，两个手写体子集能把这页的字一个不落地收进去
-// （scripts/subset-hand-font.cjs）；改了文案要重跑那个脚本，否则新字会回落到主题字体 ——
-// 不会空白，只是那几个字没有手写感。
-//
-// 笔触要按元素的实际尺寸画，所以文本与笔触是两个函数：调用方先渲染文本、再挂笔触
-// （见 VinylSettingTab.renderAboutTab），别合成一个 —— 藏起来的元素量出来是 0。
+// 内容全是固定常量（作者手记、版本号、壳文案），两个子集才敢把这页的字一个不落地收进去
+// （scripts/subset-hand-font.cjs）：改了文案要重跑那个脚本，否则新字回落到主题字体（不会空白，只是没手写感）。
+// 笔触按元素实际尺寸画，故文本与笔触是两个函数（见 VinylSettingTab.renderAboutTab）—— 藏起来的元素量出来是 0。
 import { RoughSVG } from 'roughjs/bin/svg';
 import { ABOUT_TEXT, ABOUT_TEXT_EN, REPO_URL } from '../core/about';
 import { t, tf } from '../core/i18n';
@@ -27,8 +22,7 @@ export function renderAboutPage(
   title.createSpan({ text: 'Vinyl Life' }); // 产品名不翻译
   title.createSpan({ text: tf('settings.aboutVersion', { v: version }), cls: 'vinyl-about-version' });
 
-  // 作者手记：原文常量，中文在上、英文在下（两份都不走 i18n，不随语言开关切换）。
-  // text 设的是 textContent，原样进 DOM；换行与首行行尾空格交给 CSS 的 pre-wrap 保住。
+  // 作者手记：原文常量（不走 i18n），中文在上、英文在下；特殊空白交给 CSS 的 pre-wrap 保住。
   const note = about.createDiv({ cls: 'vinyl-about-note' });
   note.createDiv({ text: ABOUT_TEXT, cls: 'vinyl-about-text' });
   note.createDiv({ text: ABOUT_TEXT_EN, cls: 'vinyl-about-text-en' });
@@ -41,14 +35,14 @@ export function renderAboutPage(
   return { root: about, note };
 }
 
-/** 便签外的手绘虚线框：随尺寸重画（面板宽度一变，框要跟着变）。
- *  返回停止函数 —— 面板重绘 / 关闭时必须调用，断开 ResizeObserver。 */
+/** 便签外的手绘虚线框：随尺寸重画（面板宽度一变框要跟着变）。
+ *  返回停止函数 —— 面板重绘 / 关闭时必须调用（断开 ResizeObserver）。 */
 export function attachAboutInk(root: HTMLElement, note: HTMLElement): () => void {
   const doc = root.ownerDocument;
   const svg = doc.createElementNS(SVG_NS, 'svg');
   svg.setAttribute('class', 'vinyl-about-svg');
   svg.setAttribute('aria-hidden', 'true'); // 纯装饰：读屏软件跳过，文字本体才是内容
-  const ink = doc.createElementNS(SVG_NS, 'g'); // 图形都画在这一层里（每次重画先清空）
+  const ink = doc.createElementNS(SVG_NS, 'g');
   ink.setAttribute('class', 'vinyl-about-ink');
   svg.appendChild(ink);
   root.appendChild(svg); // 铺在内容上方：pointer-events 由 CSS 关掉，GitHub 链接照常能点

@@ -1,14 +1,12 @@
-// 「导完一批、留在原地接着导下一批」的行为回归（驱动真实的 LocalImportPane + 假 DOM）：
-//   这条流程以前是假的 —— reset() 把空列表喂给 applyFiles，而那个入口见到空列表就 return，
-//   于是摘要、专辑名、勾选状态全留在原地，再点「开始导入」会拿上一批的旧列表重跑。
-//   用例从「喂进一批文件」开始，到「reset 之后看不见任何上一批的痕迹」结束。
+// 「导完一批、留在原地接着导下一批」的行为回归：驱动真实的 LocalImportPane，假 DOM 与
+// import-batch.test.cjs 同一套。守 reset() 之后不留上一批痕迹 —— 旧实现只把空列表喂给 applyFiles
+// （它见空列表就 return），残留的摘要 / 专辑名 / 勾选状态会让下一次「开始导入」重跑旧列表。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const vm = require('node:vm');
 const esbuild = require('esbuild');
 
-// ============ 假 DOM（与 import-batch.test.cjs 同一套：够面板用）============
 function fakeEl(tag = 'div') {
   const el = {
     tag,

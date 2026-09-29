@@ -1,11 +1,7 @@
 // 引擎的马达斜坡回归：暂停 = 断电滑停、复播 = 马达起转（曲线在 core/motor，用例见 motor.test.cjs）。
-// 盯住的坑：
-//   ① 指令与声音是两件事：按下暂停状态就翻（播放键该灭、媒体面板该翻），但元素还要响着滑零点几秒 ——
-//      提前停元素就是「啪」的一声，不是黑胶；
-//   ② 音量分两层：淡出写在元素上，快照 / 落盘报的仍是用户那一档（电平表不该跟着抖）；
-//   ③ 中途反向要接着走：滑到一半按播放，从当时的转速升起来，音量也不许跳（增益是转速的函数）；
-//   ④ 斜坡必须收干净：搓碟起手 / 换曲 / 卸载 / 关视图都不许把曲线留在元素上；
-//   ⑤ 后台节流：定时器迟到或干脆不来，也要能收（否则声音卡在半速上一直响）。
+// ① 指令与声音是两件事：按下暂停状态就翻（播放键该灭、媒体面板该翻），但元素还要响着滑零点几秒 —— 提前
+// 停元素就是「啪」的一声；② 音量分两层：淡出写在元素上，快照 / 落盘报的仍是用户那一档（电平表不该跟着抖）；
+// ③ 中途反向从当时的转速接着升、音量不跳；④ 斜坡必须收干净（搓碟 / 换曲 / 卸载 / 关视图）；⑤ 后台节流：定时器迟到或不来也要能收。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -67,12 +63,10 @@ const intervals = new Map(); // id → 回调（马达斜坡的推进表）
 const timeouts = new Map(); // id → 回调（后台节流时的兜底）
 let seq = 0;
 
-/** 推进一次斜坡（真机上由 setInterval 按 16ms 打，这里由测试自己决定走多久） */
 function tick() {
   for (const fn of [...intervals.values()]) fn();
 }
 
-/** 只让兜底表到点（模拟「隐藏窗口里 interval 被节流到没响」） */
 function fireWatchdogs() {
   for (const [id, fn] of [...timeouts.entries()]) {
     timeouts.delete(id);
@@ -157,7 +151,6 @@ function setup({ reducedMotion = false, ...overrides } = {}) {
 
 const track = (id) => ({ source: 'netease', id, title: 'T' + id, duration: 100 });
 
-/** 一台「正在播第一首、音量 0.8」的引擎 */
 async function playing(opts) {
   const { mod, engine } = setup(opts);
   engine.setQueue([track(1), track(2)], 'a.md', 'A', 'netease');

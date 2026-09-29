@@ -1,6 +1,5 @@
 // 设置页的独立「统计」标签：日历热力图、当日唱片墙、最近/最多、自定义属性统计。
-// 版式跟着通用 / 外观 / 源 走：每张卡片就是一个设置分区（标题栏 + 图标徽章 + 内容区），
-// 壳由 views/settings-section 提供，这里只负责内容。
+// 每张卡片就是一个设置分区（与通用 / 外观 / 源 同一套版式），壳由 views/settings-section 提供。
 import { Modal, Setting, TFile, setIcon } from 'obsidian';
 import type VinylLifePlugin from '../main';
 import { findAlbumNotes, getAlbumInfo } from '../core/album-index';
@@ -83,7 +82,7 @@ class RestoreDataModal extends Modal {
     this.contentEl.createEl('p', { text: t('backup.restoreHint') });
     const input = this.contentEl.createEl('input', { attr: { type: 'file', accept: '.json,application/json' } });
     input.addEventListener('change', () => { this.selected = input.files?.[0] ?? null; });
-    // 状态行：恢复备份的每一步（选文件 / 恢复中 / 失败原因）都写在这里，标成 status 让读屏软件播报
+    // 恢复备份的每一步（选文件 / 恢复中 / 失败原因）都写在这行；标成 status 让读屏软件播报
     const status = this.contentEl.createEl('p', {
       cls: 'vinyl-muted vinyl-restore-status',
       attr: { role: 'status' },
@@ -120,8 +119,7 @@ export class ClearStatsModal extends Modal {
   onOpen(): void {
     const c = this.contentEl;
     c.createEl('p', { text: t('data.clearScope') });
-    // 同一张卡上的其它破坏性动作都有安全网（裁剪前必归档、恢复前必自动备份），
-    // 只有这个原本没有 —— 补一个默认勾选的「先备份一份」。
+    // 同卡其它破坏性动作都有安全网（裁剪前归档、恢复前自动备份），只有这个没有 —— 补一个默认勾选的「先备份一份」。
     const backupFirst = c.createEl('label', { cls: 'vinyl-delete-opt' });
     const cb = backupFirst.createEl('input', { attr: { type: 'checkbox' } });
     cb.checked = true;
@@ -159,7 +157,6 @@ export class StatsPage {
   /** 点/回车选中某一天之后，把焦点接回那一格（重绘会把 DOM 换掉） */
   private focusDay = '';
   private selectedProp = '';
-  /** 专辑侧属性键的签名缓存（见 albumPropKeys） */
   private propKeyCache: { sig: string; keys: string[] } | null = null;
 
   constructor(
@@ -190,9 +187,8 @@ export class StatsPage {
     this.renderDataManagement(root);
   }
 
-  /** 数据管理：备份去哪、最近一次成功备份、每周自动备份与保留份数，末尾是四个动作按钮。
-   *  版式与其它卡片一致 —— 全靠「行 + 值」，不写浮着的小字说明（用户嫌乱）。
-   *  「清空删掉什么」摆在该看见的地方：按下去之前的确认弹窗里（见 ClearStatsModal）。 */
+  /** 数据管理：备份去哪、最近一次成功备份、自动备份与保留份数，末尾是四个动作按钮。版式与其它卡片
+   *  一致（全靠「行 + 值」）；「清空删掉什么」摆在该看见的地方 —— 按下去之前的确认弹窗（见 ClearStatsModal）。 */
   private renderDataManagement(parent: HTMLElement): void {
     const p = this.plugin;
     const body = this.card(parent, t('data.title'), 'stats-data', 'database').body;
@@ -241,9 +237,7 @@ export class StatsPage {
     this.renderActions(body);
   }
 
-  /** 累计播放：手写体一行（Drawing 2026-09-17 16.15.55）——
-   *  大号「233 次播放」+ 隔一段空白后的「听过 N 张专辑」「播放曲目 N 首」，
-   *  数字放大、单位是小字。字形与「关于」页同一对子集字体，字号取图纸的绝对 px（见 styles.css）。 */
+  /** 累计播放：手写体一行（Drawing 2026-09-17 16.15.55）—— 大号数字 + 小字单位，三组之间留白；字形与「关于」页同一对子集字体，字号取图纸的绝对 px（见 styles.css）。 */
   private renderSummary(root: HTMLElement): void {
     const stats = this.plugin.settings.stats;
     const hero = this.card(root, t('stats.totalLabel'), 'stats-summary', 'chart-no-axes-column');
@@ -323,10 +317,8 @@ export class StatsPage {
     legend.createSpan({ text: t('stats.more') });
   }
 
-  /** 专辑侧的属性键集合：全库扫一遍 frontmatter。
-   *  带签名缓存（路径 + mtime）—— 这一步要为每张专辑解析一次 frontmatter 与封面，
-   *  而它每次重绘都要跑（改一下属性下拉、点一下日历格都算重绘），大库上就是白扫几百遍。
-   *  mtime 变了（改了笔记 / 增删了专辑）才重扫；统计快照那一半很便宜，不进缓存。 */
+  /** 专辑侧的属性键集合：全库扫一遍 frontmatter，带签名缓存（路径 + mtime）—— 每张专辑要解析 frontmatter
+   *  与封面，而它每次重绘都要跑（改属性下拉、点日历格都算），大库上就是白扫几百遍；统计快照那半不进缓存。 */
   private albumPropKeys(): string[] {
     const files = findAlbumNotes(this.plugin.app);
     const sig = files.map((f) => `${f.path}:${f.stat?.mtime ?? 0}`).join('|');
@@ -341,16 +333,10 @@ export class StatsPage {
     return list;
   }
 
-  /** 热力图的键盘导航：整张图只留**一个** Tab 停靠点（roving tabindex），方向键在格间走。
-   *
-   *  为什么：53 周 × 7 天 = 371 个格子，每格都是 <button> 就是 371 个停靠点 ——
-   *  键盘用户要按几百下才走得出这张图（审计点名）。改成 ARIA 网格的常规做法：
-   *  只有「游标」那一格 tabIndex=0，其余 -1；焦点落在哪一格，游标就跟到哪一格。
-   *  左右 = ±7 天（一周），上下 = ±1 天，Home / End 到首尾；未来格是 disabled，
-   *  不能聚焦，往那个方向走时跳过它们（不改变「一周 = 7 格」的映射）。
-   *
-   *  keys 与 cells 一一对应（列优先：列 = 周、行 = 星期），用来把焦点换算回日期键 ——
-   *  重绘之后按 heatmapCursor 把停靠点放回原处，点格子触发重绘时再由 focusDay 把焦点接回去。 */
+  /** 热力图的键盘导航：整张图只留**一个** Tab 停靠点（roving tabindex），方向键在格间走 —— 每格都是
+   *  <button> 就有 371 个停靠点，键盘用户要按几百下才走得出这张图（审计点名），故按 ARIA 网格常规做法
+   *  只给「游标」那格 tabIndex=0：左右 ±7 天（一周）、上下 ±1 天、Home / End 到首尾，未来格 disabled
+   *  就跳过（不改变「一周 = 7 格」的映射）。keys 与 cells 一一对应（列优先），重绘后按 heatmapCursor 复位。 */
   private wireHeatmap(grid: HTMLElement, cells: HTMLElement[], keys: string[]): void {
     const total = cells.length;
     if (!total) return;
@@ -534,11 +520,9 @@ export class StatsPage {
   }
 
   private renderActions(parent: HTMLElement): void {
-    // 按钮就落在「数据管理」卡片里（不再单独一张卡）：上面那几行说明是它们的上下文
     const actions = parent.createDiv({ cls: 'vinyl-stats-actions' });
-    // 这一排按钮的约定：**结果一律走 Notice，绝不写回按钮文案**。
-    // 按钮里塞路径 / 长文案会把这行挤爆 —— 一行 flex、卡片又 overflow: hidden，
-    // 长起来的那颗会把右边的按钮推出可视区，连点都点不到（曾经的备份按钮就是这样）。
+    // 这一排按钮的约定：**结果一律走 Notice，绝不写回按钮文案** —— 按钮里塞路径 / 长文案会把这行
+    // 挤爆（一行 flex + 卡片 overflow: hidden），涨起来的那颗会把右边的按钮推出可视区，连点都点不到。
     const exportBtn = actions.createEl('button', { cls: 'mod-cta' });
     setIcon(exportBtn.createSpan(), 'file-down');
     exportBtn.createSpan({ text: t('stats.exportNote') });
@@ -574,7 +558,6 @@ export class StatsPage {
     const clearBtn = actions.createEl('button', { cls: 'mod-warning' });
     setIcon(clearBtn.createSpan(), 'trash-2');
     clearBtn.createSpan({ text: t('settings.clearStats') });
-    // 不可撤销的动作先确认：删掉什么写在弹窗里（页面上的小字说明已经撤掉）
     clearBtn.onclick = () =>
       new ClearStatsModal(this.plugin, () => {
         this.selectedDay = '';

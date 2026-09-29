@@ -1,7 +1,6 @@
 // 专辑墙刷新的滚动位置回归（驱动真实 render / refreshProps + 会夹滚动位置的假 DOM）：
-//   重建 DOM 时 contentEl 先被清空 —— 那一刻内容高度归零，浏览器**立即**把 scrollTop 夹成 0
-//   （假 DOM 照这个行为实现，所以「先记后还」写反了顺序会红）。后台刷新（导入 / 换封面 /
-//   元数据变化）与改一个卡片属性都会走到这里，500 张的墙里弹回顶部等于把用户扔回起点。
+//   重建 DOM 时 contentEl 先被清空 —— 内容高度归零，浏览器**立即**把 scrollTop 夹成 0（假 DOM 照此实现，
+//   所以「先记后还」顺序写反会红）。后台刷新（导入 / 换封面 / 元数据变化）与改卡片属性都走这里，500 张的墙弹回顶部＝把用户扔回起点。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -165,8 +164,7 @@ function makeView() {
   };
   const view = new VinylShelfView({}, plugin);
   view.contentEl = fakeEl();
-  // 空态教程是 rougjs 手绘、工具栏与网格各自一大摊 DOM：这条用例只管滚动位置，
-  // 把它们换掉，剩下的（清空 → 重建 → 还位置）都是真的
+  // 空态教程 / 工具栏 / 网格各是一大摊 DOM：这条用例只管滚动位置，把它们换掉，剩下的（清空 → 重建 → 还位置）都是真的
   view.buildTutorial = () => {};
   view.renderToolbar = () => {};
   view.renderGrid = () => {};

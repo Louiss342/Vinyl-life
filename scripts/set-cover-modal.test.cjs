@@ -1,15 +1,12 @@
 // 「设置封面 → 从电脑上选图片」的落点回归（真弹窗 + 假 DOM / 假 vault）：
-//   ① 同名专辑（笔记可在任意目录，重名只在导入时挡过）里，第二张不能就地覆盖第一张用着的图 ——
-//      覆盖不进回收站，且第一条笔记的 wikilink 仍指着该文件：两张显示同一张图、原图找不回来；
-//   ② 「换封面」的正常路径（本专辑的 cover 就指着那个文件）照旧就地覆盖，不留垃圾；
-//   ③ 反复换封面时不越堆越多：本专辑自己的那张「标题 2.jpg」可以继续覆盖。
+//   同名专辑（笔记可在任意目录，重名只在导入时挡过）里，第二张不能就地覆盖第一张用着的图 —— 覆盖不进回收站、原笔记的 wikilink 仍指着它（两张同图、原图找不回来）；
+//   「换封面」的正常路径（本专辑 cover 指着那个文件）则就地覆盖不留垃圾，反复换也只用本专辑自己的「标题 2.jpg」不越堆越多。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const vm = require('node:vm');
 const esbuild = require('esbuild');
 
-// ============ 假 DOM（够弹窗用：类名 / 文本 / 属性 / 事件记录）============
 function fakeEl(tag = 'div') {
   const el = {
     tag,
@@ -174,7 +171,6 @@ function setup(existing = []) {
 
   const plugin = { settings: { coverFolder: COVERS } };
 
-  /** 打开弹窗，选中一张本地图片并等它落库 */
   const chooseLocal = async (album, name = 'pic.jpg') => {
     const modal = new sandbox.module.exports.SetCoverModal(app, plugin, album);
     modal.open();

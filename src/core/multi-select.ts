@@ -1,13 +1,12 @@
-// 多选手势的共享原语（专辑墙「批量删除」与播放器唱片区共用，别再各写一份）：
-// 选中表一律保序 —— 点选的先后就是用户心里的先后（排队 / 删除都按它走）。
+// 多选手势的共享原语（专辑墙「批量删除」与播放器唱片区共用，别再各写一份）：选中表一律保序 ——
+// 点选的先后就是用户心里的先后（排队 / 删除都按它走）。
 
-/** 切换选中（保序：新选的追加在末尾） */
+/** 切换选中（新选的追加在末尾，保序） */
 export function toggleInList(list: string[], path: string): string[] {
   return list.includes(path) ? list.filter((p) => p !== path) : [...list, path];
 }
 
-/** 连续选（Shift）：把 order 里 from → to 之间的一段并入已选（不取消已选中的）。
- *  order 用「当前显示顺序」传：用户按眼前看到的连选，与筛选 / 排序结果一致。 */
+/** 连续选（Shift）：把 order 里 from → to 之间的一段并入已选（不取消已选中的）；order 传「当前显示顺序」，与用户眼前所见（筛选 / 排序结果）一致。 */
 export function rangeInList(list: string[], order: string[], from: string, to: string): string[] {
   const a = order.indexOf(from);
   const b = order.indexOf(to);

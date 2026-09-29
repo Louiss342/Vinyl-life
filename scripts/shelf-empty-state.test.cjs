@@ -1,8 +1,6 @@
 // 陈列的来源筛选：从「筛选无结果」切回「全部」时，空态必须撤掉。
-// renderGrid 有两条互斥的出口 —— 空态（.vinyl-shelf-empty）与网格（.vinyl-shelf-grid），
-// 都直接挂在 gridHost 下。dropGrid 在「有结果 → 无结果」方向清得掉旧网格，
-// 但从空态回来时 ensureGrid 只是补建一个网格、不清 host，两套 DOM 就叠在了一起：
-// 界面上专辑卡片都出来了，上面还压着一句「没有符合条件的专辑」（用户实测）。
+// renderGrid 有两条互斥出口 —— 空态（.vinyl-shelf-empty）与网格（.vinyl-shelf-grid），都直接挂在 gridHost 下；
+// dropGrid 只在「有结果 → 无结果」方向清得掉，从空态回来时 ensureGrid 只补建网格不清 host，两套 DOM 就叠着（用户实测：卡片上压着「没有符合条件的专辑」）。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -150,8 +148,7 @@ function loadModule(entry, globals = {}) {
   return mod.exports;
 }
 
-// buildCard 用的是宿主注入的全局 createDiv()（Obsidian 1.13 的 DOM 便捷函数），
-// 卡片本身不在本用例射程内（applyPlan 会被换掉），但入口得先有
+// buildCard 用的是宿主注入的全局 createDiv()（Obsidian 1.13 的 DOM 便捷函数）—— 卡片不在射程内，但入口得先有
 const { VinylShelfView } = loadModule('src/views/shelf-view.ts', {
   createDiv: () => fakeEl(),
   createSpan: () => fakeEl('span'),
@@ -181,8 +178,7 @@ function makeView() {
   view.gridHost = fakeEl();
   view.buildTutorial = () => {};
   view.renderToolbar = () => {};
-  // 卡片本体（buildCard / 分批追加）不在本用例射程内：这条只问「两套容器换得干不干净」，
-  // 真正要验的 ensureGrid / dropGrid 都是真的
+  // 只问「两套容器换得干不干净」：真正要验的 ensureGrid / dropGrid 是真的，卡片本体不在射程内
   view.applyPlan = () => 0;
   view.syncRoving = () => {};
   view.syncBatch = () => {};
@@ -205,7 +201,6 @@ function makeView() {
   return view;
 }
 
-/** 在假 DOM 里按类名找（gridHost 的直接子元素就是网格与空态两套） */
 function childWithClass(host, cls) {
   return host.children.find((c) => c.classes?.has(cls)) ?? null;
 }

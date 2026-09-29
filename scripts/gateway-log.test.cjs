@@ -1,9 +1,6 @@
 // 网关日志的脱敏与轮转回归（规则走 server/redact.js 的纯函数，接线走真实网关进程内实例）：
-//   ① 这份日志的用途是用户报障时贴进 issue（CONTRIBUTING 与 bug_report 模板都这么引导），
-//      所以 QQ 号 / uin（长数字串、ptnick_<uin>）、库与库外的绝对路径（含系统用户名）、
-//      URL 查询串（封面直链常带签名）都不该出现在文件里；凭据值本来就只写长度。
-//   ② 体积有上限：超了滚一份 .1，只留一代 —— 日志文件就在插件目录（库内），
-//      无上限的 append 会把它撑大跟着同步走。
+//   日志的用途是用户报障时贴进 issue（CONTRIBUTING 与 bug_report 模板都这么引导），所以 QQ 号 / uin（长数字串、ptnick_<uin>）、绝对路径（含系统用户名）、URL 查询串（封面直链常带签名）都不进文件；凭据值本来就只写长度。
+//   体积有上限：超了滚一份 .1，只留一代 —— 文件就在插件目录（库内），无上限的 append 会撑大跟着同步走。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -30,8 +27,7 @@ test('脱敏：账号数字串（uin / cookie 名里的账号）抹掉，端口�
     '[vinyl-server] cookie 已写入 .qq-cookie 1630 bytes',
     '长度是 4 位以内：不受影响'
   );
-  // 端口与 URL 路径里的 id **不是**个人标识，而是报障时最需要的坐标。判据因此不是长度
-  //（bind(0) 给的临时端口常是 5 位），而是「前面紧挨着的是不是 `:` 或 `/`」。
+  // 端口与 URL 路径里的 id 不是个人标识，而是报障时最需要的坐标：判据不是长度（bind(0) 的临时端口常 5 位），而是「前面紧挨着的是不是 `:` 或 `/`」。
   assert.match(redactLogText('出站网络: 经代理 127.0.0.1:7993'), /127\.0\.0\.1:7993/, '端口保留');
   assert.equal(
     redactLogText('[vinyl-server] listening on 127.0.0.1:10171'),
@@ -125,7 +121,6 @@ function gatewayWith(logSize = 0, opts = {}) {
         };
       }
       if (name === 'dns') {
-        // assertFetchable 要的是 { all: true } 那一种形态：回调给 [{address, family}]
         return { lookup: (hostname, options, cb) => cb(null, [{ address: '93.184.216.34', family: 4 }]) };
       }
       if (name === 'http') {
@@ -196,8 +191,7 @@ test('接线：每行前面有时间戳（否则贴进 issue 的日志对不上�
 });
 
 test('接线：启动时净化已存在的日志（升级前那份里可能留着个人标识）', () => {
-  // 脱敏只作用于新写入的行；老版本写进文件的 QQ 号会一直留到下次轮转 —— 而这份文件
-  // 正是用户报障时要贴出去的那一份。所以每次启动先把既有内容过一遍。
+  // 脱敏只作用于新写入的行，而这份文件正是用户报障时要贴出去的那份 —— 所以每次启动先把既有内容过一遍
   const g = gatewayWith(0, {
     logContent: [
       '2026-09-01 10:00:00 [vinyl-server] qq qr/check code: 803（已校验并保存，uin 1149716682）',

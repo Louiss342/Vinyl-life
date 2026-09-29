@@ -1,7 +1,6 @@
-// 历史页底部那排按钮的交互契约（源扫描）：
-//   结果一律走 Notice，**不写回按钮文案**。
-// 背景：备份按钮曾经把备份路径 setText 进自己 —— 这一行是 flex、卡片又 overflow: hidden，
-// 长文案把那颗按钮撑大，把右边的「恢复备份 / 清除统计」推出可视区，用户既看不见也点不到。
+// 历史页底部那排按钮的交互契约（源扫描）：结果一律走 Notice，**不写回按钮文案**。
+// 当年把备份路径 setText 进按钮：这一行是 flex、卡片又 overflow: hidden，长文案把那颗按钮撑大，
+// 把右边的「恢复备份 / 清除统计」推出可视区，用户既看不见也点不到。
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

@@ -74,8 +74,7 @@ test('备份恢复：先保留当前数据，错误格式不覆盖；重启前�
 });
 
 // ============ 历史封面副本的白名单（换设备恢复的最后一段路）============
-// 副本名用的是封面文件的原扩展名，而封面本来就收 avif / bmp；白名单窄一档的后果是：
-// 备份里静默跳过、恢复也写不回 —— 那张已删除专辑的封面在换设备后永久丢失。
+// 副本名用封面文件的原扩展名，而封面本就收 avif / bmp；白名单窄一档 → 备份静默跳过、恢复写不回，换设备后封面永久丢失。
 
 test('备份 / 恢复：历史封面副本的白名单与 IMAGE_EXTENSIONS 同源（avif / bmp 不再静默跳过）', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vinyl-backup-'));
@@ -148,8 +147,7 @@ test('备份 / 恢复：历史封面副本的白名单与 IMAGE_EXTENSIONS 同�
 });
 
 // ============ 裁剪前归档（评审意见第 2 条）============
-// 两年保留规则一旦执行，逐日明细就再也回不来；而「很久没打开插件」的用户没有机会手动备份。
-// 所以裁剪之前先把完整明细写成一份**可恢复**的备份（格式与手动备份一致，「恢复备份」直接能用）。
+// 两年规则一执行逐日明细就回不来，且「很久没开插件」的用户没机会手动备份 —— 所以裁剪前先写一份**可恢复**备份（与手动备份同格式，「恢复备份」直接能用）。
 
 const YEAR = 366 * 24 * 60 * 60 * 1000;
 
@@ -163,7 +161,7 @@ function bootWith(data, opts = {}) {
       createFolder: async () => {},
       create: async (name, content) => {
         if (opts.failCreate) throw new Error(opts.failCreate);
-        // 归档写文件是异步的：onCreate 用来模拟「这段时间里播放还在继续」（见下面对应的用例）
+        // onCreate 用来模拟「归档写文件的这段时间里播放还在继续」（见下面对应的用例）
         if (opts.onCreate) opts.onCreate();
         created.push({ name, content });
         return { path: name };
@@ -225,8 +223,7 @@ test('没有要丢的明细就不写归档', async () => {
 });
 
 // ============ 每周自动备份（数据管理）============
-// 手动备份与裁剪归档之外，补一条「每周一次、只保留最近 N 份自动备份」的兜底；
-// 清理只认自动备份的文件名前缀 —— 手动备份与裁剪归档绝不能被它删掉。
+// 手动备份与裁剪归档之外的兜底：每周一次、只保留最近 N 份；清理只认自动备份的文件名前缀，手动备份与归档绝不能被它删掉。
 
 test('自动备份：到点才写、只保留最近 N 份自动备份，手动备份与归档不碰', async () => {
   const now = Date.now();
@@ -325,10 +322,8 @@ test('自动备份：没到一周不写；关掉开关不写', async () => {
 
 test('归档期间新记的明细不会被一起丢掉', async () => {
   const now = Date.now();
-  // 播放中碰上限/有超期明细时走的是 recordPlay → maybeRetainEvents 这条路径：
-  // 传进去的 allEvents 就是 settings.stats.events 那个数组本身（recordTrackPlay 是原地 push）。
-  // 归档要写文件、是异步的，这段时间里用户又点了一首 —— 它 push 进的是同一个数组，
-  // 而 kept 是发起归档前算好的，直接拿它整段替换就会把这条新明细一起丢掉。
+  // recordPlay → maybeRetainEvents 的 allEvents 就是 settings.stats.events 那个数组本身（recordTrackPlay 原地 push）；
+  // 归档写文件是异步的，这期间用户又点一首会 push 进同一数组，而 kept 是发起归档前算好的 —— 整段替换就会把它一起丢掉。
   const late = { at: now + 400, trackKey: 'ne:late' };
   let pluginRef = null;
   const { plugin, created, savedNow } = bootWith(
@@ -346,7 +341,7 @@ test('归档期间新记的明细不会被一起丢掉', async () => {
   await plugin.loadSettings();
   assert.equal(created.length, 0, '启动时没有超期明细：不触发裁剪');
 
-  // 手动制造一条超期明细，再记一次播放 —— 这条路径与真机上「播着播着到达保留边界」一致
+  // 手动造一条超期明细再记一次播放：与真机「播着播着到达保留边界」是同一条路径
   plugin.settings.stats.events.unshift({ at: now - 3 * YEAR, trackKey: 'ne:old' });
   plugin.recordPlay({ source: 'netease', id: 999, duration: 180, title: 'T' });
   await new Promise((r) => setTimeout(r, 0));
@@ -376,8 +371,7 @@ test('归档期间新记的明细不会被一起丢掉', async () => {
 test('归档写不出去：明细全部保留、不裁剪，并给用户明确提示', async () => {
   const now = Date.now();
   notices.length = 0;
-  // 写文件失败（磁盘满 / 权限 / 同步冲突）：archivePrunedEvents 会 catch 住，
-  // 这时候**不能**认下裁剪结果 —— 否则「先归档、再裁剪」的承诺就破了，明细真丢了
+  // 写文件失败（磁盘满 / 权限 / 同步冲突）时 archivePrunedEvents 会 catch：**不能**认下裁剪结果 —— 否则「先归档、再裁剪」的承诺就破了，明细真丢了
   const { plugin, created, savedNow } = bootWith(
     {
       stats: {

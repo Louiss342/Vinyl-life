@@ -1,19 +1,13 @@
-// 歌词：解析（LRC → 行）+ 定位（时间 → 第几行）+ 滚动计划（时间 → 从哪滚到哪、进度多少）
-// + 景深档位（行号 → 离当前行多远）+ 视觉中心（滚动位置 → 画面正中是第几行）+ 回位缓动。
+// 歌词：解析（LRC → 行）+ 定位（时间 → 第几行）+ 滚动计划 + 景深档位 + 视觉中心 + 回位缓动。
 //
-// 为什么这些都做成纯函数：它们都是「时间 / 位置 → 位置」的换算，错了就是「歌词和声音对不上」
-// 或「高亮跑到了别处」，而这恰恰能脱离 DOM 验证（滚动顺不顺是观感，滚到哪一行是正确性）。
-// 视图只负责把计划变成像素（offsetTop）与一帧一帧的 rAF —— 换任何渲染方式，这一层都不用动。
-//
-// 两套参考系，别混：
-//   ① **时间**（activeLineIndex / lineProgress）：哪一句正在被唱 —— 卡拉OK填充走它；
-//   ② **位置**（centerLineIndex / lineDepth）：画面正中是哪一句 —— 高亮与景深走它。
-// 自动跟随时两者是同一句（滚动计划把正在唱的那句摆到正中）；用户自己滚动时参考系②接管，
-// 「视觉中心」跟着手走，停手几秒后再平滑回到正在唱的那一句。
-//
-// 滚动是**连续**的（用户按参考效果定的）：两行之间的全部时间都在走，唱到哪画面就走到哪，
-// 没有静止期。旧版是「预滚动」——把移动压在换行前的 620ms 里、其余时间静止（取向是
-//「读词时画面要稳」），两者是同一段路程的两种走法，换成连续就是为了「跟着唱走」。
+// 全做成纯函数：这些都是「时间 / 位置 → 位置」的换算，错了就是「歌词和声音对不上」或「高亮跑到
+// 别处」，而这恰恰能脱离 DOM 验证（滚动顺不顺是观感，滚到哪一行是正确性）；视图只把计划变成
+// 像素（offsetTop）与逐帧 rAF —— 换任何渲染方式，这一层都不用动。
+// 两套参考系别混：① **时间**（activeLineIndex / lineProgress）= 哪一句正在被唱（卡拉OK填充走它）；
+// ② **位置**（centerLineIndex / lineDepth）= 画面正中是哪一句（高亮与景深走它）。自动跟随时两者是
+// 同一句（滚动计划把正在唱的那句摆到正中），用户自己滚动时②接管、停手几秒后再平滑回到正在唱的那句。
+// 滚动是**连续**的（用户按参考效果定的）：两行之间的全部时间都在走，没有静止期 —— 旧口径是
+//「预滚动」（移动压在换行前的 620ms、其余时间静止），同一段路程的另一种走法，换成连续是为了跟着唱走。
 
 export interface LyricLine {
   /** 行首时间戳（毫秒） */
@@ -37,10 +31,8 @@ function tagToMs(m: RegExpExecArray): number {
   return (min * 60 + sec) * 1000 + (frac ? ms : 0);
 }
 
-/** `[offset:+1234]`：整篇的全局时间补偿（毫秒）。
- *  符号方向各家实现不一致（Wikipedia 与多数播放器：正值 = 歌词提前；少数库反着来），
- *  本仓库采用**正值 = 歌词提前**，即每行时间戳减去 offset —— 想反过来改这一处即可。
- *  这条标签在本地 .lrc 里很常见（翻唱 / 不同版本对齐用），不处理就是整篇系统性偏一口。 */
+/** `[offset:+1234]`：整篇的全局时间补偿（毫秒）。符号方向各家实现不一致，本仓库采用
+ *  **正值 = 歌词提前**（每行时间戳减 offset，想反过来改这一处）；本地 .lrc 里很常见，不处理就是整篇偏一口。 */
 const OFFSET_TAG = /^\[offset:\s*([+-]?\d+)\s*\]/i;
 
 function parseOffsetMs(raw: string): number {
@@ -85,12 +77,9 @@ export function parseLrc(lyric: string, trans?: string): LyricLine[] {
   return main.map((l) => (byTime.has(l.at) ? { at: l.at, text: l.text, trans: byTime.get(l.at) } : l));
 }
 
-/**
- * 字节 → 歌词文本（本地 .lrc 用）。UTF-8 优先，整篇不是合法 UTF-8 时按 GBK 再解一次 ——
- * 中文歌词站导出的 .lrc 至今仍有 GBK / GB18030 的，按 UTF-8 硬解就是满屏乱码，
- * 而这是「本地歌词」这条路上最常见的坑。BOM 交给 TextDecoder 自己剥（默认行为）。
- * 两种都解不了（二进制垃圾）时退回宽容模式的 UTF-8：宁可带几个替换符，也不要空着。
- */
+/** 字节 → 歌词文本（本地 .lrc 用）。UTF-8 优先，整篇不是合法 UTF-8 时按 GBK 再解一次 ——
+ *  中文歌词站导出的 .lrc 至今仍有 GBK / GB18030，硬解就是满屏乱码；两种都解不了（二进制垃圾）
+ *  时退回宽容 UTF-8：宁可带几个替换符，也不要空着。BOM 交给 TextDecoder 自己剥。 */
 export function decodeLyricBytes(bytes: ArrayBuffer | Uint8Array): string {
   const buf = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   try {
@@ -124,11 +113,8 @@ export function activeLineIndex(lines: LyricLine[], tMs: number): number {
 /** 景深档位上限：再远的行已经落进容器的上下渐隐里了，夹住让 CSS 的 calc 有界 */
 export const MAX_LYRIC_DEPTH = 5;
 
-/**
- * 视觉中心：此刻离滚动容器正中最近的是第几行（`offsets` = 各行中心的升序像素位置）。
- * 用户自己滚动时高亮跟着它走 —— 滚到哪，哪一句就是画面中心。
- * 返回 -1 = 还没有行。
- */
+/** 视觉中心：离滚动容器正中最近的是第几行（`offsets` = 各行中心的升序像素位置）；用户自己滚动时
+ *  高亮跟着它走 —— 滚到哪，哪一句就是画面中心。返回 -1 = 还没有行。 */
 export function centerLineIndex(offsets: number[], scrollTop: number, viewport: number): number {
   if (!offsets.length) return -1;
   const center = scrollTop + viewport / 2;
@@ -150,11 +136,8 @@ export function easeInOutCubic(p: number): number {
   return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
 }
 
-/**
- * 这一行离「正在唱的那一行」有多远（0 = 正在唱），视图拿它写 `--vinyl-lyric-d`：
- * 远端行渐淡、略小（见 styles.css 的 .vinyl-lyric-line）。
- * 还没唱到第一行（active < 0）时把第 0 行当作当前行 —— 开场前那一句也该是清晰的。
- */
+/** 这一行离「正在唱的那一行」有多远（0 = 正在唱），视图拿它写 `--vinyl-lyric-d`（远端渐淡、略小，
+ *  见 styles.css 的 .vinyl-lyric-line）；还没唱到第一行（active < 0）时把第 0 行当作当前行。 */
 export function lineDepth(index: number, active: number): number {
   if (active < 0) return Math.min(index, MAX_LYRIC_DEPTH);
   return Math.min(Math.abs(index - active), MAX_LYRIC_DEPTH);
@@ -168,15 +151,9 @@ export interface ScrollPlan {
   progress: number;
 }
 
-/**
- * 滚动计划：`tMs` 时刻歌词列表应该「从第 from 行滚到第 to 行、走了 progress」。
- *
- * 连续滚动：用掉的是两行之间的**全部**时间，从「当前行居中」走到「下一行居中」——
- * 唱到哪就走到哪（短句走得快、长句走得慢，速度跟着歌唱走），任何时刻都在动。
- *
- * 为什么是线性而不是缓动：缓动两端速度为 0，那正好又变回静止期（就是要取消的东西）。
- * 位置还必须单调 —— 词只能朝一个方向走，回弹会让人看到画面「倒退」。
- */
+/** 滚动计划：`tMs` 时刻列表应「从第 from 行滚到第 to 行、走了 progress」。连续滚动用掉两行之间的
+ *  **全部**时间（唱到哪走到哪，短句快、长句慢），任何时刻都在动。
+ *  线性而非缓动：缓动两端速度为 0，那正好又变回要取消的静止期；位置还必须单调 —— 回弹会看到「倒退」。 */
 export function scrollPlan(lines: LyricLine[], tMs: number): ScrollPlan {
   const active = activeLineIndex(lines, tMs);
   if (active < 0) return { from: 0, to: 0, progress: 0 }; // 还没到第一行

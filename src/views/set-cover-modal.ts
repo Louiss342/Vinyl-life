@@ -1,6 +1,6 @@
 // 设置封面弹窗（专辑卡片右键）：从库中选图 / 选本地图片（复制进封面目录）/ 移除封面。
-// 另有零操作路径：把 cover / folder / front.<图片> 放进专辑音频文件夹，或把与专辑同名的图片
-// 放进封面目录，读取时自动识别（见 core/album-index.findConventionCover）。
+// 零操作路径：cover / folder / front.<图片> 放进音频文件夹，或同名图片放进封面目录，读取时
+// 自动识别（见 core/album-index.findConventionCover）。
 import { App, FuzzySuggestModal, Modal, TFile } from 'obsidian';
 import type VinylLifePlugin from '../main';
 import type { AlbumInfo } from '../core/album-index';
@@ -24,7 +24,7 @@ class VaultImageSuggest extends FuzzySuggestModal<TFile> {
     this.setPlaceholder(t('cover.pickInVault'));
   }
 
-  /** 候选图 = 库内所有图片：选封面时用户要能挑到任意一张（审核披露的 vault 枚举之一，见 CONTRIBUTING） */
+  /** 候选图 = 库内所有图片（选封面要能挑到任意一张；审核披露的 vault 枚举之一，见 CONTRIBUTING） */
   getItems(): TFile[] {
     return this.app.vault.getFiles().filter((f) => isImageFile(f.name));
   }
@@ -45,8 +45,8 @@ export class SetCoverModal extends Modal {
     app: App,
     private plugin: VinylLifePlugin,
     private album: AlbumInfo,
-    /** 写回之后通知调用方刷新（与 RatingModal / AlbumEditionModal 同一口径）——
-     *  只靠 metadataCache 驱动是不够的：专辑墙的刷新签名以前不含 cover，页面会停在旧封面 */
+    /** 写回后通知调用方刷新（与 RatingModal / AlbumEditionModal 同一口径）：只靠 metadataCache
+     *  驱动不够 —— 专辑墙的刷新签名不含 cover，页面会停在旧封面 */
     private onSaved?: () => void
   ) {
     super(app);
@@ -77,7 +77,7 @@ export class SetCoverModal extends Modal {
     });
     this.fileInput = fileInput;
 
-    // 状态行：下载封面 / 复制入库的过程中会变，标成 status 让读屏软件播报
+    // 状态行：下载 / 复制入库的过程中会变，标成 status 让读屏播报
     const status = c.createDiv({ cls: 'vinyl-muted vinyl-cover-status', attr: { role: 'status' } });
     c.createDiv({
       cls: 'vinyl-muted',
@@ -112,14 +112,13 @@ export class SetCoverModal extends Modal {
     removeBtn.addEventListener('click', () => void this.applyCover(null, ''));
   }
 
-  /** 本地图片的落点：默认「封面目录 / 专辑标题.扩展名」。**只有那个文件确实是本专辑当前的封面时**
-   *  才就地覆盖（换封面的正常路径）；否则往「标题 (2).jpg」这样取一个不冲突的名字 —— 专辑笔记是全库
-   *  扫描，两张同名笔记（Albums/A.md 与 Archive/A.md）各有封面，就地覆盖会让第二张把第一张的图
-   *  盖掉，而第一条笔记的 wikilink 还指着该文件：两张显示同一张图，原图再也找不回来。 */
+  /** 本地图片的落点：默认「封面目录 / 专辑标题.扩展名」，但只有该文件确实是本专辑当前封面时才就地
+   *  覆盖（换封面的正常路径），否则取「标题 (2).jpg」这样的新名 —— 专辑笔记是全库扫描，两张同名笔记
+   *  各有封面，就地覆盖会让第二张盖掉第一张，而第一条笔记的 wikilink 还指着该文件（原图找不回来）。 */
   private coverDestPath(dir: string, ext: string): string {
     const base = sanitizeFileName(this.album.title);
     let path = `${dir}/${base}.${ext}`;
-    // 命中本专辑自己的那一张就停（沿用「标题 2.jpg」而不是一路堆到 3、4）
+    // 命中本专辑自己的那一张就停（沿用「标题 2.jpg」，不一路堆到 3、4）
     for (let n = 2; this.app.vault.getAbstractFileByPath(path) && !this.isCurrentCover(path); n++) {
       path = `${dir}/${base} (${n}).${ext}`;
     }
@@ -134,7 +133,7 @@ export class SetCoverModal extends Modal {
     return dest instanceof TFile && dest.path === path;
   }
 
-  /** 写回 frontmatter（cover 传 null = 移除）；写成功后就地通知调用方刷新 */
+  /** 写回 frontmatter（cover 传 null = 移除），成功后通知调用方刷新 */
   private async applyCover(cover: string | null, label: string) {
     try {
       await this.app.fileManager.processFrontMatter(

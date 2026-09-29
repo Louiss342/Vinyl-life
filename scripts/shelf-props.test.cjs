@@ -8,7 +8,7 @@ const esbuild = require('esbuild');
 
 const source = esbuild.buildSync({
   stdin: {
-    // 一并导出 i18n：属性别名已改为词典键，这里要查「每个默认键都有中英别名」
+    // 一并导出 i18n：别名走词典键，要查「每个默认键都有中英别名」
     contents: `export * from '../src/core/shelf-props';\nexport * from '../src/core/album-index';\nexport * as i18n from '../src/core/i18n';\n`,
     resolveDir: __dirname,
     loader: 'ts',
@@ -209,7 +209,6 @@ test('buildAlbumInfo：displayProps 采集非黑名单键，类型化字段保�
   assert.equal(a.neteaseId, 15185);
   assert.equal(a.title, '太平盛世');
 
-  // 新增：显示属性
   assert.equal(a.displayProps.artist, '陶喆');
   assert.equal(a.displayProps.year, '2005');
   assert.equal(a.displayProps.genre, 'R&B');

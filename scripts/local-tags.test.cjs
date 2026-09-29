@@ -1,9 +1,7 @@
 // 本地音源读内嵌标签的**接线**（core/audio-tags 的解析在上一个文件里验，这里验它真的被用上）：
-//   ① 库外音频：曲名取标签而不是文件名；标签里有艺人就用它（合辑每首艺人不同），
-//      专辑名仍以笔记为准（笔记是真源）；
-//   ② 曲目顺序：先按碟目录聚拢（双碟的 TRCK 都从 1 开始，只按音轨号会交错），
-//      同一目录内按音轨号 —— '01 …' / '02 …' 这种文件名排序在 10 之后会乱；
-//   ③ 读不到标签（没有标签 / 读不动）时安静回退文件名，不抛也不空标题。
+//   ① 库外音频：曲名取标签而不是文件名，标签里有艺人就用它（合辑每首艺人不同），专辑名仍以笔记为准（笔记是真源）；
+//   ② 曲目顺序：先按碟目录聚拢（双碟的 TRCK 都从 1 开始，只按音轨号会交错），同一目录内按音轨号 ——
+//      '01 …' 这种文件名排序在 10 之后会乱；③ 读不到标签（没有标签 / 读不动）时安静回退文件名，不抛也不空标题。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -44,9 +42,8 @@ function taggedMp3(fields) {
   return Buffer.from(bytes(tag, audio));
 }
 
-/** fs 桩：文件内容表 + 目录表（只实现 local-source 真正用到的几个调用）。
- *  查表一律先把反斜杠归一成斜杠：Windows 上 path.join 拼出来的是 \，而夹具的键写成 / —— 
- *  不归一的话「目录列得出来、文件读不到」，看起来像标签解析失败，其实是夹具对不上。 */
+/** fs 桩：文件内容表 + 目录表（只实现 local-source 真正用到的几个调用）。查表一律先把反斜杠归一成斜杠：
+ *  Windows 上 path.join 拼出来的是 \，夹具的键写成 / —— 不归一就「目录列得出来、文件读不到」，像标签解析失败其实是夹具对不上。 */
 function makeFsStub(files, dirs) {
   const pathMod = nodePath;
   const norm = (p) => String(p).split(nodePath.sep).join('/');

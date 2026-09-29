@@ -1,25 +1,15 @@
-// QQ 音乐网关模块（登录 + 播放）——纯函数 + 依赖注入。
+// QQ 音乐网关模块（登录 + 播放）——纯函数 + 依赖注入：一切外部能力（route / log / fetch /
+// makeStore / timeout / crypto / 两个凭据路径）由 gateway.js 注入，形状见 registerQqRoutes 的解构。
 //
-// ⚠ 测试纪律（务必遵守）：本模块被 gateway.js require，而测试 harness 以 vm 方式执行
-//   gateway.js 并替换其作用域内的 fs / http / fetch —— 但被 require 的模块拿到的是
-//   【真实】全局与模块系统。因此本文件绝不能：
-//     · require('fs' / 'http' / 'https' / 'crypto' / 任何模块) → 一切依赖由 gateway.js 注入
-//     · 裸调 fetch / 直接文件读写 → 只用 deps 里的注入版本
-//   允许直接使用的只有纯全局：Buffer / URL / URLSearchParams / Math / Date / JSON。
-//
-// deps = { route, log, fetch, makeStore, timeout, crypto, cookieFile, guidFile }
-//   route(method, pattern, handler) 注册路由；log(...) 写日志；fetch(url, opts) 发请求；
-//   makeStore(file) → { read(), write(v) } 凭据文件；timeout(ms) → AbortSignal；
-//   crypto → node:crypto（仅 zza 签名后备用）；cookieFile / guidFile → 本模块凭据路径。
-//
-// 上游约束：vkey 取链可不带 sign；sip 的 http CDN 支持 https + Range(206)、无需 Referer
-//   ⇒ 只做 http→https 改写，不做音频代理。strMediaMid ≠ songmid（vkey filename 优先 mediaMid，
-//   空 purl 时回退 songmid 再试）；空 purl = 无权限（无错误码可映射），试听曲目同样给 purl。
-//
-// 扫码码（ptuiCB 首参）：66 待扫 / 67 已扫待确认 / 65 过期 / 0 成功
-//   → 网关内归一化为 801 / 802 / 800 / 803（客户端弹窗协议与网易云一致）。
-// 成功链：check_sig（收 p_skey / p_uin / pt4_token）→ g_tk(p_skey) → graph.qq.com/oauth2.0/authorize
-//   （302 Location 取 code）→ musicu.fcg QQConnectLogin.LoginServer/QQLogin → 最终 Cookie（含 qm_keyst）。
+// ⚠ 测试纪律：本模块被 gateway.js require，而测试 harness 以 vm 执行 gateway.js、只替换其作用域内
+//   的 fs / http / fetch —— require 进来的模块拿到的是【真实】全局与模块系统，故本文件绝不能
+//   require 任何模块、裸调 fetch、或直接读写文件（只用 deps 里注入的版本）；能直接使用的只有
+//   纯全局 Buffer / URL / URLSearchParams / Math / Date / JSON。
+// 上游约束：vkey 取链可不带 sign；sip 的 http CDN 支持 https + Range(206)、无需 Referer ⇒ 只做
+//   http→https 改写、不做音频代理；空 purl = 无权限（无错误码可映射），试听曲目同样给 purl。
+// 扫码码 66 待扫 / 67 已扫待确认 / 65 过期 / 0 成功（ptuiCB 首参）→ 归一化为 801 / 802 / 800 /
+//   803（弹窗协议与网易云一致）；成功链 check_sig（p_skey / p_uin / pt4_token）→ g_tk →
+//   oauth2.0/authorize（302 取 code）→ musicu QQLogin → 最终 Cookie。
 'use strict';
 
 const UA_QQ =
@@ -31,14 +21,14 @@ const MUSICU_URL = 'https://u.y.qq.com/cgi-bin/musicu.fcg';
 const ALBUM_URL = 'https://c.y.qq.com/v8/fcg-bin/fcg_v8_album_info_cp.fcg';
 // 经典网页搜索（t=0 单曲 / t=8 专辑）：匿名可用，做 musicu 的兜底（见 classicSearch）
 const CLASSIC_SEARCH_URL = 'https://c.y.qq.com/soso/fcgi-bin/client_search_cp';
-// 搜索结果一页多少条（musicu 的 num_per_page / 经典端点的 n）。插件侧按同样的页大小换算页码 ——
-// 两边必须一致，否则第 2 页会从半截开始漏掉或重复（album-discovery 的 SEARCH_PAGE_SIZE）。
+// 搜索页大小（musicu 的 num_per_page / 经典端点的 n）：插件侧按同一页大小换算页码，两边必须一致，
+// 否则第 2 页会从半截开始漏掉或重复（album-discovery 的 SEARCH_PAGE_SIZE 要同步）。
 const QQ_SEARCH_PAGE = 30;
 const LYRIC_URL = 'https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg';
 const OAUTH_URL = 'https://graph.qq.com/oauth2.0/authorize';
 const LOGIN_JUMP_URL = 'https://graph.qq.com/oauth2.0/login_jump';
-// 官方扫码流程会先加载 xlogin 页，拿到 pt_login_sig 并在 ptqrlogin 里回传 login_sig；
-// 缺这个值时会话无法与"手机确认"绑定，二维码会一直停在 67「二维码认证中」。
+// 官方流程先加载 xlogin 页拿 pt_login_sig、再在 ptqrlogin 回传 login_sig：
+// 缺它会话无法与「手机确认」绑定，二维码一直停在 67「二维码认证中」。
 const XLOGIN_URL = 'https://xui.ptlogin2.qq.com/cgi-bin/xlogin';
 
 // 音质档位 → vkey filename 前缀（higher 与 exhigh 同为 320k，QQ 无 192k 档）
@@ -100,9 +90,8 @@ function getSetCookies(res) {
   }
 }
 
-// Set-Cookie 合并（跨跳持久化）：同一 Cookie 名可能多次下发（不同 Domain/Path，含“删除型”空值，
-// 如 check_sig 对 p_uin / p_skey 各下发两次）。规则：空值不覆盖已有值；非空值按最后一条为准
-// —— 按最后一条无脑覆盖时，空值会把有效票据冲掉。
+// Set-Cookie 合并（跨跳持久化）：同一名字可能多次下发（不同 Domain/Path，含“删除型”空值，如 check_sig 对
+// p_uin / p_skey 各下发两次）。规则：空值不覆盖已有值、非空值按最后一条 —— 无脑覆盖时空值会冲掉有效票据。
 function mergeSetCookies(jar, setCookies) {
   for (const c of setCookies || []) {
     const first = String(c).split(';')[0];
@@ -140,9 +129,8 @@ function setCookieShape(setCookies) {
     .join(' ');
 }
 
-// ptuiCB('66','0','','0','...','') → { code, subCode, url, msg, nick }；无法解析返回 null
-// 官方字段数不固定（成功响应 7 字段，尾部可能还有空字段）：第 5 字段之后统一当作附加字段
-// 序列，取第一个附加字段为昵称。别按固定字段数匹配——多一个空字段就会整体解析失败。
+// ptuiCB('66','0','','0','...','') → { code, subCode, url, msg, nick }；无法解析返回 null。
+// 字段数不固定：昵称取第 5 字段之后的第一个附加字段 —— 别按固定字段数匹配，多一个空字段就会整体解析失败。
 function parsePtuiCB(text) {
   const m = /^ptuiCB\('(\d+)',\s*'(\d+)',\s*'([^']*)',\s*'(\d+)',\s*'([^']*)'((?:,\s*'[^']*')*)\)/.exec(
     String(text == null ? '' : text).trim()
@@ -240,9 +228,8 @@ function registerQqRoutes(deps) {
 
   // —— 扫码 ——
 
-  // 官方流程必须在 xlogin → ptqrshow → ptqrlogin → check_sig 全程复用同一 Cookie 会话。
-  // 只记 pt_login_sig 查询参数不够：pt_guid_sig / ptvfsession 等票据缺失时，手机扫码后会
-  // 长期停在 67「二维码认证中」。会话只在内存存活，客户端协议仍只传 key=qrsig。
+  // 官方流程必须在 xlogin → ptqrshow → ptqrlogin → check_sig 全程复用同一 Cookie 会话：
+  // 只记 pt_login_sig 不够，缺 pt_guid_sig / ptvfsession 等票据时手机会长期停在 67（会话只在内存存活）。
   const qrSessions = new Map();
   const QR_SIG_TTL = 10 * 60 * 1000;
   const PTUI_VERSION_FALLBACK = '26090116';
@@ -380,8 +367,8 @@ function registerQqRoutes(deps) {
 
   async function completeLogin(checkUrl, initialJar) {
     const jar = { ...(initialJar || {}) };
-    // 1) check_sig 跳转链：逐跳捕获 Set-Cookie（p_skey / p_uin / pt4_token 等）。
-    //    有的链路在这一步的 302 Location 里就直接带 OAuth code（可作兜底）。
+    // 1) check_sig 跳转链：逐跳捕获 Set-Cookie（p_skey / p_uin / pt4_token 等）；有的链路在
+    //    这一步的 302 Location 里就带 OAuth code（可作兜底）。
     let url = checkUrl;
     let chainCode = '';
     const codeFrom = (loc) => {
@@ -729,8 +716,8 @@ function registerQqRoutes(deps) {
     return normalizeAccount(info);
   });
 
-  // QQ 搜索的 musicu 响应字段在不同版本中有轻微差异，在网关内归一化，
-  // 渲染进程不需要理解 QQ 的 albumMID / albumMid / singer 等多套命名。
+  // QQ 的 musicu 响应字段各版本略有差异，在网关内归一化成一套命名 ——
+  // 渲染进程不需要理解 albumMID / albumMid / singer 等多套写法。
   function searchList(body, requestKey, kind) {
     const req = body && body[requestKey];
     const data = req && req.data;
@@ -746,9 +733,8 @@ function registerQqRoutes(deps) {
       .join(' / ');
   }
 
-  // 两个搜索端点的载荷字段高度重合（albumMID/albumName/singerName/albumPic/publicTime/song_count、
-  // 歌曲的 mid/title/singer/album{mid,name}），差别只在包装层级 —— 所以映射共用一份，
-  // 靠多套命名的「或」把两边的差异吃掉。
+  // 两个搜索端点的载荷字段高度重合（专辑 albumMID/albumName/singerName/albumPic/publicTime/song_count、
+  // 歌曲 mid/title/singer/album{mid,name}），差别只在包装层级 —— 映射共用一份，靠多套命名的「或」吃掉差异。
   function mapAlbums(rawList) {
     return rawList.map((raw) => {
       const a = (raw && (raw.albumInfo || raw.album)) || raw || {};
@@ -784,8 +770,8 @@ function registerQqRoutes(deps) {
     }).filter((s) => MID_RE.test(s.albumMid) && s.albumName);
   }
 
-  // 经典网页搜索端点（y.qq.com 网页版在用）。与 musicu 的关键差别：**匿名可用** ——
-  // musicu 在未登录（或登录态失效）时不报错、只静默返回空列表，用户看到的是「请先登录 QQ 音乐」，
+  // 经典网页搜索端点（y.qq.com 网页版在用）。与 musicu 的关键差别：**匿名可用** —— musicu 在
+  // 未登录（或登录态失效）时不报错、只静默返回空列表，于是用户看到「请先登录 QQ 音乐」，
   // 而导入专辑其实只需要元信息。参数分组照端点实测结果给，别混用（new_json 会改列表字段）。
   async function classicSearch(keywords, jar, page) {
     const fetchKind = async (t, kind, extra) => {
@@ -830,8 +816,8 @@ function registerQqRoutes(deps) {
   route('GET', '/api/qq/search', async ({ query }) => {
     const keywords = String((query && query.keywords) || '').trim().slice(0, 100);
     if (!keywords) return { code: 0, data: { albums: [], songs: [] } };
-    // 页码翻页（客户端只报第几页）：musicu 用 page_num、经典端点用 p，两边页大小都取 QQ_SEARCH_PAGE。
-    // 插件侧按「offset / 页大小 + 1」换算页码，改这里要同步 album-discovery 的 SEARCH_PAGE_SIZE。
+    // 页码翻页（客户端只报第几页）：musicu 用 page_num、经典端点用 p，两边页大小都取 QQ_SEARCH_PAGE
+    // （插件侧按「offset / 页大小 + 1」换算，改这里要同步 album-discovery 的 SEARCH_PAGE_SIZE）。
     const page = Math.max(1, Math.floor(Number((query && query.page) || 1)) || 1);
     const common = {
       remoteplace: 'txt.yqq.center',
@@ -867,7 +853,7 @@ function registerQqRoutes(deps) {
     let albums = mapAlbums(rawAlbums);
     let songs = mapSongs(rawSongs);
     // musicu 没给出任何结果（未登录 / 登录态失效 / 抽风）→ 走匿名可用的经典端点。
-    // searched 记录「经典端点确实答了话」：答了话但没匹配到，是「无结果」而不是「要登录」。
+    // searched 记录「经典端点确实答了话」—— 答了话但没匹配到是「无结果」，不是「要登录」。
     let searched = albums.length > 0 || songs.length > 0;
     if (!searched) {
       try {

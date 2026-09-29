@@ -1,5 +1,5 @@
-// 酷狗登录 UX 回归：esbuild 编译真实扫码弹窗源码后在 vm 执行；无需网络与 Obsidian。
-// 与 qq-login.test.cjs 同构：provider 化之后，每个源各自锁自己的文案与临时图名。
+// 酷狗登录 UX 回归：esbuild 编译真实扫码弹窗源码后在 vm 执行（无需网络与 Obsidian）；与
+// qq-login.test.cjs 同构 —— provider 化之后，每个源各自锁自己的文案与临时图名。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');

@@ -1,10 +1,7 @@
-// 马达斜坡的纯换算回归（core/motor）：暂停 = 断电滑停、复播 = 马达起转。
-// 盯住的坑：
+// 马达斜坡的纯换算回归（core/motor）：暂停 = 断电滑停、复播 = 马达起转。盯住的坑：
 //   ① 斜坡必须短（「快速的减速停止」）：滑停 0.35s 级、起转 0.5s 级，且单调；
-//   ② 「差多少补多少」：中途反向（滑到一半又按播放）要能就地接着走 —— 曲线只与此刻的转速
-//      有关，与已经走了多久无关（否则反向那一刻转速会跳）；
-//   ③ motorAdvance 必须真的是 ∫rate：它同时是「唱片转过的角」与「元素位置前进的量」，
-//      两者共用一个积分才是同步的；
+//   ② 「差多少补多少」：曲线只与此刻的转速有关、与已经走了多久无关，中途反向（滑到一半又按播放）才能就地接着走（否则转速会跳）；
+//   ③ motorAdvance 必须真的是 ∫rate —— 它同时是「唱片转过的角」与「元素位置前进的量」，两者共用一个积分才是同步的；
 //   ④ 增益只由转速换算：地板处正好 0（与元素停声同一刻），满音量线以上是 1。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -89,7 +86,7 @@ test('motorAdvance 就是 ∫rate：位置前进量与盘面转角共用这一�
     const exact = motorAdvance(from, total, phase);
     assert.ok(Math.abs(sum - exact) < 1e-4, `${phase}：数值积分 ${sum} 与闭式 ${exact} 应一致`);
   }
-  // 起步期间转速低于 1，位置前进得比真实时间慢；滑停更是走不满一秒 —— 差值就是「停下来的那一段」
+  // 起步期间转速 < 1，位置前进得比真实时间慢（滑停更是走不满一秒）—— 差值就是「停下来的那一段」
   assert.ok(motorAdvance(MOTOR_MIN_RATE, 1000, 'starting') < 1, '起步期间位置前进得比真实时间慢');
   assert.ok(motorAdvance(MOTOR_MIN_RATE, 1000, 'starting') > 0.85, '但慢得有限 —— 0.5 秒后就基本是原速');
   assert.ok(motorAdvance(1, 1000, 'stopping') < 0.2, '滑停总共只走过零点几秒的音频');

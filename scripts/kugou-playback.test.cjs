@@ -1,5 +1,4 @@
-// 酷狗播放链路回归：esbuild 编译真实源码后在 vm 执行；无需网络与 Obsidian。
-// 与 qq-playback.test.cjs 同构 —— 新源接入必须与既有源在同一张网里被验收。
+// 酷狗播放链路回归：esbuild 编译真实源码后在 vm 执行（不联网、不依赖 Obsidian）；与 qq-playback.test.cjs 同构 —— 新源接入必须与既有源在同一张网里被验收。
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -58,7 +57,7 @@ function loadModule(entry, globals = {}) {
   return runBundle(source, globals);
 }
 
-/** 把多个模块打进同一个 bundle（并从这里取出 setLanguage）——切语言必须切到 bundle 内部那一份 */
+/** 多模块打进同一 bundle 并从中取 setLanguage —— 切语言必须切到 bundle 内部那一份，外层实例切不动它 */
 function loadBundle(entries, globals = {}) {
   const source = esbuild.buildSync({
     stdin: {
@@ -196,7 +195,6 @@ test('queue：酷狗策略走 kugou 服务；auto 顺序 local→netease→qq→
   };
   const noNet = null;
 
-  // 显式 kugou
   let res = await buildAlbumQueue(album({ sourcePref: 'kugou', kugouId: '12345678' }), {
     local,
     netease: noNet,
@@ -213,7 +211,6 @@ test('queue：酷狗策略走 kugou 服务；auto 顺序 local→netease→qq→
   assert.equal(res.kugouSongs, 1);
   assert.equal(res.tracks[0].source, 'kugou');
 
-  // auto：只有 kugouId → 走酷狗
   res = await buildAlbumQueue(album({ kugouId: '12345678' }), {
     local,
     netease: noNet,

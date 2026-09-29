@@ -1,14 +1,8 @@
 // 登录判定回归（本轮审计点名的零覆盖安全面）：src/core/auth.ts / qq-auth.ts / kugou-auth.ts。
-//
-// 这三个类决定「界面说不说已登录」，而登录与否又决定会不会拿用户的凭据去访问平台。
-// 此前 620 条用例一条都没碰过它们：同名的 qq-auth.test.cjs / kugou-auth.test.cjs 跑的是**网关侧**
-// （vm 执行 server/gateway.js），插件侧这套判定全程无人守。
-//
-// 钉住四条：
-//   ① 凭据判定的边界 —— 只认自己的键名，前缀相同的别的键不能算凭据（否则会拿着空凭据去登录）；
-//   ② 没有本地凭据时不启动网关（不要为一个必然失败的登录把子进程拉起来）；
-//   ③ cookie 在位 ≠ 已登录：只有网关回的 profile 才作数，接口失败一律按未登录报；
-//   ④ 803 之外的状态一律不带 state（802 只是「等手机确认」，UI 不能据此说已登录）。
+// 这三个类决定「界面说不说已登录」，而登录与否又决定会不会拿用户的凭据去访问平台；同名的 qq-auth.test.cjs /
+// kugou-auth.test.cjs 跑的是网关侧（vm 执行 server/gateway.js），插件侧这套判定只由本文件守。钉住四条：
+// ① 只认自己的凭据键，前缀相同的别的键不算（否则会拿着空凭据去登录）；② 无本地凭据不启动网关（不替必然失败的登录拉子进程）；
+// ③ cookie 在位 ≠ 已登录，只有网关回的 profile 作数，接口失败一律按未登录报；④ 803 之外一律不带 state（802 只是等手机确认，UI 不能据此说已登录）。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -80,8 +74,7 @@ const PROVIDERS = [
   },
 ];
 
-/** 一个来源一套隔离环境：临时插件目录 + 假网关 + 假客户端。
- *  sharedTmp 传同一个目录时，三个来源的凭据文件同处一个插件目录（与线上一致）。 */
+/** 一个来源一套隔离环境：临时插件目录 + 假网关 + 假客户端；sharedTmp 传同一个目录时，三源凭据同处一个插件目录（与线上一致）。 */
 function makeEnv(spec, sharedTmp) {
   const tmp = sharedTmp || fs.mkdtempSync(path.join(os.tmpdir(), 'vinyl-login-'));
   fs.mkdirSync(path.join(tmp, 'plugins/vinyl-life'), { recursive: true });
@@ -239,7 +232,6 @@ for (const spec of PROVIDERS) {
     const env = makeEnv(spec);
     cleanup(t, env);
 
-    // 网关可用：先让网关清、再删本地文件
     write(env, spec.good);
     await env.auth.clear();
     assert.deepEqual(env.client.log, ['clearCookie'], '网关可用时先走网关');
@@ -280,7 +272,7 @@ for (const spec of PROVIDERS) {
     assert.equal(r.code, 802);
     assert.equal(r.state, undefined, '802 时不能给出登录态 —— 界面不能据此说已登录');
 
-    env.client.checkBody = {}; // 网关没给 code
+    env.client.checkBody = {};
     r = await env.auth.checkQr('k1');
     assert.equal(r.code, -1, '缺 code 按 -1 处理（不是 803，就不带 state）');
     assert.equal(r.state, undefined);
@@ -331,9 +323,7 @@ test('vipType 只有网易云报（QQ / 酷狗的会员信息在网关侧，不�
 });
 
 test('三个来源的凭据互不相认（同一个插件目录里各读各的）', (t) => {
-  // 线上三份凭据同处一个插件目录：.cookie / .qq-cookie / .kugou-cookie。
-  // 这里逐个只放一份，另外两个来源必须视为未登录 —— 拿别的源的凭据去登录，
-  // 网关那边只会得到一个必然失败的请求，而界面会先显示「已登录」。
+  // 线上三份凭据（.cookie / .qq-cookie / .kugou-cookie）同处一个插件目录：拿别的源的凭据去登录，网关只会得到必然失败的请求，而界面会先显示「已登录」——本用例逐个只放一份，另外两个源必须视为未登录。
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vinyl-login-'));
   t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
   const envs = PROVIDERS.map((spec) => makeEnv(spec, tmp));

@@ -9,8 +9,7 @@ export type HealthIssueKind = 'external' | 'cover' | 'source' | 'playback';
 export interface LibraryHealthIssue {
   album: AlbumInfo;
   kind: HealthIssueKind;
-  /** error = 真的坏了，要修；note = 只是「可以更好」（无音源 / 无封面这类）。
-   *  无音源、无封面的专辑很可能是有意保存的乐评，不该和失效引用混在一张待办单里。 */
+  /** error = 真的坏了，要修；note = 只是「可以更好」（无音源 / 无封面这类，很可能是有意保存的乐评，不该和失效引用混在一张待办单里）。 */
   severity: 'error' | 'note';
   detail: string;
   /** 播放失败发生的时间（只有 playback 类有）：界面上标「什么时候坏的」 */
@@ -19,16 +18,14 @@ export interface LibraryHealthIssue {
   source?: ActiveSource | 'auto';
 }
 
-/** 错误（要修）与提示（可以不管）分开：**失效引用 / 播放失败 / 指定音源不可用** 是错误；
- *  「完全没有音源」「没有封面」只是提示 —— 而且标了「仅收藏」的专辑连提示都不出。 */
+/** 错误（要修）与提示（可以不管）分开：**失效引用 / 播放失败 / 指定音源不可用**是错误，「完全没有音源」「没有封面」只是提示 —— 标了「仅收藏」的连提示都不出。 */
 function issueFor(album: AlbumInfo, kind: HealthIssueKind, detail: string): LibraryHealthIssue | null {
   switch (kind) {
     case 'external':
     case 'playback':
       return { album, kind, severity: 'error', detail };
     case 'source':
-      // detail 为空 = 这张一个音源都没有（很可能是有意只收藏的乐评）；
-      // 有 detail = 用户在笔记里指定了某个音源，而它现在不可用 —— 这是错误
+      // detail 为空 = 一个音源都没有（很可能是有意只收藏的乐评）；有 detail = 用户指定的音源现在不可用 —— 这是错误
       if (!detail) return album.collectOnly ? null : { album, kind, severity: 'note', detail };
       return { album, kind, severity: 'error', detail };
     case 'cover':
@@ -103,10 +100,9 @@ export interface ProbeJob {
   source: OnlineSource;
 }
 
-/** 每张专辑「实际会用」的音源：笔记里指定了就按它，否则用**用户设的**默认音源；
- *  默认音源本身是 auto 时才走自动优先级（本地 > 网易云 > QQ > 酷狗）—— 与 buildAlbumQueue
- *  的 policy 同一套口径（见 core/queue）。少了 defaultSource 这一半，设置里选「仅 QQ」之后
- *  健康检查试播的还是本地 / 网易云，结论与实际播放对不上。纯本地或没音源的返回 null。 */
+/** 每张专辑「实际会用」的音源：笔记里指定了就按它，否则用**用户设的**默认音源，默认音源本身是 auto
+ *  时才走自动优先级（本地 > 网易云 > QQ > 酷狗）—— 与 buildAlbumQueue 的 policy 同一套口径（见 core/queue）。
+ *  少了 defaultSource 这一半，设置里选「仅 QQ」之后试播的还是本地 / 网易云，结论与实际播放对不上。 */
 function effectiveSource(
   album: AlbumInfo,
   sources: AlbumSources,
@@ -121,9 +117,8 @@ function effectiveSource(
   return null;
 }
 
-/** 试播清单：只列在线音源（本地音轨由静态检查负责，不用试播）。
- *  defaultSource 是设置里的「默认音源」：scope = 'current'（只试每张实际会用的那个源）
- *  要按它来算，否则选的源与实际播放不是同一个。 */
+/** 试播清单：只列在线音源（本地由静态检查负责）。defaultSource 是设置里的「默认音源」——
+ *  scope = 'current' 要按它来算，否则选的源与实际播放不是同一个（口径见 effectiveSource）。 */
 export function probeJobs(
   app: App,
   albums: AlbumInfo[],

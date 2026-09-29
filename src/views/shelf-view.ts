@@ -1,12 +1,8 @@
-// 专辑墙视图（自绘 ItemView）：
-//   工具栏（工具栏方案 2026-09-18）：单行 —— 左边标题 + 手绘体计数，右边四枚图标钮：
-//     搜索（点击原位向左展开输入框，输入即筛墙；无词失焦收回）/ 陈列 / 添加 / 更多。
-//     没有抽屉、没有厚重胶囊；窗格再窄也是单行（窄到放不下就先省计数、再缩标题）。
-//   陈列：来源（单选芯片）+ 排列（依据 / 方向两个下拉）+ 显示（每行数量 / 封面下的信息第二层）。
-//   添加：一个浮层两种入库方式 —— 在线搜索 + 本地拖放（见 views/add-panel）。
-//   选择模式：更多 → 选择专辑；工具栏整条切换用途（已选数量 / 全选当前 / 清空 / 删除… / 完成），
-//     卡片点选（Shift 连选），Esc 或「完成」退出。
-//   点击卡片 = 黑胶交接；拖拽音频入库；播放中卡片高亮 + 唱片离墙。
+// 专辑墙视图（自绘 ItemView）。工具栏（方案 2026-09-18）单行：标题 + 手绘体计数，右侧
+// 搜索（原位展开）/ 陈列 / 添加 / 更多；窗格再窄也保持单行，放不下就先省计数、再缩标题。
+// 陈列 = 来源芯片 + 排列（依据 / 方向）+ 显示（每行数量 / 封面下的信息第二层）；
+// 添加是一个浮层两种入库（在线搜索 + 本地拖放，见 views/add-panel）；选择模式下工具栏整条换用途。
+// 点卡片 = 黑胶交接，拖音频入库，播放中卡片高亮 + 唱片离墙。
 import {
   ItemView,
   WorkspaceLeaf,
@@ -67,8 +63,8 @@ import {
 import { rangeInList, toggleInList } from '../core/multi-select';
 
 import { collectDroppedFiles, droppedRootName, isAudioFile, markVinylMenu, notice, prefersReducedMotion, vaultChangeMatters } from '../util';
-// 手绘笔触用 roughjs（Excalidraw 内部同款引擎）。只引 SVG 那一支：canvas 渲染器用不上，
-// 直接引包入口会把它一起打进来（实测多 2 KB）。线宽 / 虚线等公共参数见 hand-drawn.ts。
+// 手绘笔触用 roughjs（Excalidraw 同款）。只引 SVG 那一支：引包入口会把 canvas 渲染器一起打进来（+2 KB）；
+// 线宽 / 虚线等公共参数见 views/hand-drawn.ts。
 import { RoughSVG } from 'roughjs/bin/svg';
 import { roughDashed, roughSolid, roundRectPath, SVG_NS } from './hand-drawn';
 import { t, tf } from '../core/i18n';
@@ -103,14 +99,9 @@ interface ShelfViewState {
 }
 
 /** 每行卡片数（设置 → 外观 → 专辑墙）→ 网格轨道模板。
- *
- *  固定列数不能写成 repeat(N, minmax(0, 1fr))：窗格窄到装不下时轨道会被压成 0 宽，
- *  封面整块消失（实测 200px 窗格里四列 = 0px 轨道，卡片只剩内边距那一条）。
- *  改成 auto-fill + 轨道下限「每张至少 --vinyl-shelf-card-floor」：
- *  窗格够宽时正好 N 列（与固定列数完全一致：948px 窗格里两种写法都是 4 列、封面 130px），
- *  窄了按装得下的张数逐级让位，宽回来自己还原 —— 与工具栏「窗格窄了先省计数」同一套让位规则。
- *  calc 里的列间距与下限来自 styles.css 的 --vinyl-shelf-col-gap / --vinyl-shelf-card-floor：
- *  几何常量归样式表，这里只拼结构，两边不会各自漂。 */
+ *  不能写成 repeat(N, minmax(0, 1fr))：窗格窄到装不下时轨道会被压成 0 宽、封面整块消失
+ *  （实测 200px 窗格里四列 = 0px 轨道）；auto-fill + 轨道下限则够宽时正好 N 列、窄了逐级让位。
+ *  列间距与下限取自 styles.css 的 --vinyl-shelf-col-gap / --vinyl-shelf-card-floor：几何常量归样式表。 */
 export function shelfColumnsTemplate(cols: number | 'auto' | null | undefined): string {
   if (cols === 'auto' || !cols) return 'repeat(auto-fill, minmax(min(230px, 100%), 1fr))';
   const n = Math.max(1, Math.round(cols));
@@ -121,8 +112,7 @@ export function shelfColumnsTemplate(cols: number | 'auto' | null | undefined): 
   );
 }
 
-/** 浮层里「键盘够得到」的元素。Tab 循环陷阱用它算首尾；
- *  offsetParent 再滤掉被 CSS 藏起来的（未选中时的动作条、收起的第二层）。 */
+/** 浮层里「键盘够得到」的元素（Tab 循环陷阱算首尾用）；offsetParent 再滤掉被 CSS 藏起来的那些 */
 const FOCUSABLE =
   'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
 
@@ -136,8 +126,8 @@ const filterOptions = (): [SourceFilter, string][] => [
   ['collect', t('filter.collect')],
 ];
 
-/** 分段控件里的短标签（窄浮层里放得下）：完整名字挂在 aria-label 上，不丢语义。
- *  三个平台来源走 sourceShortName（与添加浮层的「搜索来源」共用一份）—— 两处是同一个控件。 */
+/** 分段控件的短标签（完整名字挂在 aria-label 上，不丢语义）；三个平台来源走 sourceShortName ——
+ *  与添加浮层的「搜索来源」是同一个控件，共用一份短名。 */
 const sourceShortLabel = (key: SourceFilter): string => {
   switch (key) {
     case 'all':
@@ -146,7 +136,7 @@ const sourceShortLabel = (key: SourceFilter): string => {
       return t('src.local');
     case 'collect':
       return t('filter.collectShort');
-    // 三个平台来源：与添加浮层的「搜索来源」同一份短名（穷尽列出，加了新来源这里会编译报错）
+    // 穷尽列出：加了新来源这里会编译报错（短名与添加浮层的「搜索来源」共用一份）
     case 'netease':
     case 'qq':
     case 'kugou':
@@ -154,23 +144,18 @@ const sourceShortLabel = (key: SourceFilter): string => {
   }
 };
 
-// 卡片渲染的批量：首屏同步画这么多（一屏通常 12~40 张，60 张足够盖住），其余按帧追加。
-// 1000 张的墙打开时首屏不必等 1000 张卡片全建完 —— 那是可感的白屏。
+// 卡片渲染批量：首屏同步画 FIRST_CARDS 张（一屏通常 12~40 张），其余每帧追加 APPEND_CARDS 张 ——
+// 1000 张的墙打开时不必等全部建完，那是可感的白屏。
 const FIRST_CARDS = 60;
 const APPEND_CARDS = 80;
 
-// 悬停预热的停留门槛（ms）：停够这么久才认为「用户可能要点它」（见 schedulePrefetch）。
-// 260 是扫视与人手停顿之间的分界 —— 拿不准时宁可少预一次：漏预只是回到没有预热时的速度，
-// 多预则是白白敲一次平台接口。
+// 悬停预热的停留门槛（ms，见 schedulePrefetch）：260 取扫视与人手停顿的分界 ——
+// 拿不准时宁可少预一次：漏预只是回到预热前的速度，多预则白敲一次平台接口。
 const PREFETCH_DWELL_MS = 260;
 
 // 空态教程的图纸参数（Excalidraw 设计稿 Drawing 2026-09-15 14.14.52，1 图纸单位 = 1px）。
-// 笔触一律交给 roughjs（Excalidraw 用的同一套手绘引擎），线宽 / 虚线 / roughness 等公共参数
-// 在 views/hand-drawn.ts（与「关于」页共用），这里只留这张图纸自己的比例与种子 ——
-// 每个图形的 seed 都照搬图纸，抖动纹路才对得上。
-// 版面比例：框顶 = 线圈底 + 82（视图不够高时的下限）；箭尾贴框右缘（+6）且落在框的垂直中点；
-// 折点 = 尾 + (70.3%, 42.9%) 的「尾→尖」向量；箭尖压在圈底（+1px、圈心右偏 2px）。
-// 只有「两个按钮在哪」是从 DOM 现量的，其余比例照搬，窗口怎么变都指着按钮。
+// 笔触一律交给 roughjs（公共参数见 views/hand-drawn.ts，与「关于」页共用），这里只留图纸自己的
+// 比例与种子 —— seed 照搬图纸，抖动纹路才对得上；比例也照搬，只有「按钮在哪」从 DOM 现量。
 const TUT = {
   bendRatioX: 0.703,
   bendRatioY: 0.429,
@@ -192,7 +177,7 @@ const TUT = {
   },
 } as const;
 
-/** 箭头头部两笔的端点：从箭尖沿 -dir 收 headLen，两侧各偏 headHalf（dir 为单位方向） */
+/** 箭头头部两笔的端点：从箭尖沿 -dir 收 headLen，两侧各偏 headHalf（dir 须为单位方向） */
 const arrowHeadPoints = (tip: { x: number; y: number }, dir: { x: number; y: number }) => {
   const bx = tip.x - dir.x * TUT.headLen;
   const by = tip.y - dir.y * TUT.headLen;
@@ -201,7 +186,7 @@ const arrowHeadPoints = (tip: { x: number; y: number }, dir: { x: number; y: num
   return { tip, a: { x: bx + px, y: by + py }, b: { x: bx - px, y: by - py } };
 };
 
-/** 单位方向（箭头头部按箭尖处切线方向张开） */
+/** 单位方向（箭头头部按箭尖处的切线张开） */
 const unitVector = (from: { x: number; y: number }, to: { x: number; y: number }) => {
   const dx = to.x - from.x;
   const dy = to.y - from.y;
@@ -218,7 +203,7 @@ export class VinylShelfView extends ItemView {
   private cardSig = new Map<string, string>();
   private gridEl: HTMLElement | null = null;
   private gridWired = false;
-  /** 分帧追加的进行中状态（1000 张的墙首屏先画一批，其余按帧接着画） */
+  /** 分帧追加的进行中状态（首屏先画一批，其余按帧接着画） */
   private gridBatch: { grid: HTMLElement; shown: ShelfEntry[]; plan: CardPlan; from: number } | null =
     null;
   private gridRaf = 0;
@@ -233,15 +218,15 @@ export class VinylShelfView extends ItemView {
   private state: ShelfViewState = { query: '', sort: DEFAULT_SHELF_SORT, sourceFilter: 'all' };
   private toolbarEl: HTMLElement | null = null;
   private headingEl: HTMLElement | null = null; // 标题 + 计数（计数是手绘体）
-  private displayBtnEl: HTMLButtonElement | null = null; // 陈列入口（筛了来源时按钮上挂来源名）
-  private addBtnEl: HTMLButtonElement | null = null; // 添加入口（空态教程的虚线圈指着它）
+  private displayBtnEl: HTMLButtonElement | null = null; // 陈列入口（筛了来源时挂来源名）
+  private addBtnEl: HTMLButtonElement | null = null; // 空态教程的虚线圈指着它
   private searchEl: HTMLElement | null = null; // 搜索控件（图标 ↔ 输入框）
   private searchInput: HTMLInputElement | null = null;
   private searchOpen = false; // 输入框展开中（无关键词失焦 / 清空后收回图标）
-  private composing = false; // 中文输入法组词中：组词期间不筛墙
+  private composing = false; // 输入法组词中：组词期间不筛墙
   private preSearchScroll = 0; // 进入搜索前的滚动位置（清空关键词后回到这里）
   // 选择模式（批量删除）：点卡片 = 选 / 取消选，Shift = 连选，Esc / 完成退出。
-  // scope = 进入模式那一刻眼前的结果（全选只作用于它；期间不提供搜索 / 陈列 / 添加）
+  // scope = 进入模式那一刻眼前的结果（全选只作用于它）
   private batch: { active: boolean; selection: string[]; anchor: string; scope: string[] } = {
     active: false,
     selection: [],
@@ -249,8 +234,8 @@ export class VinylShelfView extends ItemView {
     scope: [],
   };
   private batchInfoEl: HTMLElement | null = null;
-  private batchAllBtn: HTMLButtonElement | null = null; // 全选当前 N 张
-  private batchClearBtn: HTMLButtonElement | null = null; // 清空选择
+  private batchAllBtn: HTMLButtonElement | null = null;
+  private batchClearBtn: HTMLButtonElement | null = null;
   private batchDeleteBtn: HTMLButtonElement | null = null;
   private batchDoneBtn: HTMLButtonElement | null = null;
   private gridHost: HTMLElement | null = null;
@@ -260,19 +245,19 @@ export class VinylShelfView extends ItemView {
     el: HTMLElement;
     kind: 'display' | 'add';
     anchor: HTMLElement;
-    /** 浮层所在的文档：专辑墙可以被拖进独立窗口，那时锚点属于弹出窗口而 document 是主窗口 ——
+    /** 浮层所在的文档：专辑墙可被拖进独立窗口，那时锚点属于弹出窗口而 document 是主窗口 ——
      *  浮层、点外关闭与 Esc 都得跟着锚点走（见 openPanel）。 */
     doc: Document;
   } | null = null;
   private displayLayer: 'main' | 'props' = 'main'; // 陈列浮层当前在哪一层
-  private propsHost: HTMLElement | null = null; // 属性行（第二层）挂在哪个容器里
+  private propsHost: HTMLElement | null = null;
   private addPanel: AddPanel | null = null;
   private onPanelDocPointer: ((ev: PointerEvent) => void) | null = null;
   private onPanelKey: ((ev: KeyboardEvent) => void) | null = null;
-  private dragKey: string | null = null; // 卡片属性行：正在拖拽的属性键
-  private dropAt: { key: string; after: boolean } | null = null; // 当前落点（在 key 行之前/之后）
-  // 空态教程（Excalidraw 设计稿移植）：root 是盖在视图上的纯装饰层，
-  // ink 里是 roughjs 现画的框 / 圈 / 箭头，几何在 layoutTutorial() 里算
+  private dragKey: string | null = null; // 正在拖拽的属性键
+  private dropAt: { key: string; after: boolean } | null = null; // 当前落点（key 行之前 / 之后）
+  // 空态教程（Excalidraw 设计稿移植）：root 是盖在视图上的纯装饰层，ink 里是 roughjs
+  // 现画的框 / 圈 / 箭头，几何都在 layoutTutorial() 里算
   private tutorial: {
     root: HTMLElement;
     main: HTMLElement;
@@ -286,10 +271,10 @@ export class VinylShelfView extends ItemView {
   private tutorialRO: ResizeObserver | null = null;
   private settleRaf = 0; // 教程布局的「定型补枪」（见 settleTutorial）
   private tutorialRaf = 0; // 教程重绘的合流（见 requestTutorialLayout）
-  private tutorialKey = ''; // 上一次画图时的尺寸指纹：没变就不重画（见 layoutTutorial）
+  private tutorialKey = ''; // 上一次画图的尺寸指纹：没变就不重画（见 layoutTutorial）
   private dirty = false; // 不可见期间有改动：重新可见时补一次渲染（见 render 的开头）
-  /** 下一次 render 强制走「重建」分支：工具栏与卡片的文案是建的时候写死的，
-   *  增量路径补不上 —— 眼下只有切语言用它（见 applyLanguage）。 */
+  /** 下一次 render 强制走「重建」分支：工具栏与卡片的文案是建的时候写死的，增量路径补不上，
+   *  眼下只有切语言用它（见 applyLanguage）。 */
   private forceRebuild = false;
   private settleTimers: number[] = [];
 
@@ -330,16 +315,15 @@ export class VinylShelfView extends ItemView {
         }
       })
     );
-    // 性能：vault 层事件比 metadataCache 更频繁（音频/封面是普通文件，不走 md 缓存），
-    // 只认「音频 / 图片 / 文件夹」三类，其余（笔记、插件文件、配置…）直接早退，不触发任何工作。
-    //   音频增删改 → 本地音源角标；图片增删改 → 封面自动识别；文件夹增删改名 → 专辑音频目录失效。
-    // 导入一批音频会连着触发几十个 create，统一交给 scheduleRefresh 防抖合并（500ms 内只扫一次库）。
+    // 性能：vault 层事件比 metadataCache 频繁（音频 / 封面是普通文件，不进 md 缓存），只认
+    // 「音频 / 图片 / 文件夹」，其余（笔记、插件文件、配置…）直接早退，不触发任何工作。
+    // 导入一批音频会连着触发几十个 create，统一交给 scheduleRefresh 的 500ms 防抖合并成一次扫库。
     const onVaultChanged = (f: TAbstractFile, oldPath?: string) => {
       const isFolder = f instanceof TFolder;
       const isFile = f instanceof TFile;
       if (!isFolder && !isFile) return;
-      // 判据与插件层的音源缓存作废共用一份（见 util.vaultChangeMatters）：文件夹 / 音频 / 图片，
-      // 以及专辑笔记目录里的 md（新笔记落地。笔记内容的变化走上面那个 metadataCache）
+      // 判据与插件层的音源缓存作废共用一份（见 util.vaultChangeMatters）：文件夹 / 音频 / 图片
+      // 加专辑笔记目录里的 md（笔记内容的变化走上面那个 metadataCache）
       if (
         vaultChangeMatters({
           path: f.path,
@@ -359,7 +343,7 @@ export class VinylShelfView extends ItemView {
         onVaultChanged(f, oldPath)
       )
     );
-    // 卡片文字的悬停滚动：委托挂在 contentEl 上（卡片每次刷新都重建，逐张挂监听会白挂随卡片丢弃的一堆）
+    // 卡片文字的悬停滚动：委托挂 contentEl（卡片每次刷新都重建，逐张挂监听会随卡片一起丢弃）
     this.registerDomEvent(this.contentEl, 'pointerover', (ev) => {
       onMarqueeOver(ev);
       this.schedulePrefetch(ev);
@@ -368,24 +352,23 @@ export class VinylShelfView extends ItemView {
       onMarqueeOut(ev);
       this.cancelPrefetch(ev);
     });
-    // 键盘焦点落进卡片时同样要能读全长专辑名（曾经只有鼠标一条路）。
-    // 焦点在卡片上、marquee 是它的后代 —— 与指针的 closest 方向相反，所以走 *_In 那一对。
+    // 焦点进卡片也要能读全长专辑名（曾经只有鼠标一条路）：焦点在卡片上、marquee 是它的后代 ——
+    // 与指针的 closest 方向相反，所以走 *_In 那一对。
     this.registerDomEvent(this.contentEl, 'focusin', (ev) => measureMarqueesIn(shelfCardOf(ev.target)));
     this.registerDomEvent(this.contentEl, 'focusout', (ev) => {
       const card = shelfCardOf(ev.target);
       const to = ev.relatedTarget as Node | null;
-      // 卡片内部换焦点（卡片 ↔ 它的「⋯」钮）不算离开：复位会让滚动从头再来
+      // 卡片内部换焦点不算离开：复位会让滚动从头再来
       if (card && to && card.contains(to)) return;
       resetMarqueesIn(card);
     });
-    // 键盘等价操作：卡片上 Enter / 空格 = 点击
     this.registerDomEvent(this.contentEl, 'keydown', (ev) => this.onShelfKeydown(ev));
     this.unsub = this.plugin.engine.subscribe((s) => this.updatePlaying(s));
     // 空态教程：视图尺寸一变（窗口 / 侧边栏开合）就重算线圈与箭头的位置；没有教程时空转
     this.tutorialRO = new ResizeObserver(() => this.requestTutorialLayout());
     this.tutorialRO.observe(this.contentEl);
     this.registerDomEvent(this.contentEl, 'scroll', () => this.requestTutorialLayout());
-    // 工作区布局变化（分屏 / 标签移动 / 恢复布局）时容器尺寸可能几帧内还在变，补一次布局
+    // 布局变化（分屏 / 标签移动 / 恢复布局）后容器尺寸可能几帧内还在变，补一次布局
     this.registerEvent(this.app.workspace.on('layout-change', () => this.requestTutorialLayout()));
     // 不可见期间攒下的改动：重新可见时补一次渲染（判据与 render 开头同一处）
     const flushIfVisible = () => {
@@ -413,12 +396,9 @@ export class VinylShelfView extends ItemView {
     this.closePanel();
   }
 
-  /** 卡片墙的键盘等价：
-   *    · 方向键在卡片间走、Home / End 到首尾（整墙只占一个 Tab 停靠点，见 syncRoving）
-   *    · Enter / 空格 = 点击
-   *    · Shift+F10 / 菜单键 = 卡片菜单（标准「菜单按钮」模式。卡片上的「⋯」按钮 2026-09-27
-   *      去掉后，这条就是键盘唯一进得去菜单的路 —— 也是现在唯一不靠鼠标的那条）
-   *    · 选择模式下 Esc = 退出。搜索框的 Esc 只退焦点，由输入框自己拦住（stopPropagation） */
+  /** 卡片墙的键盘等价：方向键在卡片间走、Home / End 到首尾（整墙只占一个 Tab 停靠点，见 syncRoving）；
+   *  Enter / 空格 = 点击；Shift+F10 / 菜单键 = 卡片菜单（卡片上的「⋯」按钮 2026-09-27 去掉后，
+   *  这是键盘唯一进得去菜单的路）；选择模式下 Esc = 退出（搜索框的 Esc 由输入框自己拦住）。*/
   private onShelfKeydown(ev: KeyboardEvent) {
     const card = shelfCardOf(ev.target);
     if (
@@ -431,8 +411,8 @@ export class VinylShelfView extends ItemView {
       }
       return;
     }
-    // 卡片菜单的键盘入口。卡片上不再有「⋯」按钮（2026-09-27 去掉），右键又是纯鼠标手势 ——
-    // 没有这条，「评分 / 设置封面 / 在源站打开」对键盘用户就完全不可达。落点按卡片矩形算。
+    // 卡片菜单的键盘入口（落点按卡片矩形算）：卡片上已无「⋯」按钮、右键又是纯鼠标手势 ——
+    // 没有这条，「评分 / 设置封面 / 在源站打开」对键盘用户完全不可达。
     if (card && (ev.key === 'ContextMenu' || (ev.key === 'F10' && ev.shiftKey))) {
       ev.preventDefault();
       ev.stopPropagation();
@@ -446,13 +426,13 @@ export class VinylShelfView extends ItemView {
     if (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Spacebar') {
       if (!card) return;
       ev.preventDefault(); // 空格默认会滚动面板
-      // 别漏给全局快捷键：用户若把 Enter / 空格绑到了别的命令上，会在这里双触发
+      // 别漏给全局快捷键：用户若把 Enter / 空格绑到别的命令上，会在这里双触发
       ev.stopPropagation();
       card.click();
       return;
     }
-    // 选择模式：Esc 退出（与播放器唱片区同一处手势，别让用户找半天出口）。
-    // 搜索框里的 Esc 只退焦点、不清条件，由输入框自己拦住（stopPropagation）。
+    // 选择模式：Esc 退出（与播放器唱片区同一处手势，别让用户找半天出口）；搜索框里的 Esc
+    // 只退焦点、不清条件，由输入框自己拦住（stopPropagation）。
     if (ev.key === 'Escape' && this.batch.active) {
       ev.preventDefault();
       ev.stopPropagation();
@@ -461,9 +441,8 @@ export class VinylShelfView extends ItemView {
   }
 
   // ============ 键盘网格（roving tabindex） ============
-  // 卡片墙是一张网格：整墙只占**一个** Tab 停靠点，进去之后用方向键在卡片间走。
-  // 此前每张卡都是停靠点 —— 100 张专辑 = 100 次 Tab 才能穿过去（方案 §5.6 的 P2）。
-  // 行按 offsetTop 分组：列数由 CSS 决定（每行数量 'auto' 档下视图并不知道排了几列），量出来的才准。
+  // 整墙只占**一个** Tab 停靠点，进去后用方向键走（旧口径是每张卡一个 —— 100 张专辑 = 100 次 Tab，
+  // 方案 §5.6 的 P2）。行按 offsetTop 分组：列数由 CSS 决定，'auto' 档下视图并不知道排了几列，量出来的才准。
 
   /** 焦点在卡片间移动。返回 false = 这个键在这里没有去处（到头了 / 认不出），调用方别吞掉按键 */
   private moveCardFocus(from: HTMLElement, key: string): boolean {
@@ -509,11 +488,9 @@ export class VinylShelfView extends ItemView {
     return true;
   }
 
-  /** 整墙只留一个 Tab 停靠点：光标那张 tabIndex=0，其余 -1。
-   *  只在值不同的时候写（这个函数在每轮渲染后都跑，卡片可能上千张）。 */
+  /** 整墙只留一个 Tab 停靠点（光标那张 0、其余 -1）；只在值不同时写 —— 每轮渲染后都跑，卡片可能上千张 */
   private syncRoving() {
-    // 迭代器解构，不用 keys().next()：IteratorResult.value 的声明类型是 any
-    // （TReturn 默认 any），赋值会被 no-unsafe-assignment 抓（1.3.1 刚清完的那一族）。
+    // 迭代器解构而非 keys().next()：IteratorResult.value 声明为 any，赋值会被 no-unsafe-assignment 抓
     const [firstPath = ''] = this.cardEls.keys();
     this.cardCursor = this.cardEls.has(this.cardCursor) ? this.cardCursor : firstPath;
     for (const [path, el] of this.cardEls) {
@@ -522,7 +499,7 @@ export class VinylShelfView extends ItemView {
     }
   }
 
-  /** 当前墙上的卡片，按显示顺序（DOM 顺序由 applyPlan 维护，就是显示顺序） */
+  /** 当前墙上的卡片，按显示顺序（DOM 顺序由 applyPlan 维护，即显示顺序） */
   private gridCards(): HTMLElement[] {
     const grid = this.gridEl;
     if (!grid) return [];
@@ -555,11 +532,10 @@ export class VinylShelfView extends ItemView {
   }
 
   // —— 悬停预热 ——
-  // 指针在一张卡上停够 PREFETCH_DWELL_MS，就把这张专辑的队列先搭起来（引擎那侧：在线曲目表
-  // 进服务缓存、第一首的地址进 urlCache，见 PlaybackEngine.prefetchAlbum）。点击起播要等的
-  // 两段网络实测 100~150ms + 110~350ms，预热之后只剩元素缓冲那一段。
-  // 为什么是「停够一会儿」而不是「碰到就预」：扫过一面墙会挨张报 pointerover，
-  // 每张都去敲平台接口等于把墙当成一次批量抓取 —— 停下不动才是「可能要点它」的信号。
+  // 指针在卡上停够 PREFETCH_DWELL_MS 就把队列先搭起来（在线曲目表进服务缓存、第一首的地址进
+  // urlCache，见 PlaybackEngine.prefetchAlbum）：起播要等的两段网络（实测 100~150ms + 110~350ms）
+  // 之后只剩元素缓冲那一段。停在原地才是「可能要点它」的信号 —— 扫过一面墙会挨张报 pointerover，
+  // 每张都去敲平台接口等于把墙当成一次批量抓取。
   private hoverCard: HTMLElement | null = null;
   private hoverPrefetchTimer: number | null = null;
 
@@ -596,18 +572,16 @@ export class VinylShelfView extends ItemView {
     }
   }
 
-  // 整墙的内容签名：它是「要不要重画」的闸门。**与卡片那一层共用同一个签名函数** ——
-  // 两处口径曾经分开写，于是「笔记里的 id / 音频目录 / 源偏好改了，四个布尔没变」时
-  // 连 render 都不走，卡片继续握着过期的 AlbumInfo（点下去按旧 id 建队列）。
-  // 排序后拼接 = 只看内容集合，不看顺序（换排序依据走的是另一条路）。
+  // 整墙的内容签名，是「要不要重画」的闸门。**与卡片那一层共用同一个签名函数**：口径分开写时
+  // 「笔记里的 id / 音频目录 / 源偏好改了、四个布尔没变」连 render 都不走，卡片继续握着过期的
+  // AlbumInfo（点下去按旧 id 建队列）。排序后拼接 = 只看内容集合，不看顺序（换排序依据走另一条路）。
   private shelfSignature(): string {
     const keys = this.plugin.settings.shelfProps;
     const labels = this.plugin.settings.shelfPropLabels;
     return this.entries
       .map((e) => cardSignature(e.album, e, keys, labels))
       .sort()
-      // 拼接用换行：每一段都是 JSON 串（内部换行已被转义），不会串味，
-      // 源码里也不出现不可见字符
+      // 拼接用换行：每段都是 JSON 串（内部换行已转义）不会串味，源码里也不出现不可见字符
       .join('\n');
   }
 
@@ -625,10 +599,9 @@ export class VinylShelfView extends ItemView {
 
   // ============ 渲染 ============
 
-  /** 切语言：整墙重绘一次。工具栏（含搜索框 placeholder 与三枚按钮的 aria-label）与卡片
-   *  菜单的悬停提示都是建的时候写死的，就地重放得一小段一小段对账、还容易漏；语言切换是
-   *  一次性动作，而 render 的「重建」分支本来就在（滚动位置照旧保留，见它的先记后还），
-   *  代价可以接受。main 的 refreshLanguage 调这里。 */
+  /** 切语言：整墙重绘一次。工具栏（placeholder、aria-label）与卡片的文案都是建的时候写死的，
+   *  就地重放得一小段一小段对账、还容易漏；重建分支本来就在（滚动位置照旧保留）。main 的
+   *  refreshLanguage 调这里。 */
   applyLanguage() {
     this.forceRebuild = true;
     this.render();
@@ -636,32 +609,31 @@ export class VinylShelfView extends ItemView {
 
   render() {
     // 看不见的时候（后台标签页 / 折叠的侧栏 / 独立窗口已关）不重建整墙：改一个属性就要重建
-    // 上千张卡片，而用户根本看不到。只标脏，等重新可见时补一次（见 onOpen 的 active-leaf-change）。
+    // 上千张卡片，而用户看不到。只标脏，等重新可见时补一次（见 onOpen 的 active-leaf-change）。
     if (!this.isShown()) {
       this.dirty = true;
       return;
     }
     this.dirty = false;
     // 浮层挂在 body 上：这次重建不该把它关掉（在「添加」面板里导入一张专辑就会触发后台刷新，
-    // 面板要保持打开才能连续添加）。只把锚点换到重建后的新按钮上，见下面的 reattachPanel。
+    // 面板要留着才能连续添加）—— 只把锚点换到重建后的新按钮上，见下面的 reattachPanel。
     const keepPanel = this.panel?.kind ?? null;
     this.loadEntries();
     const c = this.contentEl;
-    // 重建 DOM 会丢滚动位置（contentEl 自己就是滚动容器，见 styles.css）：后台刷新
-    // （导入 / 换封面 / 元数据变化）之后墙面会弹回顶部 —— 500 张的墙里等于把用户扔回起点。
-    // 先记后还，两行都要在：清空那一刻浏览器就把 scrollTop 夹成 0 了，跟 empty() 换个顺序就白记。
+    // 重建 DOM 会丢滚动位置（contentEl 自己就是滚动容器，见 styles.css）：先记后还，两行都要在 ——
+    // 清空那一刻浏览器就把 scrollTop 夹成 0 了，跟 empty() 换个顺序就白记。
     // 新内容不够高时浏览器会把值自己夹回范围内，不用管。
     const scrollTop = c.scrollTop;
     c.addClass('vinyl-shelf');
     this.applyAppearance();
-    // 工具栏与网格容器**只建一次**：之后的刷新就地同步。整棵树重建会把滚动位置、焦点、
-    // 卡片对象一起丢掉 —— 卡片本身现在按 path 增量更新（见 renderGrid 与 core/shelf-diff）。
+    // 工具栏与网格容器**只建一次**：整棵树重建会把滚动位置、焦点、卡片对象一起丢掉 ——
+    // 卡片本身按 path 增量更新（见 renderGrid 与 core/shelf-diff）。
     const fresh = this.forceRebuild || !this.toolbarEl || !this.gridHost || this.toolbarEl.isConnected === false;
     this.forceRebuild = false;
     if (fresh) {
       this.cancelGridBatch();
       c.empty();
-      // 工具栏的元素随旧 DOM 一起没了：先把引用清掉，免得重建间隙里的回调摸到 detached 节点
+      // 工具栏元素随旧 DOM 一起没了：先清引用，免得重建间隙里的回调摸到 detached 节点
       this.toolbarEl = null;
       this.headingEl = null;
       this.displayBtnEl = null;
@@ -680,9 +652,8 @@ export class VinylShelfView extends ItemView {
       this.renderToolbar(c);
       this.gridHost = c.createDiv({ cls: 'vinyl-shelf-grid-host' });
     } else {
-      // 增量路径：只有计数与「陈列」按钮的当前态会随刷新变（搜索框、焦点、卡片都留着）。
-      // 语言切换是例外，走 forceRebuild 那条路（见 applyLanguage）—— 工具栏与卡片的文案
-      // 都是建的时候写死的，这里补不上。
+      // 增量路径：只有计数与「陈列」按钮的当前态会随刷新变（搜索框、焦点、卡片都留着）；
+      // 语言切换是例外，走 forceRebuild（见 applyLanguage）。
       this.syncHeading();
       this.syncDisplayButton();
     }
@@ -695,7 +666,7 @@ export class VinylShelfView extends ItemView {
   /** 本视图此刻真的看得见吗（后台标签页 / 折叠的侧栏 / 独立窗口已关都算看不见）。
    *  判据与播放器的 syncVisibility 同一口径；isShown 缺失时按「看得见」处理。 */
   private isShown(): boolean {
-    // 标注而不是断言：测试里容器可以是 undefined（视图没挂到叶子上）
+    // 类型标注而不是断言：测试里容器可以是 undefined（视图没挂到叶子上）
     const el: HTMLElement | undefined = this.containerEl;
     return typeof el?.isShown === 'function' ? el.isShown() : true;
   }
@@ -703,7 +674,7 @@ export class VinylShelfView extends ItemView {
   /** 卡片属性变更后的就地刷新（main.refreshShelfProps 广播给所有专辑墙视图）：
    *  重建卡片行 + 刷新打开的浮层（计数 / 已选区） */
   refreshProps() {
-    // 同一件事：卡片行 rebuild 也不能把用户从墙中间弹回顶部（改一个属性就触发，比整面墙重建还频繁）
+    // 同上：卡片行 rebuild 也不能把用户从墙中间弹回顶部（改一个属性就触发，比整面墙重建还频繁）
     const scrollTop = this.contentEl.scrollTop;
     this.renderGrid();
     this.contentEl.scrollTop = scrollTop;
@@ -726,11 +697,10 @@ export class VinylShelfView extends ItemView {
     );
   }
 
-  // 工具栏（工具栏方案 2026-09-18）：单行 —— 标题（+ 手绘体计数）｜搜索｜陈列 / 添加 / 更多。
-  // 选择模式整条切换用途；其余时候右侧三键只留图标（文字都在浮层里）。
+  // 工具栏：单行 —— 标题（+ 手绘体计数）｜搜索｜陈列 / 添加 / 更多；右侧三键只留图标（文字在浮层里）。
   private renderToolbar(c: HTMLElement) {
     const bar = c.createDiv({ cls: 'vinyl-shelf-toolbar' });
-    this.toolbarEl = bar; // 教程层要量它的高度（教程整块要躲开它）
+    this.toolbarEl = bar; // 教程层要量它的高度（教程整块得躲开它）
     this.renderToolbarContent(bar);
   }
 
@@ -745,7 +715,7 @@ export class VinylShelfView extends ItemView {
     // —— 标题 + 计数（计数是手绘体；有搜索 / 来源筛选时改报「匹配数/总数」）——
     const heading = bar.createDiv({ cls: 'vinyl-shelf-heading' });
     this.headingEl = heading;
-    this.syncHeading(); // 工具栏可能是在选择模式之后重建的：计数要立刻回填（不能等下一次 renderGrid）
+    this.syncHeading(); // 工具栏可能是在选择模式之后重建的，计数要立刻回填
 
     // —— 搜索：图标 ↔ 原位展开的输入框（输入框向左长，右侧三个按钮原地不动）——
     const search = bar.createDiv({ cls: 'vinyl-shelf-search' });
@@ -811,7 +781,7 @@ export class VinylShelfView extends ItemView {
     const mk = (icon: string, label: string, cls = '') => {
       const b = actions.createEl('button', { cls: `clickable-icon vinyl-toolbar-icon ${cls}`.trim() });
       setIcon(b, icon);
-      // 只设 aria-label：Obsidian 按它渲染样式化提示，再设 title 会多弹一个浏览器原生提示（两个气泡）
+      // 只设 aria-label：再设 title 会多弹一个浏览器原生提示（两个气泡）
       b.setAttribute('aria-label', label);
       return b;
     };
@@ -833,8 +803,8 @@ export class VinylShelfView extends ItemView {
     const filtered = !!this.state.query || this.state.sourceFilter !== 'all';
     el.empty();
     el.createSpan({ text: t('shelf.heading'), cls: 'vinyl-shelf-heading-title' });
-    // 数量是异步变的（搜索 / 筛选 / 库里增删）——标成 live 区，读屏才知道「匹配 N 张 / 共 M 张」。
-    // 组词 / 连续打字时它会连着更新几次：polite 的播报由读屏自己合并，不会一句句抢话。
+    // 标成 status（live 区）：读屏才知道「匹配 N 张 / 共 M 张」；连续打字时它连着更新几次，
+    // 由读屏按 polite 自己合并，不会一句句抢话。
     el.createSpan({
       text: filtered ? `[${this.shownCount}/${this.entries.length}]` : `[${this.entries.length}]`,
       cls: 'vinyl-shelf-heading-count',
@@ -874,15 +844,14 @@ export class VinylShelfView extends ItemView {
   }
 
   /** 搜索展开状态写两处：控件自己（图标 ↔ 输入框）与工具栏（窄到 380px 时用容器查询藏标题）。
-   *  工具栏那份是替掉原来的 :has 写法的 —— :has 要由子元素反查父元素，会触发大范围选择器
-   *  失效（审核的性能警告）。状态只在这一处写，免得两边的类漂移。 */
+   *  工具栏那份替掉了原来的 :has —— :has 由子反查父会触发大范围选择器失效（审核的性能警告）；
+   *  状态只在这一处写，免得两边的类漂移。 */
   private syncSearchOpenClass(open: boolean): void {
     this.searchEl?.toggleClass('is-open', open);
     this.toolbarEl?.toggleClass('is-searching', open);
   }
 
-  /** 应用关键词（防抖 / 组词结束后调用）：更新墙、管滚动位置。
-   *  进入搜索时先记住浏览位置，清空后回到那里；新关键词从结果顶部看起。 */
+  /** 应用关键词（防抖 / 组词结束后调用）：进入搜索时记住浏览位置、清空后回到那里，新词从结果顶部看起 */
   private applySearch(next: string): void {
     if (next === this.state.query) return;
     const wasEmpty = !this.state.query;
@@ -894,9 +863,9 @@ export class VinylShelfView extends ItemView {
   }
 
   // ============ 批量删除（选择模式）============
-  // 入口在「更多」菜单；进模式后工具栏整条切换用途（已选数量 / 全选当前 / 清空 / 删除… / 完成），
-  // 不再是底部浮条。卡片变成「勾选框」：点 = 选 / 取消选、Ctrl / ⌘ 同义、Shift = 连选，
-  // 手势原语与播放器唱片区共用（core/multi-select）。全选只作用于进入模式那一刻的结果（batch.scope）。
+  // 入口在「更多」菜单；进模式后工具栏整条换用途（已选 / 全选 / 清空 / 删除 / 完成）而非底部浮条；
+  // 卡片变勾选框（点 = 选 / 取消选、Shift = 连选），手势原语与播放器唱片区共用（core/multi-select）；
+  // 全选只作用于进入模式那一刻的结果（batch.scope）。
 
   private enterBatch() {
     if (!this.entries.length) return;
@@ -956,7 +925,7 @@ export class VinylShelfView extends ItemView {
 
   /** 选择模式的工具栏（整条切换用途）：左边已选数量，右边四个动作 */
   private renderBatchToolbar(bar: HTMLElement) {
-    // 已选数量是异步变化的文本：标成 status，读屏软件才会在勾选/取消时播报（否则只能自己去翻）
+    // 已选数量是异步变的文本：标成 status 读屏才在勾选 / 取消时播报（否则只能自己去翻）
     this.batchInfoEl = bar.createDiv({ cls: 'vinyl-shelf-batch-info', attr: { role: 'status' } });
     const actions = bar.createDiv({ cls: 'vinyl-shelf-batch-actions' });
     const mk = (label: string, cls: string, fn: () => void) => {
@@ -980,7 +949,7 @@ export class VinylShelfView extends ItemView {
     for (const [path, el] of this.cardEls) {
       const on = active && picked.has(path);
       el.toggleClass('is-batch-selected', on);
-      // 读屏：选择模式里卡片是「开关」，把选中态报出来（退出时撤掉，别把卡片变成开关语义）
+      // 读屏：选择模式里卡片是「开关」，把选中态报出来；退出时撤掉，别让卡片留着开关语义
       if (active) el.setAttribute('aria-pressed', on ? 'true' : 'false');
       else el.removeAttribute('aria-pressed');
     }
@@ -1005,8 +974,8 @@ export class VinylShelfView extends ItemView {
     this.cancelGridBatch(); // 上一轮没画完的分批作废（否则会把旧列表的卡片接到新列表后面）
     this.clearTutorial(); // 教程层挂在视图上而不是网格里，要单独收
 
-    // 选择模式：专辑可能已被删掉 / 改名（卡片是快照）→ 选择表与全选范围里去掉不存在的；
-    // 墙空了就自动退出模式（否则工具栏还停着「已选 N 张」却没东西可选）
+    // 卡片是快照：已删 / 已改名的要从选择表与全选范围里去掉；墙空了自动退出模式，
+    // 否则工具栏还停着「已选 N 张」却没东西可选
     if (this.batch.active) {
       const alive = new Set(this.entries.map((e) => e.album.path));
       this.batch.selection = this.batch.selection.filter((p) => alive.has(p));
@@ -1056,26 +1025,25 @@ export class VinylShelfView extends ItemView {
       this.cardEls.delete(path);
       this.cardSig.delete(path);
     }
-    // 首屏同步画：至少 FIRST_CARDS 张；若用户停在墙中间（scrollTop > 0），一直画到盖住那个
-    // 位置 —— 否则分批期间内容高度不够，恢复的滚动位置会被浏览器夹回 0。
+    // 首屏至少同步画 FIRST_CARDS 张；用户停在墙中间（scrollTop > 0）时要一直画到盖住那个位置 ——
+    // 否则分批期间内容高度不够，恢复的滚动位置会被浏览器夹回 0。
     let drawn = this.applyPlan(grid, shown, plan, 0, FIRST_CARDS);
     const coverTo = this.contentEl.scrollTop + this.contentEl.clientHeight;
     while (drawn < shown.length && grid.getBoundingClientRect().height < coverTo) {
       drawn = this.applyPlan(grid, shown, plan, drawn, FIRST_CARDS);
     }
     if (drawn < shown.length) this.scheduleAppend(grid, shown, plan, drawn);
-    this.syncRoving(); // 整墙只留一个 Tab 停靠点（光标卡可能是刚建出来的）
-    if (this.lastSnap) this.updatePlaying(this.lastSnap, true); // 卡片变了：把播放态重铺一次
-    this.syncBatch(); // 卡片是新的：把勾选态铺回去
+    this.syncRoving(); // 光标卡可能是刚建出来的
+    if (this.lastSnap) this.updatePlaying(this.lastSnap, true); // 卡片变了：重铺播放态
+    this.syncBatch(); // 卡片是新的：铺回勾选态
   }
 
-  /** 网格容器：整个视图生命周期里复用（重建会丢滚动位置与卡片对象）。
-   *  拖拽落点只挂一次（重建网格时才会重挂）。 */
+  /** 网格容器：整个视图生命周期里复用（重建会丢滚动位置与卡片对象）；拖拽落点只挂一次 */
   private ensureGrid(): HTMLElement {
     if (!this.gridEl || this.gridEl.isConnected === false) {
-      // 上一次可能停在「筛选无结果」的空态：空态与网格是两套互斥的 DOM，都直接挂在 gridHost 下
-      // （见 dropGrid）。dropGrid 只管「有结果 → 无结果」那一程，从空态回来这一程得在这里清
-      // —— 少了这一句，点「全部」之后卡片和「没有符合条件的专辑」会一起挂在墙上（用户实测）。
+      // 空态与网格是两套互斥的 DOM，都直接挂在 gridHost 下（见 dropGrid）。dropGrid 只管
+      // 「有结果 → 无结果」那一程，从空态回来这一程得在这里清 —— 少了这一句，点「全部」之后
+      // 卡片和「没有符合条件的专辑」会一起挂在墙上（用户实测）。
       this.gridHost.empty();
       this.gridEl = this.gridHost.createDiv({ cls: 'vinyl-shelf-grid' });
       this.gridWired = false;
@@ -1098,7 +1066,7 @@ export class VinylShelfView extends ItemView {
     this.cardCursor = '';
   }
 
-  /** 照着计划画 shown[from, from+count) 这批卡片，并按显示顺序摆好位置；返回下一个下标。
+  /** 照计划画 shown[from, from+count) 并按显示顺序摆位，返回下一个下标；
    *  复用 / 重画 / 新建三种动作都在这里落地 —— 判断本身在 core/shelf-diff 的 planCards 里。 */
   private applyPlan(
     grid: HTMLElement,
@@ -1113,9 +1081,9 @@ export class VinylShelfView extends ItemView {
       const entry = shown[i];
       let el = this.cardEls.get(action.path) ?? null;
       if (action.action === 'rebuild' && el) {
-        // 内容变了：原地换一张（位置不动，列表里其它卡片也不受影响）
-        // 焦点要跟着走：卡片菜单里的动作（评分 / 设置封面 / 设置版本）都会走到这里，
-        // 换了节点却不管焦点的话，键盘用户的方向键网格当场失效（焦点掉回 body）
+        // 内容变了：原地换一张（位置不动，其它卡片也不受影响）。焦点要跟着走 ——
+        // 卡片菜单里的动作（评分 / 设置封面 / 设置版本）都走这里，换了节点不管焦点的话
+        // 键盘用户的方向键网格当场失效（焦点掉回 body）
         const doc = el.ownerDocument;
         const hadFocus = !!doc.activeElement && el.contains(doc.activeElement);
         const fresh = this.buildCard(entry);
@@ -1134,8 +1102,7 @@ export class VinylShelfView extends ItemView {
     return end;
   }
 
-  /** 剩下的卡片分帧追加：每帧一批，画完即止。滚动位置不受影响 —— 新卡片永远接在末尾，
-   *  已有卡片的位置一动不动。 */
+  /** 剩下的卡片分帧追加（每帧一批，画完即止）：新卡片永远接在末尾，已有卡片的位置一动不动。 */
   private scheduleAppend(grid: HTMLElement, shown: ShelfEntry[], plan: CardPlan, from: number) {
     this.gridBatch = { grid, shown, plan, from };
     this.gridRaf = window.requestAnimationFrame(() => {
@@ -1143,18 +1110,17 @@ export class VinylShelfView extends ItemView {
       const st = this.gridBatch;
       if (!st) return;
       const next = this.applyPlan(st.grid, st.shown, st.plan, st.from, APPEND_CARDS);
-      // 这一帧里可能有卡片被重画（重画走 buildCard，带回默认的 tabIndex=-1）——
-      // 正好轮到光标卡时，整墙会一张停靠点都不剩，补回来才不会让键盘用户进不来。
+      // 这一帧可能有卡片被重画（buildCard 带回默认 tabIndex=-1）；正好轮到光标卡时
+      // 整墙会一张停靠点都不剩，补回来键盘用户才进得来。
       this.syncRoving();
       if (next < st.shown.length) {
         this.scheduleAppend(st.grid, st.shown, st.plan, next);
         return;
       }
       this.gridBatch = null;
-      // 分批到此为止：这一批新建的卡片身上还缺「播放中 / 在队列里 / 已勾选」这些状态 ——
-      // render 里那次 syncBatch / updatePlaying 只覆盖了第一帧就存在的那批（60 张以内看不出来；
-      // 超过之后，正在播的那张若排在后面就永远不离墙，选择模式下也会「看着没勾、删除却带上」）。
-      // 之后每 400ms 的快照不会补：队列引用与当前专辑都没变，updatePlaying 在开头就返回了。
+      // 分批到此为止：这批新建的卡片还缺「播放中 / 在队列里 / 已勾选」—— render 里那次只覆盖了
+      // 第一帧就存在的那批（超过 60 张后，正在播的那张排在后面就永远不离墙，选择模式下也会
+      // 「看着没勾、删除却带上」）；之后每 400ms 的快照不会补，updatePlaying 在开头就返回了。
       this.syncBatch();
       if (this.lastSnap) this.updatePlaying(this.lastSnap, true);
     });
@@ -1169,10 +1135,8 @@ export class VinylShelfView extends ItemView {
   }
 
   // ============ 空态教程 ============
-  // 版面照搬 Excalidraw 设计稿 Drawing 2026-09-15 14.14.52：标题 + 两个虚线框 + 页脚是一列居中文本，
-  // 右侧拐弯箭头指向工具栏最后两个按钮（虚线圈圈住它们），直箭头指着右边栏（播放器在那儿）。
-  // 整块靠左下摆（框宽按英文文案放宽到 600px，垂直方向压到视图底部，见 layoutTutorial），
-  // 整层 pointer-events: none，纯装饰：按钮、卡片、拖拽导入一概不受影响。
+  // 版面照搬 Excalidraw 设计稿 Drawing 2026-09-15 14.14.52：一列居中文本 + 两个虚线框；拐弯箭头指向
+  // 工具栏按钮（虚线圈圈住它们），直箭头指向右边栏（播放器）。整层 pointer-events: none，纯装饰。
 
   private clearTutorial() {
     this.cancelTutorialSettle();
@@ -1183,8 +1147,7 @@ export class VinylShelfView extends ItemView {
   }
 
   /** 教程重绘的合流口：ResizeObserver / scroll / layout-change 都走这里，一帧最多重画一次。
-   *  直接调 layoutTutorial 的话，拖窗口边缘时每个事件都要跑一遍（里面是 6+ 次
-   *  getBoundingClientRect + 十来个 SVG 节点重建），而这块恰好是新用户第一眼看到的东西。 */
+   *  直接调 layoutTutorial 的话拖窗口边缘每个事件都要跑一遍（6+ 次量距 + 十来个 SVG 节点重建）。 */
   private requestTutorialLayout() {
     if (this.tutorialRaf) return;
     this.tutorialRaf = window.requestAnimationFrame(() => {
@@ -1193,10 +1156,9 @@ export class VinylShelfView extends ItemView {
     });
   }
 
-  /** 教程层刚建好时容器未必定型：视图创建 / 工作区恢复的头几帧量到的是过渡尺寸
-   *  （实测：重载插件后首帧量到的是恢复前的窄尺寸，而 ResizeObserver 不会因为「已经定型」再报一次，
-   *  整块就停在过渡位置，直到用户手动缩放窗口）。所以头几帧连着补几次布局，另加两枪定时兜底；
-   *  布局是幂等的，尺寸稳了以后多跑的几次只是重画一遍，没有副作用，全部在下一次渲染 / 关视图时取消。 */
+  /** 教程层刚建好时容器未必定型（实测：重载插件后首帧量到的是恢复前的窄尺寸，而 ResizeObserver
+   *  不会因为「已经定型」再报一次，整块就停在过渡位置）→ 头几帧连着补几次布局 + 两枪定时兜底。
+   *  布局幂等，尺寸稳后多跑几次只是重画；全部在下一次渲染 / 关视图时取消。 */
   private settleTutorial() {
     this.cancelTutorialSettle();
     let frames = 0;
@@ -1226,7 +1188,7 @@ export class VinylShelfView extends ItemView {
     const root = this.contentEl.createDiv({ cls: 'vinyl-tutorial' });
     const main = root.createDiv({ cls: 'vinyl-tutorial-main' });
     const title = main.createDiv({ cls: 'vinyl-tutorial-title', text: t('shelf.tutorial.title') });
-    // 第一个虚线框：五句话照图纸顺序（一处一行，交给 CSS 居中 + 行距 2）
+    // 第一个虚线框：五句话照图纸顺序（一处一行，居中 + 行距交给 CSS）
     const box1 = main.createDiv({ cls: 'vinyl-tutorial-box' });
     box1.createDiv({ text: t('shelf.tutorial.emptyTitle') });
     box1.createDiv({ text: t('shelf.tutorial.importA') });
@@ -1239,8 +1201,8 @@ export class VinylShelfView extends ItemView {
     box2.createDiv({ text: t('shelf.tutorial.playAfterImport') });
     main.createDiv({ cls: 'vinyl-tutorial-foot', text: t('shelf.tutorial.loginNote') });
 
-    // SVG 用 createElementNS 建：createEl('svg') 出来的是 HTML 元素，path / ellipse 属性不生效。
-    // 走 ownerDocument：视图可能在弹出窗口里（跨文档 appendChild 会被收养，但要在对的文档里建）
+    // SVG 必须 createElementNS：createEl('svg') 出来的是 HTML 元素，path / ellipse 属性不生效；
+    // 且要在 ownerDocument 里建 —— 视图可能被拖进弹出窗口（跨文档 appendChild 会被收养）
     const doc = this.contentEl.ownerDocument;
     const svg = doc.createElementNS(SVG_NS, 'svg');
     svg.setAttribute('class', 'vinyl-tutorial-svg');
@@ -1255,17 +1217,17 @@ export class VinylShelfView extends ItemView {
     this.settleTutorial();
   }
 
-  /** 把图纸坐标落到当前视图上：虚线框套住文本、虚线圈圈住最后两个按钮、两条箭头连到各自目标。
+  /** 把图纸坐标落到当前视图上：虚线框套住文本、虚线圈圈住按钮、两条箭头连到各自目标。
    *  图形全部用 roughjs 现场重画（尺寸一变位置就变，静态路径没法复用），参数与设计稿逐项对齐。 */
   private layoutTutorial() {
     const T = this.tutorial;
-    const group = this.addBtnEl; // 虚线圈圈住「添加」入口（工具栏方案：两个导入按钮合成一个面板入口）
+    const group = this.addBtnEl; // 虚线圈圈住「添加」入口
     if (!T || !T.root.isConnected || !group || !group.isConnected) return;
     const base = T.root.getBoundingClientRect(); // 教程层铺满视图内容区，作为统一坐标原点
     const btn = group.getBoundingClientRect();
     if (!base.width || !btn.width) return;
-    // 尺寸没变就不重画：ResizeObserver 与 layout-change 会在同一尺寸下反复报到，
-    // 而重画一次要重建十来个 SVG 节点。指纹只取决定几何的那几个量（宽高 + 线圈位置）。
+    // 尺寸没变就不重画：ResizeObserver 与 layout-change 会在同一尺寸下反复报到，而重画一次
+    // 要重建十来个 SVG 节点。指纹只取决定几何的量（宽高 + 线圈位置）。
     const sizeKey = `${Math.round(base.width)}x${Math.round(base.height)}|${Math.round(
       btn.left
     )},${Math.round(btn.top)},${Math.round(btn.width)}`;
@@ -1278,8 +1240,8 @@ export class VinylShelfView extends ItemView {
     const ry = btn.height / 2 + TUT.ringPadY;
     const ringBottom = cy + ry;
 
-    // 文本块：图纸上第一个虚线框顶 = 线圈底 + 82；框顶往上 20 是标题，所以整块再上移标题高 + 20。
-    // 窄视图里工具栏会换行变高，这一条会把标题顶进工具栏 —— 加一道下限，最多贴到工具栏下方。
+    // 图纸：第一个虚线框顶 = 线圈底 + 82，框顶往上 20 是标题，故整块再上移「标题高 + 20」。
+    // 窄视图里工具栏会换行变高，这条会把标题顶进工具栏 —— 加一道下限，最多贴到工具栏下方。
     const bar = this.toolbarEl?.getBoundingClientRect();
     const barTop = bar ? bar.top - base.top : 0;
     // 工具栏在底部（外观页那六档里的 bottom-*）：整块要收在它上面，别被压住
@@ -1288,8 +1250,8 @@ export class VinylShelfView extends ItemView {
     );
     const belowBar = bar && !barAtBottom ? bar.bottom - base.top + 24 : 0;
     const minTop = Math.max(ringBottom + TUT.boxTopFromRing - T.title.offsetHeight - 20, belowBar);
-    // 视觉重心落在左下：整块默认压到视图底部（离底 bottomPad），视图不够高就退回 minTop（贴着线圈下方）。
-    // 两道下限合起来保证任何尺寸下既不压工具栏、也不冒到视图外 —— 箭头跟着整块一起变长，不用单独调。
+    // 视觉重心落在左下：整块默认压到视图底部（离底 bottomPad），不够高就退回 minTop（贴着线圈下方）。
+    // 两道下限保证任何尺寸下既不压工具栏也不冒到视图外 —— 箭头跟着整块变长，不用单独调。
     let top = Math.max(minTop, base.height - T.main.offsetHeight - TUT.bottomPad);
     if (barAtBottom) {
       top = Math.max(8, Math.min(top, barTop - T.main.offsetHeight - 12));
@@ -1301,10 +1263,10 @@ export class VinylShelfView extends ItemView {
     const box1Mid = b1.top - base.top + b1.height / 2;
     const box2Mid = b2.top - base.top + b2.height / 2;
 
-    // 指向「添加」那枚按钮的箭头（虚线圆圈住的地方）。图纸里按钮在右上角，所以箭头是
-    // 「框右缘中点 → 往右拐 → 戳到圈底」；现在工具栏是紧凑浮卡、还能摆到六档位置，
-    // 按钮未必在框的右边 —— 横向净空为负时老画法会被整条判掉（箭头就消失了，用户反馈）。
-    // 按圈相对文本框的位置分三种：旁边有横向净空走老画法；圈在框上方 / 下方改成竖箭头。
+    // 指向「添加」按钮的箭头（虚线圈圈住的地方）。图纸里按钮在右上角，箭头是「框右缘中点 →
+    // 往右拐 → 戳到圈底」；但工具栏是紧凑浮卡、能摆六档，按钮未必在框右边 —— 净空为负时老画法
+    // 会被整条判掉（箭头消失，用户报过）→ 按圈相对文本框的位置分三种：有横向净空走老画法，
+    // 圈在框上方 / 下方改成竖箭头。
     const tip = { x: cx + 2, y: ringBottom + 1 };
     const box1Right = b1.right - base.left;
     const box1Left = b1.left - base.left;
@@ -1314,14 +1276,14 @@ export class VinylShelfView extends ItemView {
     const roomX = tip.x - (box1Right + TUT.tailPad); // 文本框右缘到箭尖的净空
     const tight = roomX < TUT.minRoomX;
 
-    // 直箭头：与第二个虚线框中线齐平，从框右缘一路指到视图右缘（侧边栏 = 播放器的落脚处）。
-    // 视图窄时这段净空本来就没有（CSS 用 is-narrow 藏掉），这里再兜一道：太短干脆不画。
+    // 直箭头：与第二个虚线框中线齐平，从框右缘指到视图右缘（侧边栏 = 播放器的落脚处）；
+    // 视图窄时这段净空本就没有（CSS 用 is-narrow 藏掉），这里再兜一道：太短干脆不画。
     const y2 = box2Mid;
     const x1 = base.width - 2;
     const x0 = Math.min(b2.right - base.left + TUT.tailPad, x1 - 40);
     const drawSide = x1 - x0 >= TUT.minSideX;
 
-    // —— 手绘图形：清掉上一轮，按当下尺寸重画（种子 / roughness / 虚线都照设计稿）——
+    // —— 手绘图形：清掉上一轮，按当下尺寸重画（种子 / roughness / 虚线照设计稿）——
     const rc = new RoughSVG(T.svg);
     T.ink.replaceChildren();
     const inkAdd = (nodes: ArrayLike<Element> | Element) => {
@@ -1347,12 +1309,10 @@ export class VinylShelfView extends ItemView {
     // 虚线圈（图纸：roughness 2 的椭圆，curveFitting 1）
     inkAdd(rc.ellipse(cx, cy, rx * 2, ry * 2, { ...roughDashed(TUT.seed.ring, 2), curveFitting: 1 }));
 
-    // 箭头（图纸：roughness 2；杆是过三点的曲线，头是两笔实线）。三种走法共用同一对种子，
-    // 换布局时手绘抖动一致。
-    // 夹的只该是「尾」：竖箭头的尾锚在框的上 / 下缘，x 夹在框内 30px，才是从框缘长出来的。
-    // 尖必须跟着圈心走 —— 圈落在框的横向范围之外时（工具栏靠右、或缩放后两者错开），
-    // 尖要跟着夹进框里就会指空：实测 2487px 宽的截图里箭杆落在 x≈1181、圈心在 x≈1276，差 95px，
-    // 而且框宽随窗口变、错位量跟着变，看起来就是「一改版面箭头就和圈分家」。
+    // 箭头（图纸：roughness 2；杆是过三点的曲线，头是两笔实线）。三种走法共用同一对种子，抖动一致。
+    // 夹的只该是「尾」（竖箭头的尾锚在框的上 / 下缘，x 夹在框内 30px，才是从框缘长出来的）——
+    // 尖必须跟着圈心走：圈落在框的横向范围之外时，把尖夹进框里就会指空（实测 2487px 宽下箭杆
+    // x≈1181、圈心 x≈1276，且框宽随窗口变，看起来就是「一改版面箭头就和圈分家」）。
     const tailX = Math.round(Math.max(box1Left + 30, Math.min(tip.x, box1Right - 30)));
     let arrow: { tail: { x: number; y: number }; bend: { x: number; y: number }; tip: { x: number; y: number } } | null = null;
     if (!tight) {
@@ -1368,8 +1328,8 @@ export class VinylShelfView extends ItemView {
         tip: classicTip,
       };
     } else if (ringBottom < box1Top) {
-      // 工具栏在顶部那一排：框在下面，箭头从框顶往上戳进圈底。
-      // 尾贴框、尖跟圈；两者横向错开多少，就由折点那一段斜线吃掉（不错开时折点落在尾尖连线上，仍是一条直线）。
+      // 工具栏在顶部那一排：框在下面，箭头从框顶往上戳进圈底。尾贴框、尖跟圈，
+      // 横向错开多少由折点那段斜线吃掉（不错开时折点落在尾尖连线上，仍是一条直线）。
       const tail = { x: tailX, y: box1Top - TUT.tailPad };
       const up = { x: tip.x, y: ringBottom + 1 };
       arrow = { tail, bend: { x: (tail.x + up.x) / 2, y: (tail.y + up.y) / 2 }, tip: up };
@@ -1448,11 +1408,10 @@ export class VinylShelfView extends ItemView {
   }
 
   // ============ 浮层：陈列 / 添加 ============
-  // 同一时刻最多一个浮层；点外 / Esc 关闭；关闭后焦点还给入口按钮。
-  // 浮层挂在 body（position: fixed），但位置夹在专辑墙窗格内 —— 不遮住别的窗格里的播放器。
-  // **挂在锚点所在的 document 上**：专辑墙可以被拖进独立窗口，那时锚点的矩形属于弹出窗口的
-  // 视口，而浮层若建在主窗口里，位置会落在与入口无关的地方，点外 / Esc 也永远收不到
-  //（同一个问题，队列浮层早就按 anchor.ownerDocument 处理了，见 views/queue-panel）。
+  // 同一时刻最多一个浮层；点外 / Esc 关闭；关闭后焦点还给入口按钮。浮层挂 body（position: fixed）
+  // 但位置夹在专辑墙窗格内 —— 不遮住别的窗格里的播放器。
+  // **挂在锚点所在的 document 上**：专辑墙可被拖进独立窗口，那时浮层若建在主窗口里，位置会落在
+  // 与入口无关的地方，点外 / Esc 也永远收不到（队列浮层早按 anchor.ownerDocument 处理，见 queue-panel）。
 
   private openPanel(kind: 'display' | 'add', anchor: HTMLElement): void {
     this.closePanel();
@@ -1463,11 +1422,9 @@ export class VinylShelfView extends ItemView {
     if (kind === 'display') this.renderDisplayPanel(el);
     else this.renderAddPanel(el);
     this.placePanel(el, anchor);
-    // 键盘 / 读屏：浮层挂在 body 末尾（Tab 序排在整应用之后），不主动搬一次焦点，
-    // 键盘用户打开之后得从头 Tab 一整圈才进得来。容器自己接焦点（tabindex=-1），
-    // 下一次 Tab 就落进面板里的第一个控件；role=dialog 让读屏软件报出「这是什么浮层」，
-    // 名称由两个 render 各自按当前层写（陈列 / 封面下的信息 / 添加唱片）。
-    // 'add' 的搜索框另有 30ms 后的 focus（见 renderAddPanel），会把焦点收得更准。
+    // 键盘 / 读屏：浮层挂在 body 末尾（Tab 序排在整应用之后），容器自己接焦点（tabindex=-1），
+    // 下一次 Tab 才落进面板里的第一个控件（否则键盘用户得从头 Tab 一整圈）；role=dialog 让读屏
+    // 报出「这是什么浮层」，名称由两个 render 各自按当前层写。
     el.setAttribute('tabindex', '-1');
     el.setAttribute('role', 'dialog');
     el.focus({ preventScroll: true });
@@ -1488,10 +1445,9 @@ export class VinylShelfView extends ItemView {
         anchorEl?.focus(); // 键盘用户：关掉之后焦点回到入口，不用重新找
         return;
       }
-      // Tab 循环陷阱：不设的话 Shift+Tab 从第一个控件退回工具栏、Tab 从最后一个跑到文档末尾，
-      // 键盘用户在浮层里转一圈就迷路。⚠ 这个监听挂在 document 的**捕获**阶段，所以必须先确认
-      // 焦点确实在浮层内 —— 否则会把宿主界面（编辑器、设置、命令面板）的正常 Tab 一起吃掉，
-      // 那比不修还糟。
+      // Tab 循环陷阱：不设的话 Shift+Tab 从第一个控件退回工具栏、Tab 从最后一个跑到文档末尾。
+      // ⚠ 这个监听挂在 document 的**捕获**阶段，所以必须先确认焦点确实在浮层内 —— 否则会把
+      // 宿主界面（编辑器、设置、命令面板）的正常 Tab 一起吃掉，那比不修还糟。
       if (ev.key !== 'Tab') return;
       const panelEl = this.panel?.el ?? null;
       if (!panelEl) return;
@@ -1561,8 +1517,8 @@ export class VinylShelfView extends ItemView {
     this.renderDisplayPanel(p.el);
   }
 
-  /** 位置与宽度：贴入口按钮下方、右缘对齐 —— 宽度优先收在专辑墙窗格里，窗格太窄时保底一个可读下限
-   *  （搜索结果是「封面 + 标题 + 操作」三栏，320px 以下就挤成一团）；下方放不下上翻；内容超高限高滚动。 */
+  /** 贴入口按钮下方、右缘对齐；宽度优先收在专辑墙窗格里，窗格太窄时保底一个可读下限
+   *  （搜索结果是「封面 + 标题 + 操作」三栏，320px 以下就挤成一团）；下方放不下上翻，超高限高滚动。 */
   private placePanel(el: HTMLElement, anchor: HTMLElement): void {
     const rect = anchor.getBoundingClientRect();
     const pane = this.contentEl.getBoundingClientRect();
@@ -1591,7 +1547,7 @@ export class VinylShelfView extends ItemView {
 
   private renderDisplayPanel(el: HTMLElement): void {
     el.empty();
-    // 标题栏（学设置页的分区块）：主层是图标芯片 + 「陈列」，第二层是「‹ 返回陈列」+ 「封面下的信息」
+    // 标题栏（学设置页的分区块）：主层 = 图标芯片 + 「陈列」，第二层 = 「‹ 返回陈列」+ 标题
     const props = this.displayLayer === 'props';
     el.setAttribute('aria-label', props ? t('display.props') : t('toolbar.display'));
     const head = el.createDiv({ cls: 'vinyl-panel-head' });
@@ -1635,7 +1591,7 @@ export class VinylShelfView extends ItemView {
       });
     }
 
-    // —— 排列：依据 + 方向，两个独立下拉（不再靠重复点击翻转）——
+    // —— 排列：依据 + 方向两个独立下拉（旧口径是重复点击同一个控件翻转，已废）——
     body.createDiv({ text: t('display.arrange'), cls: 'vinyl-panel-section' });
     const basisSel = this.panelValueRow(body, t('display.sortBy'));
     for (const basis of SORT_BASES) {
@@ -1687,7 +1643,7 @@ export class VinylShelfView extends ItemView {
     colSel.addEventListener('change', () => void this.applyShelfColumns(colSel.value));
 
     // 「封面下的信息」：与上面同一套行（标签在左），但整行不是按钮 ——
-    // 只有右边一小枚按键（当前显示的信息 + ›）可点，进第二层
+    // 只有右边那枚「当前显示的信息 + ›」可点，进第二层
     const propsRow = body.createDiv({ cls: 'vinyl-panel-row is-static' });
     propsRow.createSpan({ text: t('display.props'), cls: 'vinyl-panel-row-label' });
     const propsBtn = propsRow.createEl('button', { cls: 'vinyl-panel-value-btn' });
@@ -1701,8 +1657,8 @@ export class VinylShelfView extends ItemView {
     });
   }
 
-  /** 一行「标签 + 值 ▾」：值由原生 select 承载，视觉做成苹果那种「右侧弱化值 + 上下箭头」。
-   *  整行都可点（点标签也开下拉，与系统设置行的手感一致）；点 select 自己时不再转一次（会开两次）。 */
+  /** 一行「标签 + 值 ▾」：值由原生 select 承载，视觉是苹果那种「右侧弱化值 + 上下箭头」。
+   *  整行可点（点标签也开下拉，与系统设置行同手感），但点 select 自己时不再转一次 —— 会开两次。 */
   private panelValueRow(parent: HTMLElement, label: string): HTMLSelectElement {
     const row = parent.createDiv({ cls: 'vinyl-panel-row is-value' });
     row.createSpan({ text: label, cls: 'vinyl-panel-row-label' });
@@ -1742,9 +1698,8 @@ export class VinylShelfView extends ItemView {
 
   // ============ 更多菜单 ============
 
-  /** 菜单落点：一律从**锚元素的矩形**算，不用鼠标事件坐标。
-   *  键盘触发的 click 里 clientX/clientY 是 0，showAtMouseEvent 会把菜单弹到视口左上角；
-   *  showAtPosition 对两条路径都成立（这也是 a11y 门禁锁住的一条）。 */
+  /** 菜单落点一律从**锚元素的矩形**算，不用鼠标事件坐标：键盘触发的 click 里 clientX/clientY
+   *  是 0，showAtMouseEvent 会把菜单弹到视口左上角；showAtPosition 对两条路径都成立（a11y 门禁锁的）。 */
   private showMoreMenu(anchor: HTMLElement) {
     const rect = anchor.getBoundingClientRect();
     const menu = new Menu();
@@ -1761,8 +1716,8 @@ export class VinylShelfView extends ItemView {
         .setTitle(t('more.refresh'))
         .setIcon('refresh-cw')
         .onClick(() => {
-          // 用户显式要求「重新看一遍」：音源检测的缓存也一并丢掉（库外目录自己变了没有事件可听，
-          // 只有这条路径能把它捞回来），见 album-index 的 invalidateSourceCache
+          // 用户显式要求「重新看一遍」：音源检测的缓存也一并丢掉 —— 库外目录自己变了没有事件可听，
+          // 只有这条路径能把它捞回来（见 album-index 的 invalidateSourceCache）
           invalidateSourceCache();
           this.render(); // 保留搜索 / 筛选 / 陈列状态（state 不动，只是重扫库）
         })

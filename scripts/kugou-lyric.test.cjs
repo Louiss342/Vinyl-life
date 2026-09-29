@@ -1,10 +1,7 @@
-// 酷狗歌词链路回归：vm 执行真实 server/gateway.js（连带真实 server/kugou.js），只替换 I/O。
-// 与 kugou-auth.test.cjs 同一套 harness 约定：fetch 桩按 URL 分派、未识别 URL 直接 throw
-//（防止实现偷偷换了端点而测试还绿着）。
-//
-// 这一条链路上最值得锁住的是**候选挑选**：上游按 score 排序，而 score 排的是歌词本身的热度、
-// 不是与这首歌的匹配度 —— 实测同一个查询里排第一的是 UGC 上传（歌手字段是上传者昵称、
-// 正文头部写着别人的名字）。取第一条就会拿错词，所以用例的夹具刻意把「对的」那条排在后面。
+// 酷狗歌词链路回归：vm 执行真实 server/gateway.js（连带真实 server/kugou.js），只替换 I/O；与
+// kugou-auth.test.cjs 同一套 harness 约定：fetch 桩按 URL 分派，未识别 URL 直接 throw（防止实现偷换端点）。
+// 最值得锁住的是**候选挑选**：上游按 score 排序，而 score 是歌词本身的热度、不是与这首歌的匹配度 ——
+// 实测排第一的那条是 UGC 上传（歌手字段是上传者昵称），取第一条就取错词，夹具刻意把「对的」排在后面。
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -161,7 +158,7 @@ test('kugou 歌词：下载请求用挑中的那条的 id + accesskey，fmt=lrc�
   assert.ok(dl.searchParams.get('accesskey'), 'accesskey 必须带上（缺了上游拒绝）');
 });
 
-// ============ 候选挑选（这条链路最容易出错的一步） ============
+// ============ 候选挑选 ============
 
 test('kugou 歌词：不取 score 最高的那条，取曲名与歌手都对得上的', async () => {
   const g = gateway();

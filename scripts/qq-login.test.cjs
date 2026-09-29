@@ -1,4 +1,5 @@
-// QQ 登录 UX 回归：esbuild 编译真实扫码弹窗源码后在 vm 执行；无需网络与 Obsidian。
+// QQ 登录 UX 回归：esbuild 编译真实扫码弹窗源码后在 vm 执行，无需网络与 Obsidian；
+// harness 同 qr-login.test.cjs（多一个 provider 参数，为什么见 kugou-login.test.cjs 的文件头）。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -55,7 +56,6 @@ class Element {
   }
 }
 
-// —— 扫码弹窗 harness（同 qr-login.test.cjs，增加 provider 参数）——
 function setupQr(overrides = {}, opts) {
   const jobs = new Map();
   let nextId = 0;
@@ -122,8 +122,7 @@ function setupQr(overrides = {}, opts) {
       const [id, job] = first;
       if (!job.interval) jobs.delete(id);
       await job.callback();
-      // 定时器回调不再把轮询 Promise 返回出来（代码里改为抽成 tick 方法 + void 点火），
-      // 故这里补一个宏任务等这一轮真正跑完；断言本身不变。
+      // 轮询回调已不返回 Promise（抽成了 tick 方法），补一个宏任务等这一轮真正跑完
       await new Promise((resolve) => setImmediate(resolve));
     },
   };

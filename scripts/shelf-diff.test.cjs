@@ -1,7 +1,6 @@
-// 专辑墙卡片增量的决策回归（core/shelf-diff）：谁撤、谁留着、谁重画。
-// 两头都会出错，两头都不报错：
-//   · 判粗了（该留的也重画）→ 改一个属性重建上千张卡片、滚动位置与焦点一起丢（就是这次的病灶）；
-//   · 判细了（该重画的留着了）→ 换了封面墙上是旧图、加了音源点卡片还是打开笔记（最难发现）。
+// 专辑墙卡片增量的决策回归（core/shelf-diff）：谁撤、谁留着、谁重画。两头都会出错，两头都不报错：
+//   判粗了（该留的也重画）→ 改一个属性重建上千张卡片、滚动位置与焦点一起丢（就是这次的病灶）；
+//   判细了（该重画的留着了）→ 换了封面墙上是旧图、加了音源点卡片还是打开笔记（最难发现）。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -38,8 +37,6 @@ const album = (over = {}) => ({
 });
 const flags = (over = {}) => ({ local: false, netease: true, qq: false, kugou: false, ...over });
 const KEYS = ['artist', 'year'];
-
-// ---- cardSignature ----
 
 test('签名：卡片上画出来的字段一个都不能漏（漏了就是「该重画的留着了」）', () => {
   const base = cardSignature(album(), flags(), KEYS);
@@ -85,8 +82,6 @@ test('签名：值里出现分隔符也不串味（拼字符串的写法会在�
   const b = cardSignature(album({ path: 'xa', displayProps: { artist: 'b', year: '' } }), flags(), ['artist', 'year']);
   assert.notEqual(a, b, '不同字段切分出的字符串必须不同');
 });
-
-// ---- planCards ----
 
 test('计划：全新的墙 → 全部新建、没有要撤的', () => {
   const plan = planCards(new Map(), [
@@ -183,8 +178,7 @@ test('计划：笔记改名 = 旧的撤 + 新的建（不去猜是不是同一�
 });
 
 test('签名：笔记里的 id / 音频目录 / 源偏好变了，卡片必须重画', () => {
-  // 这些字段不画在卡片上，但**点击闭包握着的那份 AlbumInfo 里有**：签名不含它们的话，
-  // 在笔记里改了 neteaseId（或走「切换音源」把 source 写回笔记）之后卡片被复用，
+  // 这些字段不画在卡片上，但点击闭包握着的那份 AlbumInfo 里有：签名不含它们的话，改了 neteaseId（或走「切换音源」把 source 写回笔记）之后卡片被复用，
   // 点下去按旧 id / 旧目录建队列 —— 播的是另一张专辑，且要等这张卡因别的原因重画才自愈。
   const base = {
     path: 'A.md',

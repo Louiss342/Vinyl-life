@@ -1,16 +1,13 @@
 // 健康检查试播的节流回归（真跑 main 的 checkOnlineSource + 假音源服务）：
-//   ① 取流固定按最低档（standard）而不是用户设置的音质 —— 取流是逐级降档的，
-//      按无损试会把四档全走一遍（QQ 还要再 ×2 个 mid），一轮检查就是上千个请求；
-//   ② 试播期间每一次上游请求之间留最小间隔（core/probe-pacing），跑完必须关掉 ——
-//      漏关会让播放 / 搜索也跟着被节流。
+//   ① 取流固定按最低档（standard）而非用户设置的音质 —— 取流逐级降档，按无损试会把四档全走一遍（QQ 还要再 ×2 个 mid），一轮检查上千个请求；
+//   ② 试播期间每次上游请求之间留最小间隔（core/probe-pacing），跑完必须关掉 —— 漏关会让播放 / 搜索也跟着被节流。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const vm = require('node:vm');
 const esbuild = require('esbuild');
 
-// main 与 probe-pacing 必须出自**同一份 bundle**：各加载一次会拿到两份模块状态，
-// 那样测的就不是「试播期间真的打开了节流」了（shelf-appearance 用同一招）
+// main 与 probe-pacing 必须同 bundle：各加载一次就是两份模块状态，测的就不是「试播期间真打开了节流」（shelf-appearance 同招）
 const source = esbuild.buildSync({
   stdin: {
     contents:
@@ -53,8 +50,8 @@ const { default: VinylLifePlugin, upstreamPacing, setUpstreamPacing, paceUpstrea
 test('节流本身：打开之后两次上游请求之间至少隔一个间隔，关掉就恢复原样', async () => {
   setUpstreamPacing(120);
   const t0 = Date.now();
-  await paceUpstream(); // 第一次立即发车
-  await paceUpstream(); // 第二次要等满一个间隔
+  await paceUpstream(); // 第一次立即发车；第二次要等满一个间隔
+  await paceUpstream();
   const waited = Date.now() - t0;
   assert.ok(waited >= 110, `第二次要等到间隔满足（实际 ${waited}ms）`);
 

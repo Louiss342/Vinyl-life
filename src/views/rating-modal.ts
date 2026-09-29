@@ -6,13 +6,10 @@ import { markVinylModal } from '../util';
 
 /** 评分编辑（卡片菜单 → 评分）：一个输入框，自己填数字。
  *
- *  为什么是自由输入而不是几档星级（用户 2026-09-26 定稿）：评分是**用户自己的**刻度 ——
- *  有人用 5 分制、有人用 10 分制、有人打 4.5，星级选择器会把「7 分」这种写法挤掉；
- *  而且那一排星在弹窗里又长又占地方。插件只负责读写这个数，不规定它的范围。
- *
- *  留空 = 清除（删掉这个键，不留 `rating: ''` 这种残渣）；填了非数字就地提示、不关窗，
- *  免得把用户刚打的字连同弹窗一起吞掉。写回去的是数字（不是字符串）：排序那头
- *  按数值比大小，字符串会被挡在「人写的值」那套解析里（见 core/rating）。 */
+ *  为什么是自由输入而不是几档星级（2026-09-26 定稿）：评分是**用户自己的**刻度 —— 5 分制 / 10 分制 /
+ *  4.5 都得能写，星级选择器会把「7 分」这种写法挤掉，那一排星在弹窗里又长又占地方；插件只读写这个数、不规定范围。
+ *  留空 = 清除（删掉这个键，不留 `rating: ''` 这种残渣）；填了非数字就地提示、不关窗（免得把用户刚打的字
+ *  连同弹窗一起吞掉）。写回去的是数字而非字符串：排序那头按数值比大小，字符串会被挡在 core/rating 的解析之外。 */
 export class RatingModal extends Modal {
   constructor(
     app: App,
@@ -30,8 +27,7 @@ export class RatingModal extends Modal {
     const input = this.contentEl.createEl('input', {
       attr: { type: 'text', inputmode: 'decimal', placeholder: t('rating.placeholder') },
     });
-    // 预填：读得出数就填那个数（'4/5' 也会预填成 4 —— 用户在这里看到的是「当前值」，
-    // 保存与否由他决定；不保存就不会改写原来的写法）
+    // 预填：读得出数就填那个数（'4/5' 也预填成 4）—— 这里是「当前值」，不保存就不改写原来的写法
     const current = parseLeadingNumber(this.album.rating);
     input.value = current === null ? '' : String(current);
 

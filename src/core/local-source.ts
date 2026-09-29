@@ -1,11 +1,8 @@
-// 本地源：
-//   vault 内  → adapter 扫描 + getResourcePath 流式直出（首选），readBinary→Blob 兜底
-//   外链绝对路径 → 网关按 HTTP Range 供流（首选，整轨不进内存），
-//                  Node fs 读成 Blob 兜底（按文件缓存 + 字节预算回收）
-// Blob URL 生命周期：按专辑小缓存，切专辑回收，unload 全清。
-// 库外音频本来就不在 Obsidian API 的范围内，只能用 fs —— 审核披露的 fs 能力主要来自这里
-// 与 credential-file（为什么需要，见 CONTRIBUTING）。
-// 「库外音频会用到网关」是 Range 供流的代价：README 与 CONTRIBUTING 都写明了，
+// 本地源：vault 内走 adapter 扫描 + getResourcePath 流式直出（readBinary→Blob 兜底）；库外绝对路径
+// 优先由网关按 HTTP Range 供流（整轨不进内存），Node fs 读成 Blob 兜底。Blob URL 按专辑小缓存、
+// 切专辑回收、unload 全清。
+// 库外音频本来就不在 Obsidian API 的范围内，只能用 fs —— 审核披露的 fs 能力主要来自这里与
+// credential-file（为什么需要，见 CONTRIBUTING）；「库外音频会用到网关」是 Range 供流的代价，
 // 起不来网关时自动退回整文件 Blob（功能不变，只是内存回到旧口径）。
 import { App, TFile, TFolder, normalizePath } from 'obsidian';
 import * as fs from 'fs';
@@ -22,13 +19,11 @@ import {
   collectExternalAudios,
 } from '../util';
 
-/** Blob 缓存的字节预算（见 evictBlobs）。192 MB ≈ 三四首无损，够「来回切两首」不重读，
- *  又不至于把整张专辑留到播放结束。 */
+/** Blob 缓存字节预算（见 evictBlobs）：192 MB ≈ 三四首无损 —— 够来回切两首不重读、又不留满整张专辑。 */
 export const BLOB_BUDGET_BYTES = 192 * 1024 * 1024;
 
-/** 供流宿主（本机网关）：库外音频按 HTTP Range 供流，整轨不进内存。
- *  ServerManager 结构化满足它（base / token / state / ensure）—— 这里只声明接口，
- *  不 import server-manager：依赖方向闸门（T0.1）之外，也少一层 core 内部耦合。 */
+/** 供流宿主（本机网关）：库外音频按 HTTP Range 供流，整轨不进内存。ServerManager 结构化满足它
+ *  —— 只声明接口而不 import server-manager：除依赖方向闸门（T0.1），也少一层 core 内部耦合。 */
 export interface RangeStreamHost {
   readonly base: string;
   readonly token: string;
@@ -39,17 +34,15 @@ export interface RangeStreamHost {
 }
 
 /** 本地曲目所在的目录（= 它属于哪一碟）：Import 保留 CD1/CD2 两层子目录，同一目录就是同一碟。
- *  Track 上没有碟号字段（内嵌标签只读曲名 / 艺人 / 专辑 / 音轨号），只能按路径的目录段退化 ——
- *  一张专辑的文件通常都在同一个目录，这一级无差别，结果与只按音轨号一致。 */
+ *  Track 没有碟号字段（内嵌标签不读它），只能按路径的目录段退化 —— 一张专辑的文件通常同目录。 */
 function dirOfTrack(t: Track): string {
   const p = t.source === 'local-vault' ? t.file.path : t.source === 'local-external' ? t.path : '';
   const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
   return i > 0 ? p.slice(0, i) : '';
 }
 
-/** 本地曲目顺序：先按目录（双碟专辑每碟的 TRCK 都从 1 开始，只按音轨号会交错成 CD1-1、CD2-1、
- *  CD1-2…），同一目录内按音轨号（'01 - x.mp3' 这种文件名排序在 10 之后会乱），
- *  再按标题（中文按拼音序）—— 两者混排时无音轨号的沉到最后。 */
+/** 本地曲目顺序：先按目录（双碟专辑每碟的 TRCK 都从 1 开始，只按音轨号会交错成 CD1-1、CD2-1…），
+ *  同一目录内按音轨号（'01 - x.mp3' 按文件名排序在 10 之后会乱），再按标题 —— 无音轨号的沉到最后。 */
 export function compareByTrack(a: Track, b: Track): number {
   const ad = dirOfTrack(a);
   const bd = dirOfTrack(b);
@@ -69,7 +62,7 @@ export class LocalSource {
   /** 每份 Blob 的字节数（预算回收用；Map 的插入顺序即「最近使用」顺序，命中时重新插入） */
   private blobBytes = new Map<string, number>();
   private blobTotal = 0;
-  /** 本次会话里网关供流失败过：不再主动启动网关 —— 否则每次切曲都要在失败的启动上等一轮。
+  /** 本次会话里网关供流失败过：不再主动启动网关（否则每次切曲都要在失败的启动上等一轮）；
    *  但网关后来因别的功能起来了（state 回到 running）就照用，不必等插件重载。 */
   private streamFailed = false;
   /** 已经登记给网关白名单的绝对路径（本会话）。登记是幂等的，但没必要每取一次流都发一遍。 */
@@ -132,11 +125,8 @@ export class LocalSource {
     this.blobBytes.delete(key);
   }
 
-  /** 按字节预算回收：超出预算时丢**最久没用过**的那份，直到回到预算内。
-   *  keepKey（本次要用的那份）永不回收 —— 正在播的 Blob 被 revoke 会让播放断掉。
-   *  为什么需要：缓存原本只按「切专辑」清，一张 20 首的库外 FLAC 专辑能留到 GB 级内存。
-   *  这是把「常驻内存」压到可接受范围的最后一道；想连单曲那一份也不驻留，
-   *  得让网关按 HTTP Range 供文件（方案 §6.3 的事）。 */
+  /** 按字节预算回收：超出就丢**最久没用过**的那份；keepKey（本次要用的）永不回收 —— 正在播的
+   *  Blob 被 revoke 会让播放断掉。缓存早先只按「切专辑」清，一张 20 首的库外 FLAC 能留到 GB 级。 */
   private evictBlobs(keepKey: string): void {
     if (this.blobBudget <= 0) return;
     for (const [k, url] of [...this.blobUrls]) {
@@ -208,9 +198,8 @@ export class LocalSource {
     return null;
   }
 
-  /** 库内音频的绝对路径（读标签用）。Obsidian 的 vault API 只能整文件读，而标签要的是前缀，
-   *  所以这里走 fs 读同一个文件的前 128 KB（CONTRIBUTING 的能力披露里写了这条）；
-   *  adapter 不给绝对路径（非文件系统适配器）时回 null，调用方退回文件名。 */
+  /** 库内音频的绝对路径（读标签用）。vault API 只能整文件读，而标签要的只是前缀，所以走 fs 读
+   *  同一个文件的前 128 KB（CONTRIBUTING 的能力披露里写了这条）；adapter 不给绝对路径时回 null。 */
   private vaultAbsPath(file: TFile): string | null {
     try {
       const adapter = this.app.vault.adapter as { getBasePath?: () => string };
@@ -221,8 +210,8 @@ export class LocalSource {
     }
   }
 
-  /** 内嵌标签：读文件头 → 解析（见 core/audio-tags）。读不到 / 不是认识的容器都回空对象 ——
-   *  曲名回退文件名、艺人与专辑回退笔记里的值，功能不因为「这个文件没标签」而变。 */
+  /** 内嵌标签：读文件头 → 解析（见 core/audio-tags）。读不到 / 不认识的容器都回空对象 ——
+   *  曲名回退文件名、艺人与专辑回退笔记里的值，功能不因「文件没标签」而变。 */
   private tagsOf(absPath: string | null): AudioTags {
     if (!absPath) return {};
     const buf = this.tagPrefix(absPath);
@@ -307,8 +296,7 @@ export class LocalSource {
   }
 
   /** 读取音轨的完整字节（搓碟台解码整轨用）：vault 走 readBinary、外链走 fs，其余来源返回 null。
-   *  外链要拷成独立 ArrayBuffer —— Node 的 Buffer 来自共享内存池，直接交出去会把池里
-   *  别人的字节一起带上（byteOffset 那一段才是本文件的）。 */
+   *  外链要拷成独立 ArrayBuffer —— Node 的 Buffer 来自共享内存池，直接交出去会把别人的字节一起带上。 */
   async readTrackBytes(track: Track): Promise<ArrayBuffer | null> {
     try {
       if (track.source === 'local-vault') {
@@ -337,9 +325,8 @@ export class LocalSource {
     return out;
   }
 
-  /** 本地音轨的旁挂歌词：与音频同目录、同名的 .lrc 文件。找不到返回 null（视图按「没有歌词」显示）。
-   *  只认旁挂文件，不读音频内嵌歌词（ID3 USLT / Vorbis LYRICS）：那要解音频容器，
-   *  为一句歌词多背一个解码依赖不划算 —— 旁挂 .lrc 是本地歌词的完整入口（界面里也这么写）。 */
+  /** 本地音轨的旁挂歌词：同目录同名的 .lrc，找不到返回 null（视图按「没有歌词」显示）。
+   *  只认旁挂文件而不读内嵌歌词（ID3 USLT / Vorbis LYRICS）—— 解音频容器为一句词多背一个依赖不划算。 */
   async readSidecarLyrics(track: Track): Promise<string | null> {
     if (track.source === 'local-vault') {
       const parent = track.file.parent;
@@ -385,8 +372,7 @@ export class LocalSource {
   }
 
   /** 网关 Range 地址；拿不到（没注入宿主 / 起不来 / 这次会话里失败过）返回 null，调用方兜底。
-   *  token 走查询串而不是请求头：<audio> 发的是浏览器级请求，加不了自定义头 ——
-   *  网关为此保留了 ?t= 那条通道（见 README 的网关鉴权）。 */
+   *  token 走查询串而非请求头：<audio> 是浏览器级请求、加不了自定义头（见 README 的网关鉴权）。 */
   private async externalStreamUrl(absPath: string): Promise<string | null> {
     const host = this.streamHost;
     if (!host) return null;
@@ -400,8 +386,8 @@ export class LocalSource {
       this.streamFailed = true; // 启动抛错同样按「这次会话里别试了」处理
       return null;
     }
-    // 先登记白名单：网关只供登记过的路径。登记不上就这条通道不用 ——
-    // 直接发流会 403，退回落盘 Blob 至少还能放（下一次再试登记，不锁死本会话）。
+    // 先登记白名单：网关只供登记过的路径，登记不上就这条通道不用 —— 直接发流会 403，
+    // 退回落盘 Blob 至少还能放（下一次再试登记，不锁死本会话）。
     if (!this.allowedPaths.has(absPath)) {
       let allowed = false;
       try {

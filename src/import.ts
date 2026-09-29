@@ -1,7 +1,5 @@
-// 导入功能：
-//   A. 专辑导入：网易云 / QQ 音乐 / 酷狗音乐链接（或 ID）→ 元信息 → 建笔记（neteaseId / qqId / kugouId）→ 代理下封面 → 打开笔记
-//   B. 本地音频导入：复制进 vault（audioFolder）/ 外链绝对路径（audio 列表）两模式，processFrontMatter 更新
-//   C. 拖到空白处：从文件新建本地专辑笔记
+// 导入功能三条路：A. 在线专辑（网易云 / QQ / 酷狗链接或 ID → 元信息 → 建笔记 → 代理下封面 → 打开笔记）；
+// B. 本地音频（复制进 vault / 外链绝对路径两模式，processFrontMatter 更新）；C. 拖到空白处新建本地专辑笔记。
 import { App, TFile, normalizePath } from 'obsidian';
 import {
   AlbumInfo,
@@ -33,8 +31,7 @@ import type { KugouAlbumResponse, NeteaseAlbumResponse, QqAlbumResponse } from '
 export interface ImportContext {
   app: App;
   settings: () => VinylSettings;
-  /** 把设置落盘（搜索来源这类「记住上次选择」的界面偏好写入后调用）。
-   *  可缺省：没有宿主的场合（测试 / 精简调用方）选择只在本次会话内有效。 */
+  /** 把设置落盘（「记住上次选择」的界面偏好写入后调用）；可缺省 —— 无宿主的场合（测试 / 精简调用方）只在本次会话内有效。 */
   saveSettings?: () => void | Promise<void>;
   /** 统一网易云入口（网页会话优先，网关兜底，内部处理就绪） */
   client: NeteaseService;
@@ -63,9 +60,7 @@ export type AlbumRef =
 
 export type AlbumLink = AlbumRef;
 
-/** frontmatter 里的字符串值：走 JSON 转义（它是 YAML 双引号的子集）。
- *  不这么做的话，艺人名里一个 `"` 就能让整段 frontmatter 解析失败 —— 那张专辑会直接从
- *  专辑墙上消失，而且用户看不到任何报错。 */
+/** frontmatter 里的字符串值走 JSON 转义（YAML 双引号的子集）：否则艺人名里一个 `"` 就能让整段 frontmatter 解析失败，那张专辑从墙上消失且无报错。 */
 function yamlString(v: string): string {
   return JSON.stringify(v);
 }
@@ -102,10 +97,8 @@ export function parseNeteaseInput(input: string): number | undefined {
   return m ? Number(m[1]) : undefined;
 }
 
-/** 专辑链接/ID 识别：网易云（album?id= / 纯数字 ID）优先，其次酷狗（kugou.com/yy/album/single/<id>.html），
- *  最后 QQ 音乐（albumDetail/、旧版 /album/<mid>.html、纯 mid）。
- *  酷狗必须排在 QQ 前面：酷狗网页链接里也有 "album/…" 段，而 QQ 的旧版正则会把 /album/<数字>.html 认成自己的 mid。
- *  裸数字仍然是网易云 ID（酷狗 id 也是数字，无法从裸数字上区分 —— 请粘贴完整链接）。 */
+/** 专辑链接/ID 识别：网易云（album?id= / 纯数字 ID）→ 酷狗 → QQ（albumDetail/、旧版 /album/<mid>.html、纯 mid）。
+ *  酷狗必须排在 QQ 前（酷狗链接里也有 "album/…" 段，QQ 旧版正则会把 /album/<数字>.html 认成自己的 mid）；裸数字恒为网易云 ID，酷狗 id 也是数字、无从区分 —— 请粘贴完整链接。 */
 export function parseAlbumInput(input: string): AlbumLink | undefined {
   const s = String(input || '').trim();
   if (!s) return undefined;
@@ -138,9 +131,8 @@ export function importAlbumRef(ctx: ImportContext, ref: AlbumRef): Promise<Impor
   return importNeteaseAlbum(ctx, String(ref.id));
 }
 
-// 封面：经本地网关代理下载（避开 CORS）→ covers/，返回 frontmatter 用的 wikilink 字面量。
-// QQ 封面地址是拼出来的，主图床（y.gtimg.cn）在部分网络下不可达 —— 按候选图床依次重试
-//（见 core/cover-url.ts）。全部失败时给出可见提示（Notice + 控制台），不再静默留白。
+// 封面经本地网关代理下载（避开 CORS）→ covers/，返回 frontmatter 用的 wikilink 字面量。
+// 主图床（y.gtimg.cn）在部分网络下不可达 → 按候选依次重试（见 core/cover-url）；全败才弹提示，不静默留白。
 async function downloadCoverToVault(
   ctx: ImportContext,
   url: string | undefined,
@@ -209,7 +201,6 @@ export async function importNeteaseAlbum(
     return { status: 'failed', ok: false, detail: tf('import.albumNoData', { code: String(body?.code) }) };
   }
 
-  // 建笔记
   const artist = album.artist?.name || '';
   const year = album.publishTime
     ? new Date(Number(album.publishTime)).getFullYear()
@@ -396,9 +387,8 @@ function isExternalRef(ref: string): boolean {
   return /^[a-zA-Z]:[\\/]/.test(ref) || ref.startsWith('/') || ref.startsWith('\\');
 }
 
-/** 复制模式的落点目录：优先用笔记里已有的 audioFolder（笔记改名之后它仍然指向真目录），
- *  没有才按「设置里的音频目录 / 笔记标题」新建。库外绝对路径不往那儿复制 ——
- *  那是「引用原文件」模式的地盘。 */
+/** 复制模式的落点目录：优先用笔记里已有的 audioFolder（改名后它仍指向真目录），没有才按
+ *  「设置里的音频目录 / 笔记标题」新建；库外绝对路径不往那儿复制（那是「引用原文件」模式的地盘）。 */
 function copyTargetDir(ctx: ImportContext, album: AlbumInfo): string {
   const ref = stripWikilink(String(album.audioFolderRef || '').trim());
   if (ref && !isExternalRef(ref)) return normalizePath(ref);
@@ -415,16 +405,14 @@ export async function importLocalAudio(
   fallback: boolean;
   /** 格式不受支持而跳过的文件名（与「已存在」区分开，便于给出准确提示） */
   skippedUnsupported: string[];
-  /** 已存在（或本次选择内重复）而跳过的文件名 */
   skippedExisting: string[];
 }> {
   const added: string[] = [];
   const skippedUnsupported: string[] = [];
   const skippedExisting: string[] = [];
   let fallback = false;
-  // 复制落点：笔记里已有 audioFolder 就沿用它，没有才按「音频目录 / 笔记标题」新建。
-  // 只跟着标题走有个坑：笔记一改名（加 (Remastered)、改错别字），再导入的曲目会落进新目录，
-  // 而笔记引用的还是旧目录 —— 提示导入成功、队列里一首不多，旧目录还成了没人引用的孤儿。
+  // 落点只跟着标题走的坑：笔记一改名（加 (Remastered)、改错别字），再导入的曲目会落进新目录，
+  // 而笔记引用的还是旧目录 —— 提示导入成功、队列里一首不多，旧目录还成了孤儿。
   const copyDir = copyTargetDir(ctx, album);
 
   for (const f of files) {
@@ -476,16 +464,13 @@ export async function importLocalAudio(
 
   if (!added.length) return { added, fallback, skippedUnsupported, skippedExisting };
 
-  // 更新笔记 frontmatter（复制 → audioFolder；外链 → audio 列表追加）
-  // 回调参数显式标注：Obsidian 的 processFrontMatter 把 frontmatter 声明为 any，
-  // 不标注会让下面每一次取值都落在 unsafe-member-access 上。
+  // 回调参数显式标注：Obsidian 的 processFrontMatter 把 frontmatter 声明为 any，不标注会让下面每次取值都落在 unsafe-member-access 上。
   await ctx.app.fileManager.processFrontMatter(
     album.file,
     (fm: Record<string, unknown>) => {
       if (mode === 'copy') {
-        // 库外引用（「重新定位音频」写进去的就是绝对路径）必须改写成复制落点：文件已经进库了，
-        // 笔记再指着库外就是零首入队 —— 复制进来的那些成了没人引用的孤儿，再导一次还全落进
-        // 「已存在，跳过」。库内、且已经是这次落点的引用不动；库内的别的目录也不夺（用户自己写的）。
+        // 库外引用（「重新定位音频」写进去的就是绝对路径）必须改写成复制落点：文件已进库，笔记再指着库外
+        // 就是零首入队、复制进来的成了孤儿，再导一次还全落进「已存在，跳过」。库内别的目录不夺（用户自己写的）。
         const current = stripWikilink(scalarText(fm.audioFolder)).trim();
         if (!current || isExternalRef(current)) fm.audioFolder = `[[${copyDir}]]`;
       } else {
@@ -506,11 +491,7 @@ export async function importLocalAudio(
 
 // ============ C. 从文件新建本地专辑（拖到空白处） ============
 
-/**
- * 内置模板：与「导入专辑」生成的字段一致，能自动的填好、其余留空待填。
- * 空属性在 Obsidian 属性面板里就是一行空字段，点进去填即可
- *（用空字符串而非 null：processFrontMatter 会把 null 回写成 `key: null`，面板会显示 "null"）。
- */
+/** 内置模板：与「导入专辑」生成的字段一致（能自动的填好、其余留空待填）；用空字符串而非 null —— processFrontMatter 会把 null 回写成 `key: null`。 */
 export const DEFAULT_ALBUM_TEMPLATE = [
   '---',
   'tags: [album]',
@@ -526,8 +507,7 @@ export const DEFAULT_ALBUM_TEMPLATE = [
   '',
 ].join('\n');
 
-/** 一篇专辑笔记能用到的全部资料：模板占位符与 frontmatter 补全共用这一份。
- *  在线导入能填满，本地导入只有标题 / 音频目录 / 时间（本地不读 ID3，见 README）。 */
+/** 一篇专辑笔记能用到的全部资料：模板占位符与 frontmatter 补全共用这一份；本地导入只有标题 / 音频目录 / 时间（不读 ID3，见 README）。 */
 export interface AlbumNoteFields {
   title: string;
   artist?: string;
@@ -541,7 +521,6 @@ export interface AlbumNoteFields {
   neteaseId?: string | number;
   qqId?: string;
   kugouId?: string;
-  /** 平台链接（frontmatter 的 netease / qq / kugou 三个键） */
   netease?: string;
   qq?: string;
   kugou?: string;
@@ -567,18 +546,15 @@ function valuePlaceholders(vars: AlbumNoteFields): Record<string, string> {
   };
 }
 
-// frontmatter 区段的结束下标（开头 `---` 到下一个 `---` 之后）；没写 frontmatter 的模板返回 0
 function frontmatterEndIndex(text: string): number {
   const m = /^---\r?\n[\s\S]*?\r?\n---/.exec(text);
   return m ? m.index + m[0].length : 0;
 }
 
-/** frontmatter 里一处值型占位符的落点。**只转义「整个值位置」**：
+/** frontmatter 里一处值型占位符的落点：**只转义「整个值位置」**。
  *   - `键: {{x}}`：整值是它，按 YAML 双引号标量转义（yamlString 的口径，与 fillAlbumFrontmatter 一致）；
  *   - `键: "{{x}}"`：模板自己写了引号，只转义引号内部、不再补引号（补了就成 `""Weird Al" Yankovic""`）；
- *   - 嵌在别的文本里的（`note: {{title}} · {{artist}}`）：原样替换 —— 给这种位置套引号会让整行非法
- *     （YAML 的引号标量后面不能再跟内容），比它要修的毛病更糟；正文同理不动。
- *  空值照旧替换成空串：yamlString 在别处也只用非空值，空值不必从「空」变成「空串」。 */
+ *   - 嵌在别的文本里（`note: {{title}} · {{artist}}`）或正文：原样替换 —— 套引号会让整行非法，比它要修的毛病更糟；空值照旧替换成空串。 */
 function frontmatterValueAt(text: string, offset: number, len: number, value: string): string {
   if (!value) return value;
   const lineStart = text.lastIndexOf('\n', offset - 1) + 1;
@@ -591,13 +567,10 @@ function frontmatterValueAt(text: string, offset: number, len: number, value: st
 }
 
 /**
- * 占位符替换。两类：
- *   - **值型**（`{{title}}` `{{artist}}` `{{year}}` `{{genre}}` `{{rating}}` `{{date}}` `{{time}}` 与三个平台 id）：
- *     替换成值本身，放正文、放引号里都行；落在 frontmatter 的整值位置上时按 YAML 转义
- *     （艺人名里一个 `"` 就能让整段 frontmatter 解析失败，那张专辑会从专辑墙上消失）；
- *   - **行型**（`{{audioFolder}}` `{{cover}}`）：替换成整整一行 frontmatter，拿不到值的整行消失
- *     （空行留着会在属性面板里多出一个空字段）。
- * 未识别的占位符原样保留。frontmatter 里剩下的空行也一并清掉。
+ * 占位符替换，两类：**值型**（title / artist / year / genre / rating / date / time 与三个平台 id）替换成值本身，
+ * 落在 frontmatter 整值位置上时按 YAML 转义（口径见 frontmatterValueAt）；**行型**（`{{audioFolder}}` `{{cover}}`）
+ * 替换成整整一行 frontmatter，拿不到值的整行消失（空行留着会在属性面板里多出一个空字段）。
+ * 未识别的占位符原样保留，剩下的空行一并清掉。
  */
 export function renderAlbumTemplate(tpl: string, vars: AlbumNoteFields): string {
   const map = valuePlaceholders(vars);
@@ -631,9 +604,8 @@ function mergeAlbumTag(raw: string): string | null {
 }
 
 /**
- * 模板决定笔记长什么样，插件保证**功能键不丢**：缺的补上、空着的填上。
- * 具体：tags 里一定有 album；已知的平台 id / 链接 / 封面 / 音频目录 / 艺人 / 年份等
- * 只在「键缺失或值为空」时写入 —— 模板里写死的非空值一律尊重（用户改过就不覆盖）。
+ * 模板决定笔记长什么样，插件保证**功能键不丢**：缺的补上、空着的填上 —— tags 里一定有 album，
+ * 已知的平台 id / 链接 / 封面 / 音频目录 / 艺人 / 年份只在「键缺失或值为空」时写入，写死的非空值一律尊重（用户改过就不覆盖）。
  * 纯文本操作，不重新序列化 YAML：用户模板里的注释、引号风格、字段顺序都留着。
  */
 export function fillAlbumFrontmatter(note: string, vars: AlbumNoteFields): string {
@@ -677,7 +649,6 @@ export function fillAlbumFrontmatter(note: string, vars: AlbumNoteFields): strin
     const entry = known.find(([k]) => k === key);
     if (!entry) { out.push(line); continue; }
     seen.add(key);
-    // 值为空的键用已知资料填上；非空的尊重模板
     out.push(isEmptyYamlValue(kv[2]) ? `${key}: ${entry[1]}` : line);
   }
   for (const [k, v] of known) if (!seen.has(k)) out.push(`${k}: ${v}`);
@@ -685,9 +656,8 @@ export function fillAlbumFrontmatter(note: string, vars: AlbumNoteFields): strin
   return note.slice(0, m.index) + `---\n${out.join('\n')}\n---` + note.slice(m.index + m[0].length);
 }
 
-/** 读设置里指定的模板文件；没配 / 读不到就用内置模板。
- *  配了路径却找不到文件是最常见的坑（删过、改过名），这里不再只是 console.warn：
- *  整个会话提一次，用户才知道自己导入出来的为什么是「默认样子」。 */
+/** 读设置里指定的模板文件；没配 / 读不到就用内置模板。配了路径却找不到文件是最常见的坑（删过、改名过），
+ *  所以整个会话提一次（不只是 console.warn），用户才知道导入出来的为什么是「默认样子」。 */
 let warnedMissingTemplate = false;
 async function readAlbumTemplate(ctx: ImportContext, onMissing: (path: string) => void): Promise<string> {
   const cfg = String(ctx.settings().albumNoteTemplate || '').trim();

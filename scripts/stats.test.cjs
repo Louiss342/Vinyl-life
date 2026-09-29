@@ -67,8 +67,7 @@ test('播放明细按时间与数量保留，累计次数不受裁剪影响', ()
   const old = { at: now - PLAY_EVENT_RETENTION_MS - 1, trackKey: 'old' };
   const recent = Array.from({ length: MAX_PLAY_EVENTS + 2 }, (_, i) => ({ at: now - 1000 + i, trackKey: String(i) }));
   const kept = retainPlayEvents([old, ...recent], now);
-  // 超上限时按**低水位**裁一批（裁到 45,000 而不是刚好 50,000）：不然连续播放时每条播放
-  // 都会重新越界一次，等于每条播放都要归档 + 裁剪一次
+  // 超上限时按**低水位**裁一批（裁到 45,000 而不是刚好 50,000）：不然连续播放时每条播放都重新越界一次，等于每条都要归档 + 裁剪
   assert.equal(kept.length, TRIM_TARGET_EVENTS);
   assert.equal(kept[0].trackKey, String(MAX_PLAY_EVENTS + 2 - TRIM_TARGET_EVENTS));
   assert.equal(

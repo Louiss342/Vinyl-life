@@ -1,9 +1,8 @@
 // 专辑墙工具栏回归（工具栏方案 2026-09-18），纯文本扫描，不需要 Obsidian：
-//   A 样式真值（styles.css）：单行贴顶、无胶囊；搜索原位展开；选择模式换用途；浮层（陈列 / 添加）直角轻影；
-//     勾选圈 / 空态出路 / 新卡片描边；
-//   B 接线（shelf-view.ts 源码）：标题计数走手绘体、搜索行为（组词 / 失焦 / Esc / 回滚浏览位置）、
-//     陈列浮层（来源 / 排列 / 显示 + 第二层属性）、添加浮层（AddPanel + 本地拖放）、更多菜单、
-//     选择模式（scope 快照 / 全选 / 清空 / 删除禁用 / 卡片菜单进入）、浮层单开与关闭规则、教程圈「添加」。
+//   A 样式真值（styles.css）：单行贴顶、无胶囊；搜索原位展开；选择模式换用途；浮层（陈列 / 添加）直角轻影；勾选圈 / 空态出路 / 新卡片描边；
+//   B 接线（shelf-view.ts 源码）：标题计数走手绘体、搜索行为（组词 / 失焦 / Esc / 回滚浏览位置）、陈列浮层（来源 / 排列 / 显示 + 第二层属性）、
+//     添加浮层（AddPanel + 本地拖放）、更多菜单、选择模式（scope 快照 / 全选 / 清空 / 删除禁用 / 卡片菜单进入）、
+//     浮层单开与关闭规则、教程圈「添加」。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -47,11 +46,9 @@ test('样式：工具栏是「内容多长就多长」的紧凑浮卡（居中�
   assert.match(bar, /top:\s*10px/, '离窗格顶留一档（浮起来）');
   assert.match(bar, /width:\s*fit-content/, '宽度跟着内容走：中间不留空白（用户口径）');
   assert.match(bar, /max-width:\s*calc\(100% - 32px\)/, '窄窗格时给两侧留缝');
-  // 摆位（align-self / order / top / bottom / 外侧留白）不在这条里 —— 归「工具栏位置」六档那组，
-  // 默认那档（顶部居中）与它同值，读设置之前不跳（见上面那条位置用例）
+  // 摆位（align-self / order / top / bottom / 外侧留白）不在这条里 —— 归下面那条「工具栏位置」用例的六档那组，默认那档（顶部居中）与它同值，读设置之前不跳
   assert.doesNotMatch(bar, /align-self/, '基础规则只管长相，摆位归位置组');
-  // 表面走「浮层」那一档（用户口径 2026-09-27 第二轮）：不透明的主题面 + 发丝边 + 12px 圆角，
-  // 与陈列 / 添加浮层、菜单同值 —— 与专辑墙上的卡片（直角）刻意分开
+  // 表面走「浮层」那一档（用户口径 2026-09-27 第二轮）：不透明主题面 + 发丝边 + 12px 圆角，与陈列 / 添加浮层、菜单同值 —— 与专辑墙上的卡片（直角）刻意分开
   assert.match(bar, /border:\s*1px solid var\(--background-modifier-border\)/, '1px 发丝边');
   assert.match(bar, /background:\s*var\(--background-primary\)/, '不透明的主题面（与浮层同款，不再走毛玻璃）');
   assert.match(bar, /border-radius:\s*12px/, '浮层那一档圆角');
@@ -67,7 +64,6 @@ test('样式：工具栏是「内容多长就多长」的紧凑浮卡（居中�
     /\.vinyl-shelf-toolbar \.vinyl-toolbar-icon\.has-filter\s*\{[^}]*border-radius:\s*7px/,
     '筛了来源的那枚 chip：7px'
   );
-  // 键盘走到工具栏按钮时的焦点圈与弹层同款
   assert.match(
     CSS,
     /\.vinyl-shelf \.vinyl-shelf-toolbar \.vinyl-toolbar-icon:focus-visible,[\s\S]{0,120}?outline:\s*2px solid var\(--interactive-accent\)/,
@@ -95,7 +91,6 @@ test('样式：工具栏位置六档（顶部 / 底部 × 左 / 中 / 右），�
     /\.vinyl-shelf\.is-toolbar-top-right \.vinyl-shelf-toolbar\s*\{[^}]*align-self:\s*flex-end/,
     '顶部右对齐'
   );
-  // 底部三档：排到网格之后（order: 2）+ 钉在滚动视口底边（bottom），不再用 top
   const bottom = rule(
     CSS,
     '.vinyl-shelf.is-toolbar-bottom-left .vinyl-shelf-toolbar,\n.vinyl-shelf.is-toolbar-bottom-center .vinyl-shelf-toolbar,\n.vinyl-shelf.is-toolbar-bottom-right .vinyl-shelf-toolbar'
@@ -187,9 +182,8 @@ test('样式：窄窗一格一格让位（先省计数，再让搜索占用标�
 });
 
 test('样式：搜索原位展开（图标 ↔ 输入框），输入框宽度跟窗格走', () => {
-  // 用户口径 2026-09-27 第三轮：展开 / 收起是一段看得见的动画，不再是 display: none 跳一帧。
-  // 宽度从 0 长到 input 那一档（--vinyl-search-w，窄窗格那条容器查询改的也是它），
-  // 图标同时收成 0 宽；收起时内边距与边框一起归零，才不会剩一条空边框。
+  // 用户口径 2026-09-27 第三轮：展开 / 收起是一段看得见的动画（旧口径 display: none 跳一帧，已废）——
+  // 宽度从 0 长到 input 那一档（--vinyl-search-w，窄窗格那条容器查询改的也是它），图标同时收成 0 宽；收起时内边距与边框一起归零，否则剩一条空边框。
   const box = rule(CSS, '.vinyl-shelf-search-box');
   assert.match(box, /width:\s*0/, '常态：输入框宽 0（不是 display: none —— 那样没有中间帧）');
   assert.match(box, /padding:\s*0;/, '常态：内边距归零（只收宽度会剩一条 14px 的空边框）');
@@ -292,9 +286,8 @@ test('样式：浮层统一菜单表面、图标与悬停，不使用芯片与�
     /\.vinyl-panel-section \+ \.vinyl-panel-row\s*\{[^}]*border-top:\s*none/,
     '小节标题下面不画线（标题自己开一组）'
   );
-  // 来源 / 搜索来源是同一个控件：一排同款的单选段（用户口径 2026-09-27 第三轮）——
-  // 未选中 = primary 底 + 发丝边（与搜索框同一档表面），选中 = 强调色描边 + 强调色淡底；
-  // 灰底轨道撤掉（深色主题里黑乎乎，选中段又与浮层同底、看不出选中 —— 两处截图都对比过）。
+  // 来源 / 搜索来源是同一个控件：一排同款的单选段（用户口径 2026-09-27 第三轮）—— 未选中 = primary 底 + 发丝边（与搜索框同档表面），
+  // 选中 = 强调色描边 + 强调色淡底；灰底轨道撤掉（深色主题里黑乎乎，选中段又与浮层同底、看不出选中 —— 两处截图都对比过）。
   const seg = rule(CSS, '.vinyl-segment');
   assert.match(seg, /height:\s*30px/, '分段控件的段 30px（描边加进去与弹窗按钮同一档）');
   assert.match(seg, /flex:\s*1 1 auto/, '段宽按内容分配（长标签拿得多，不再等分到人人截断）');
@@ -375,9 +368,8 @@ test('样式：本地导入层（添加浮层第二层）', () => {
     '面板里不撑 320px 最小宽（弹窗里才需要）'
   );
   assert.match(rule(CSS, '.vinyl-local-layer .vinyl-import-section'), /padding:\s*0 14px/, '与设置行同一档内边距');
-  // 操作区 / 状态行是这一层的直接子元素（不在 section 里）：也要同一档左缘，
-  // 否则「开始导入」贴着浮层左缘、与上面的选择文件 / 目标 / 落库方式对不齐（用户反馈）。
-  // 只认直接子元素：section 里那两行已经吃过 section 的内边距，再补一层会双双推到 29px（实测踩到）
+  // 操作区 / 状态行是这一层的直接子元素（不在 section 里）：也要同一档左缘，否则「开始导入」贴着浮层左缘、
+  // 与上面的选择文件 / 目标 / 落库方式对不齐（用户反馈）；只认直接子元素 —— section 里那两行已吃过内边距，再补一层会双双推到 29px（实测踩到）
   assert.match(
     rule(CSS, '.vinyl-local-import > .vinyl-import-actions'),
     /padding:\s*0 14px/,
@@ -467,8 +459,7 @@ test('接线：陈列浮层 —— 来源 / 依据 + 方向两个下拉 / 显示
 test('接线：浮层单开、点外关闭、Esc 关闭且焦点回到入口', () => {
   assert.match(VIEW, /private openPanel\(kind: 'display' \| 'add', anchor: HTMLElement\)[\s\S]{0,80}?this\.closePanel\(\);/, '开新浮层先收旧的（同时最多一个）');
   assert.match(VIEW, /p\.el\.contains\(target\) \|\| p\.anchor\.contains\(target\)/, '点浮层内 / 点入口本身：不关');
-  // 监听挂在**锚点所在的文档**上：专辑墙可以被拖进独立窗口，那时主 document 收不到
-  // 弹出窗口里的点击，浮层就成了「点外面也关不掉」（见 openPanel 的注释）
+  // 监听挂在**锚点所在的文档**上：专辑墙可以被拖进独立窗口，那时主 document 收不到那里的点击，浮层就成了「点外面也关不掉」（见 openPanel 的注释）
   assert.match(VIEW, /doc\.addEventListener\('pointerdown', this\.onPanelDocPointer, true\)/, '点外关闭走 pointerdown 捕获');
   assert.match(VIEW, /const doc = anchor\.ownerDocument \?\? document;/, '浮层与监听都跟着锚点所在的文档');
   assert.match(VIEW, /const doc = panel\?\.doc \?\? document;/, '关闭时从同一个文档上摘监听');
@@ -523,9 +514,8 @@ test('接线：本地导入面板与弹窗共用一份实现（弹窗只剩薄�
   assert.match(PANE, /export class LocalImportPane/, '面板本体');
   for (const step of ['import.step1', 'import.step2', 'import.step3']) assert.ok(PANE.includes(`'${step}'`), `${step} 流程仍在面板里`);
   assert.match(PANE, /this\.host\.onDone\(\{ imported: res\.added\.length, album, created \}\)/, '收尾交给宿主（弹窗关窗 / 浮层描边）');
-  // 「导完一批接着导下一批」的真实行为在 scripts/local-import-reset.test.cjs（驱动真面板 + 假 DOM）；
-  // 这里只锁接线，顺带钉住那个坑：别再退回给 applyFiles 喂空列表 —— 它开头 `if (!files.length) return;`，
-  // 于是 reset 变成空操作（摘要、专辑名、勾选全留着，再点开始导入会拿上一批重跑）。
+  // 「导完一批接着导下一批」的真实行为在 scripts/local-import-reset.test.cjs（驱动真面板 + 假 DOM）；这里只锁接线，
+  // 顺带钉住那个坑：别再退回给 applyFiles 喂空列表 —— 它开头 `if (!files.length) return;`，于是 reset 变成空操作（摘要、专辑名、勾选全留着，再点开始导入会拿上一批重跑）。
   assert.match(PANE, /reset\(\): void \{[\s\S]{0,60}?this\.resetPane\?\.\(\)/, '导完一批：清空这一批，浮层留在原地');
   assert.doesNotMatch(PANE, /applyFiles\?\.\(\[\], ''\)/, '空列表进不了 applyFiles：清空要走自己的实现');
   assert.match(MODAL, /new LocalImportPane\(ctx, albums, presetAlbum/, '弹窗用同一个面板');
@@ -535,8 +525,7 @@ test('接线：本地导入面板与弹窗共用一份实现（弹窗只剩薄�
 
 test('接线：更多菜单 —— 选择专辑 / 刷新专辑墙（刷新保留筛选与陈列状态）', () => {
   assert.match(VIEW, /private showMoreMenu[\s\S]{0,400}?t\('more\.select'\)/, '选择专辑');
-  // 刷新 = 重新看一遍：先作废音源检测的缓存（库外目录自己变了没有事件可听，只有这条路径能捞回来），
-  // 再重扫库；state 不动，所以搜索 / 筛选 / 陈列都留着。契约在 scripts/album-source-cache.test.cjs
+  // 刷新 = 重新看一遍：先作废音源检测的缓存（库外目录自己变了没有事件可听，只有这条路径能捞回来），再重扫库；state 不动，所以搜索 / 筛选 / 陈列都留着。契约在 scripts/album-source-cache.test.cjs
   assert.match(
     VIEW,
     /t\('more\.refresh'\)[\s\S]{0,400}?invalidateSourceCache\(\)[\s\S]{0,80}?this\.render\(\)/,
@@ -569,13 +558,10 @@ test('接线：空墙教程圈住「添加」按钮（两个导入按钮已合�
 });
 
 test('接线：教程箭头自适应 —— 按钮不在框右侧时改成竖箭头（不能整条消失）', () => {
-  // 老画法只在「框右侧有横向净空」时成立（图纸里按钮在右上角）；工具栏改成紧凑浮卡后按钮常落在框上方 /
-  // 下方，横向净空为负会把箭头整条判掉 —— 用户反馈「指向添加按钮的箭头没了」
-  //
-  // 夹的只该是「尾」：竖箭头的尾锚在框缘，x 夹进框内 30px，才不会从框外飘出来。
-  // 尖必须跟着圈心（tip.x）才指得中 —— 早先尾和尖共用一个夹过的 arrowTipX，圈落在框的横向范围
-  // 之外时箭尖被一起夹走：实测 2487px 宽的截图里箭杆 x≈1181、圈心 x≈1276，差 95px，
-  // 且错位量随框宽变化（框宽又随窗口变），看起来就是「一改版面箭头就和圈分家」。
+  // 老画法只在「框右侧有横向净空」时成立（图纸里按钮在右上角）；工具栏改成紧凑浮卡后按钮常落在框上方 / 下方，
+  // 横向净空为负会把箭头整条判掉 —— 用户反馈「指向添加按钮的箭头没了」。夹的只该是「尾」（尾锚在框缘，x 夹进框内 30px，
+  // 才不会从框外飘出来）；尖必须跟着圈心（tip.x）才指得中 —— 早先尾和尖共用一个夹过的 arrowTipX，圈落在框的横向范围之外时
+  // 箭尖被一起夹走（实测 2487px 宽的截图里箭杆 x≈1181、圈心 x≈1276，差 95px），看起来就是「一改版面箭头就和圈分家」。
   assert.match(
     VIEW,
     /const tailX = Math\.round\(Math\.max\(box1Left \+ 30, Math\.min\(tip\.x, box1Right - 30\)\)\)/,

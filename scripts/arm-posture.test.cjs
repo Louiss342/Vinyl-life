@@ -1,10 +1,7 @@
-// 唱臂姿态与专辑进度（设计稿 Drawing 2026-09-16 10.26.32）：
-//   未播放专辑 / 暂停 → 姿态 1（唱针归位支架）；播放专辑 → 姿态 2（落针）；
-//   姿态 2 时「唱针到唱片圆心的距离」= 专辑进度（不是角度与进度成正比 —— 距离与进度成正比）。
-// 盯住两处容易写错的换算：
-//   ① 线性内插角度（老写法）在圆弧上不等距 —— 这里必须余弦定理反解，逐点核验距离；
-//   ② 专辑进度按「本专辑在队列里的曲目」算，不是下标 ÷ 队列长度（队列里可能有好几张专辑，
-//      打乱之后同一张专辑的曲目还会散开）。
+// 唱臂姿态与专辑进度（设计稿 Drawing 2026-09-16 10.26.32）：未播放 / 暂停 → 姿态 1（唱针归位支架），
+// 播放专辑 → 姿态 2（落针），此时「唱针到唱片圆心的距离」= 专辑进度（是距离与进度成正比，不是角度）。
+// 盯两处易错换算：① 线性内插角度（老写法）在圆弧上不等距，必须余弦定理反解、逐点核验距离；
+// ② 进度按「本专辑在队列里的曲目」算，不是下标 ÷ 队列长度（队列可含多张专辑，打乱后曲目还会散开）。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -101,14 +98,14 @@ test('姿态：未播放 / 暂停 / 出错 / 空队列 = 姿态 1；播放与取
 });
 
 test('姿态 1（停放位）：唱臂竖直朝下，唱针落在唱片外的支架上', () => {
-  // 用户要求：停放时立正、不带偏角（早先按「1.25R」反解出来的 108.3° 是斜的）
+  // 停放要立正、不带偏角 —— 所以是 90°（旧口径按「1.25R」反解出的 108.3° 是斜的，已废）
   assert.equal(ARM_PARK_ANGLE, 90, '停放角 = 90°（转轴正下方一个臂长处）');
   const s = stylusAt(ARM_PARK_ANGLE);
   const d = distanceToCenter(s);
   assert.ok(d > discRadius, `停车位唱针必须在唱片外（d=${d.toFixed(3)}，唱片半径 ${discRadius}）`);
   // 还要避开毛毡垫（1.05 个转盘高 ⇒ 半径 0.525）：支架整体在垫子外
   assert.ok(d > 0.525, `停车位唱针必须在毛毡垫外（d=${d.toFixed(3)} > 0.525）`);
-  // 支架 CSS 的位置要对着这个落点（CSS 的 x 百分比 = 常量 x ÷ 1.3；竖直朝下 ⇒ x = 转轴 x）
+  // 支架 CSS 的位置要对着这个落点（竖直朝下 ⇒ x = 转轴 x；x 百分比换算法见上面单位注释）
   const css = fs.readFileSync(path.join(__dirname, '../styles.css'), 'utf8');
   assert.match(css, /\.vinyl-arm-rest\s*\{[^}]*left:\s*calc\(94% - 4px\)/, '支架在落点处（x = 转轴 x）');
   assert.match(css, /\.vinyl-arm-rest\s*\{[^}]*top:\s*calc\(81% - 8px\)/, '支架在落点处（y = 转轴 y + 臂长）');
@@ -213,8 +210,7 @@ function fakeEl(tag = 'div') {
     classes: new Set(),
     dataset: {},
     textContent: '',
-    // removeProperty 也要：视图交还旋转时会清掉内联 animation-delay（搓碟）
-    // Obsidian 的 setCssProps：把对象里的自定义属性一次写进内联样式（就绪圈用它写进度）
+    // 两个都不能少：setCssProps 是 Obsidian 写自定义属性到内联样式的口子（就绪圈写进度），removeProperty 用于交还旋转时清 animation-delay（搓碟）
     setCssProps(props) {
       for (const [k, v] of Object.entries(props)) vars.set(k, String(v));
     },
@@ -406,7 +402,7 @@ test('视图：清空（专辑被删 / 换碟失败）也回到姿态 1', () => 
   const mod = playerModule();
   const { view } = makeView(mod);
   const queue = [track(1, 'a.md')];
-  view.update(snap({ queue, index: 0, currentTime: 1, duration: 100 })); // 先播放（姿态 2）
+  view.update(snap({ queue, index: 0, currentTime: 1, duration: 100 }));
   assert.equal(armOf(view).classes.has('is-parked'), false);
   view.update(snap({ queue: [], segments: [], index: -1, albumNotePath: undefined, albumTitle: '', status: 'idle' }));
   const arm = armOf(view);

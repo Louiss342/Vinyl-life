@@ -1,8 +1,6 @@
-// 悬停预热（专辑墙那一侧）回归：
-//   指针在一张卡上停够 PREFETCH_DWELL_MS → 叫一次 PlaybackEngine.prefetchAlbum；
-//   没停够就走掉 → 不叫（扫过一面墙不该把每张卡都变成一次平台请求）。
-// 假 DOM + 假定时器（window.setTimeout 收进表里，用例手动点火）：这一批考的是「什么时候叫」，
-// 预热本身做了什么是 core 那边的事（scripts/prefetch.test.cjs）。
+// 悬停预热（专辑墙那一侧）回归：指针在卡上停够 PREFETCH_DWELL_MS → 叫一次 PlaybackEngine.prefetchAlbum；
+// 没停够就走掉 → 不叫（扫过一面墙不该把每张卡都变成一次平台请求）。
+// 假 DOM + 假定时器（window.setTimeout 收进表里，用例手动点火）：本批只考「什么时候叫」，预热做了什么是 core 那边的事（scripts/prefetch.test.cjs）。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -37,7 +35,6 @@ function pendingTimers() {
   return timers.length;
 }
 
-// ============ 假 DOM：卡片认得 closest / contains（悬停委托就靠这两句）============
 function fakeCard(path) {
   const el = {
     dataset: { path },
@@ -111,7 +108,6 @@ function loadModule(entry) {
 
 const { VinylShelfView } = loadModule('src/views/shelf-view.ts');
 
-/** 一面墙 + 记账的引擎桩：两枚按钮 —— 停够就记一笔（见 schedulePrefetch） */
 function makeView() {
   const prefetched = [];
   const plugin = {

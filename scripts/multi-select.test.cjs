@@ -44,7 +44,7 @@ test('接线：专辑墙与唱片区共用这一份实现（别再各写一份�
     const src = read(f);
     assert.match(src, /from '\.\.\/core\/multi-select'/, `${f} 要从共享模块取多选原语`);
   }
-  // 探针：原实现所在的位置不该再出现函数定义（搬走了却没删干净会留下两份语义）
+  // 探针：原实现所在的位置不该再出现函数定义 —— 没删干净就会留下两份语义
   assert.doesNotMatch(read('src/views/album-picker.ts'), /export function toggleInList/, '旧实现没删干净');
   assert.doesNotMatch(read('src/views/album-picker.ts'), /export function rangeInList/, '旧实现没删干净');
 });

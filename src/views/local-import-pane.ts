@@ -1,8 +1,6 @@
-// 本地音频导入面板：① 选文件 / 文件夹（或把文件拖进来）→ ② 目标 → ③ 落库方式 → 开始导入。
-// 与在线搜索（views/album-search）同一个思路：机制在这里，外壳由宿主给 ——
-//   专辑墙的「添加」浮层把它当第二层（选文件 / 拖进来的入口），
-//   本地导入弹窗（卡片右键「导入本地音频…」、命令面板）把它当弹窗内容。
-// 文件夹 = 一张专辑；子目录结构保留（audio/<专辑>/CD1/01.flac）；音乐库根目录改成逐张勾选。
+// 本地音频导入面板：① 选文件 / 文件夹（或拖进来）→ ② 目标 → ③ 落库方式 → 开始导入。
+// 机制在这里、外壳由宿主给（与在线搜索 views/album-search 同一思路）：专辑墙的「添加」浮层当它是第二层，
+// 本地导入弹窗（卡片右键「导入本地音频…」、命令面板）当它是弹窗内容。文件夹 = 一张专辑，子目录结构保留。
 import { AlbumInfo } from '../core/album-index';
 import {
   ImportContext,
@@ -42,7 +40,6 @@ export class LocalImportPane {
   private scan: FolderScan | null = null;
   /** 专辑名被手动改过 → 不再自动覆盖 */
   private nameTouched = false;
-  /** 音乐库模式下的候选专辑（勾选框） */
   private batchRows: Array<{ cand: LibraryCandidate; cb: HTMLInputElement }> = [];
   /** 离场时要摘掉的监听（宿主容器上的拖放） */
   private cleanups: Array<() => void> = [];
@@ -153,7 +150,7 @@ export class LocalImportPane {
     }
 
     // —— 操作区 ——
-    // 状态行：导入进度（逐张专辑的名字与序号）与失败原因都写在这里 —— 标成 status 让读屏软件播报
+    // 状态行写导入进度与失败原因 —— 标成 status 让读屏软件播报
     const footer = detailed ? c.createDiv({ cls: 'vinyl-import-workspace-footer' }) : c;
     const status = footer.createDiv({ cls: 'vinyl-muted vinyl-import-status', attr: { role: 'status' } });
     const btnRow = footer.createDiv({ cls: 'vinyl-import-actions' });
@@ -254,12 +251,9 @@ export class LocalImportPane {
       (newRadio.checked ? nameInput : btn).focus();
     };
 
-    /** 清空这一批文件、回到「这批还没选」的状态。
-     *  不复用 applyFiles —— 那个入口见到空列表就 return（拖放 / 选择器都靠它挡掉空手放下的情况），
-     *  于是给 reset() 传空列表等于什么都没做：导完一批后摘要、专辑名、勾选状态全留着，
-     *  再点「开始导入」会拿上一批的旧列表重跑。
-     *  目标（新建 / 已有）与落库方式刻意不动：接着导的可能是同一张专辑的另一批。
-     *  两个 file input 的 value 也要清 —— 不然再选同一个文件不会触发 change。 */
+    /** 清空这一批文件、回到「这批还没选」的状态。不复用 applyFiles（它见空列表就 return，传空等于没做）：
+     *  不清的话摘要 / 专辑名 / 勾选全留着，再点「开始导入」会拿上一批的旧列表重跑。目标与落库方式刻意不动
+     *  （接着导的可能是同一张专辑的另一批）；两个 file input 的 value 也要清，不然再选同一个文件不触发 change。 */
     this.resetPane = () => {
       this.picked = [];
       this.rootName = '';
@@ -290,7 +284,6 @@ export class LocalImportPane {
       this.takeFiles(files, root);
     });
 
-    // 拖文件 / 文件夹进这一层任意位置
     const onDragOver = (ev: DragEvent) => {
       ev.preventDefault();
       c.addClass('is-drop-active');
@@ -318,7 +311,6 @@ export class LocalImportPane {
     const run = async () => {
       status.setText('');
       const mode = modeSel.value === 'link' ? 'link' : 'copy';
-      // 音乐库根目录：逐张建专辑导入
       if (this.scan?.verdict === 'library') {
         const chosen = this.batchRows.filter((r) => r.cb.checked);
         if (!chosen.length) {

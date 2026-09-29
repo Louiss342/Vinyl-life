@@ -27,8 +27,7 @@ export interface AlbumInfo {
   year?: string | number;
   genre?: string;
   rating?: string | number;
-  /** frontmatter 的「仅收藏」标记（collectOnly: true）：这张是有意只收着、不需要音源与封面的
-   *  乐评式收藏。收藏健康检查据此把「无音源 / 无封面」降为提示，失效引用仍按错误列出。 */
+  /** frontmatter 的「仅收藏」标记（collectOnly: true）：有意只收着、不需要音源与封面的乐评式收藏 —— 健康检查据此把「无音源 / 无封面」降为提示，失效引用仍按错误列出。 */
   collectOnly: boolean;
   /** frontmatter 原文（wikilink / URL / 色值） */
   coverRaw?: string;
@@ -46,8 +45,7 @@ export interface AlbumInfo {
   audioRefs: string[];
   /** 笔记 source 字段 */
   sourcePref: AlbumSourcePref;
-  /** 卡片显示用属性（frontmatter 键 → 已格式化字符串，已剔黑名单）。
-   *  空值保留为 ''，由渲染侧跳过——采集侧不剔除，保证「候选计数」与「卡片渲染」同一份数据 */
+  /** 卡片显示用属性（frontmatter 键 → 已格式化字符串，已剔黑名单）：空值保留为 '' 由渲染侧跳过，采集侧不剔除，保证「候选计数」与「卡片渲染」同一份数据 */
   displayProps: Record<string, string>;
 }
 
@@ -98,7 +96,7 @@ export function parseQqAlbumMid(fm: unknown): string | undefined {
   return QQ_MID_RE.test(t) ? t : undefined;
 }
 
-// 酷狗专辑 id 解析：kugouId 裸 id / kugou 链接（网页版 /yy/album/single/<id>.html、/album/<id>.html）。
+// 酷狗专辑 id 解析：kugouId 裸 id / kugou 链接（/yy/album/single/<id>.html、/album/<id>.html）。
 // 上游 id 是纯数字（网关同样按 ^\d{1,20}$ 校验），存成字符串与 qqId 同形。
 const KUGOU_ALBUM_RE = /album\/(?:single\/)?(\d{1,20})/;
 const KUGOU_ID_RE = /^\d{1,20}$/;
@@ -133,7 +131,7 @@ export function resolveCover(
   return undefined;
 }
 
-/** 专辑笔记当前生效的封面（显式 cover 优先，其次约定自动识别，与 buildAlbumInfo 同一套规则）。
+/** 专辑笔记当前生效的封面（与 buildAlbumInfo 同一套规则：显式 cover 优先，其次约定自动识别）。
  *  播放器要「优先用库内已有封面」时走这里，避免两边解析规则各写一份、日后漂移。 */
 export function resolveAlbumCover(
   app: App,
@@ -147,7 +145,6 @@ export function resolveAlbumCover(
   return getAlbumInfo(app, file, opts)?.cover;
 }
 
-// 主解析（同步，走 metadataCache）
 export function getAlbumInfo(app: App, file: TFile, opts?: AlbumInfoOpts): AlbumInfo | null {
   const fm = app.metadataCache.getFileCache(file)?.frontmatter;
   if (!fm || !hasAlbumTag(fm)) return null;
@@ -163,11 +160,8 @@ export interface AlbumInfoOpts {
 export const CONVENTION_COVER_NAMES = ['cover', 'folder', 'front'];
 const COVER_IMAGE_EXTS = ['jpg', 'jpeg', 'png', 'webp'];
 
-/**
- * 自动识别封面（读时解析，不写笔记——放上文件就生效）：
- *   ① 专辑音频文件夹内的 cover / folder / front / <专辑名>.<图片>
- *   ② 封面目录下与专辑同名的图片（与「导入专辑」下载封面的命名一致）
- */
+/** 自动识别封面（读时解析、不写笔记 —— 放上文件就生效）：① 专辑音频文件夹内的 cover / folder / front /
+ *  <专辑名>.<图片>；② 封面目录下与专辑同名的图片（与「导入专辑」下载封面的命名一致）。 */
 export function findConventionCover(
   app: App,
   file: TFile,
@@ -191,7 +185,6 @@ export function findConventionCover(
       }
     }
   }
-  // ② 封面目录（同名优先）
   if (coverFolder) {
     for (const base of [title, ...CONVENTION_COVER_NAMES]) {
       for (const ext of COVER_IMAGE_EXTS) {
@@ -255,17 +248,15 @@ export function buildAlbumInfo(
   };
 }
 
-// 模板文件本身不能被当成专辑展示（模板里通常也写着 tags: [album]）；
-// 由插件在加载/保存设置时注入（避免 findAlbumNotes 的每个调用点都传参数）。
+// 模板文件本身不能被当成专辑展示（模板里通常也写着 tags: [album]）；由插件在加载 / 保存设置时注入，免得每个调用点都传参。
 let albumTemplatePath = '';
 
 export function setAlbumTemplatePath(p: string): void {
   albumTemplatePath = String(p || '').trim();
 }
 
-/** 全库枚举笔记：专辑墙的数据源就是「带 album 标签的笔记」，只有扫一遍才知道有哪些 ——
- *  这也是审核披露的 vault 枚举能力，来源即此处（为什么需要，见 CONTRIBUTING）。
- *  启动时索引一次，之后一律按路径取单篇（getAbstractFileByPath），不再重复枚举。 */
+/** 全库枚举笔记：专辑墙的数据源就是「带 album 标签的笔记」，只有扫一遍才知道有哪些 —— 审核披露的
+ *  vault 枚举能力来源即此处（为什么需要，见 CONTRIBUTING）。启动时索引一次，之后一律按路径取单篇，不再重复枚举。 */
 export function findAlbumNotes(app: App): TFile[] {
   return app.vault.getMarkdownFiles().filter((f) => {
     if (albumTemplatePath && f.path === albumTemplatePath) return false;
@@ -288,24 +279,18 @@ let sourcesEpoch = 0;
 /** album.path → 上次算出来的结论。判据见 sig：frontmatter 里那几项 + 世代计数器 */
 const sourcesCache = new Map<string, { epoch: number; sig: string; sources: AlbumSources }>();
 
-/** 作废全部检测结果。调用点就三处，各自的理由：
- *    · main.ts：vault 的 create / delete / rename —— 库内结构变了（导入、删除、同步、改名）；
- *    · 专辑墙「更多 → 刷新专辑墙」—— 用户显式要求「重新看一遍」；
- *    · 健康检查打开时 —— 「检查一遍」的语义，扫描前先把结论归零。
- *
- *  为什么要缓存：这条检测要碰文件系统 —— audio: 里的库外目录是 fs.readdirSync 递归三层，
- *  而专辑墙每次刷新都会对**每张**专辑调一遍（编辑一个 frontmatter 字段 = N 次目录遍历），
- *  卡顿就出在这儿。frontmatter 侧的变化（id、引用路径）另有 sig 兜着，不必等作废。
- *  库外目录「自己」变了没有事件可听（在资源管理器里丢进一首歌）：那要等上面三处之一作废，
- *  与缓存前一样都得靠一次刷新才看得到，只是现在得是显式的那一次。 */
+/** 作废全部检测结果。调用点三处：main.ts 的 vault create / delete / rename（库内结构变了）、
+ *  专辑墙「更多 → 刷新专辑墙」（用户显式要求重看）、健康检查打开时（扫描前先把结论归零）。
+ *  为什么要缓存：这条检测要碰文件系统 —— audio: 里的库外目录是 fs.readdirSync 递归三层，而专辑墙每次
+ *  刷新都会对**每张**专辑调一遍（改一个 frontmatter 字段 = N 次目录遍历），卡顿就出在这儿。frontmatter
+ *  侧的变化（id、引用路径）另有 sig 兜着；库外目录「自己」丢进一首歌没有事件可听，仍靠上面三处之一作废。 */
 export function invalidateSourceCache(): void {
   sourcesEpoch++;
 }
 
 // 同步检测（不读取音频内容）：本地 = 引用的音频文件夹/文件实际存在且含受支持音频
 export function detectAlbumSources(app: App, album: AlbumInfo): AlbumSources {
-  // frontmatter 侧的判据（id 与引用路径）进 sig：改了笔记就重算，不必等作废
-  // （用 JSON 而不是拼接：引用路径里出现分隔符也不会串味）
+  // frontmatter 侧判据（id 与引用路径）进 sig：改了笔记就重算，不必等作废；用 JSON 而非拼接，路径里有分隔符也不会串味
   const sig = JSON.stringify([
     album.audioFolderRef ?? '',
     album.audioRefs,
@@ -370,6 +355,5 @@ function audioRefExists(app: App, ref: string): boolean {
   return file instanceof TFile && isAudioFile(file.name);
 }
 
-// 这里曾有一个 parseFrontmatterSimple（自己扫 YAML 的小解析器，2026-09-26 删）。
-// 它从 0.6.0 起就没有调用方：frontmatter 一律走 metadataCache（见 asFrontmatter 与
-// getAlbumInfo）—— 解析口径只有一份。手写解析器留着只会诱人绕过缓存另开一条。
+// frontmatter 一律走 metadataCache（见 asFrontmatter / getAlbumInfo）：解析口径只有一份，
+// 手写 YAML 解析器（曾有一个 parseFrontmatterSimple，已删）只会诱人绕过缓存另开一条。

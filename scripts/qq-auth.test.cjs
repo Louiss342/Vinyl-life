@@ -115,8 +115,7 @@ function gateway(opts = {}) {
         ],
       });
     }
-    // check_sig 必须先于 ptqrlogin 判定：真实 check_sig URL 自带 service=ptqrlogin 参数，
-    // 若按 includes('ptqrlogin') 先匹配会把它错当成轮询请求（曾导致链路在夹具里断掉）。
+    // check_sig 必须先于 ptqrlogin 判定：真实 check_sig URL 自带 service=ptqrlogin 参数，按 includes('ptqrlogin') 先匹配会把它错当成轮询请求（曾导致链路在夹具里断掉）
     if (u.includes('/check_sig?')) {
       return res({
         status: 302,
@@ -476,8 +475,7 @@ test('ptuiCB 0 → full chain, double-channel cookie merge, writes only after va
 });
 
 test('真实 7 字段 ptuiCB 0（成功响应尾部多一个空字段）必须完成全链路', async () => {
-  // 手机确认后腾讯返回 7 字段成功响应（尾部多一个空字段）。
-  // 按 ≤6 字段整体匹配会解析失败 → 网关抛“服务异常”，表现为「手机成功、电脑失败」。
+  // 手机确认后腾讯返回 7 字段成功响应（尾部多一个空字段）；按 ≤6 字段整体匹配会解析失败 → 网关抛“服务异常”，表现为「手机成功、电脑失败」
   const realSuccess =
     "ptuiCB('0','0','https://ssl.ptlogin2.graph.qq.com/check_sig?pttype=1&uin=1234567890" +
     '&service=ptqrlogin&nodirect=0&ptsigx=fixture-ptsigx-ticket' +
@@ -500,8 +498,7 @@ test('真实 7 字段 ptuiCB 0（成功响应尾部多一个空字段）必须�
 });
 
 test('check_sig 的删除型空 Cookie 不得覆盖先前的有效票据', async () => {
-  // check_sig 对 p_uin / p_skey 同名多次下发（不同 Domain/Path），其中含删除型空值。
-  // 按“最后一条覆盖”会冲掉有效值 → 报「未取得 p_skey/p_uin」，登录止步于最后一跳。
+  // check_sig 对 p_uin / p_skey 同名多次下发（不同 Domain/Path），其中含删除型空值；按“最后一条覆盖”会冲掉有效值 → 报「未取得 p_skey/p_uin」，登录止步于最后一跳
   const g = gateway({
     ptuiCB: `ptuiCB('0','0','https://ssl.ptlogin2.graph.qq.com/check_sig?uin=1234567890&ptsigx=abc','0','登录成功！','')`,
     checkSigCookies: [

@@ -1,7 +1,6 @@
-// 收藏健康检查回归：
-//   A 扫描分档 —— 失效引用 / 指定音源不可用 / 播放失败是**错误**，无音源、无封面是**提示**，
-//     标了 collectOnly 的专辑连提示都不出（评审意见第 1 条：别让有意只收藏的乐评淹没待办）；
-//   B 试播范围 —— 全部已关联 / 仅每张实际会用的 / 仅上次失败的（评审意见第 4 条）。
+// 收藏健康检查回归：A 扫描分档 —— 失效引用 / 指定音源不可用 / 播放失败是**错误**，无音源、无封面是**提示**，
+//   标了 collectOnly 的专辑连提示都不出（别让有意只收藏的乐评淹没待办）；
+//   B 试播范围 —— 全部已关联 / 仅每张实际会用的 / 仅上次失败的。
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -11,8 +10,7 @@ const source = esbuild.buildSync({
   entryPoints: [path.join(__dirname, '../src/core/library-health.ts')],
   bundle: true, write: false, format: 'cjs', platform: 'node', external: ['obsidian'],
 }).outputFiles[0].text;
-// TFile 必须是**同一个类**：模块里靠 instanceof 判「是不是库内文件」，
-// 各写各的类永远判不出来（踩过一次）
+// TFile 必须是**同一个类**：模块靠 instanceof 判「是不是库内文件」，各写各的类永远判不出来（踩过一次）
 class TFile {
   constructor(name) { this.name = name; }
 }
@@ -23,8 +21,7 @@ new Function('require', 'module', 'exports', source)(
   } : require(name), mod, mod.exports
 );
 const { scanLibraryHealth, probeJobs, normalizeProbeScope } = mod.exports;
-// app 桩：默认什么都找不到（库外路径失效那条用例靠它），只放行一首「库内音频」
-// —— 「实际会用的音源」那条用例需要本地音源真的成立。
+// app 桩：默认什么都找不到（库外路径失效那条靠它），只放行一首「库内音频」——「实际会用的音源」那条需要本地音源成立。
 const app = {
   vault: {
     getAbstractFileByPath: (p) => (p === 'Music/local.mp3' ? new TFile('local.mp3') : null),
@@ -86,8 +83,6 @@ test('仅收藏（collectOnly）：无音源 / 无封面的提示不再出，失
     ]
   );
 });
-
-// ============ 试播范围 ============
 
 const album = (path, extra) => ({ path, title: path, audioRefs: [], sourcePref: 'auto', ...extra });
 

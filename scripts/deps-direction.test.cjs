@@ -1,16 +1,9 @@
 // 依赖方向棘轮（执行手册 T0.1）：src/core 不得**新增**对 obsidian 的运行时依赖。
-//
-// 口径：沿 import 图传播运行时污点，但 `import type` 不传播 —— 类型边编译后消失，
-// 只需要 .d.ts 垫片，不会把被导入文件的 obsidian 依赖带过来。
-// 这条判断是有代价的：它让 arm-geometry / media-session（只从 player-state 取类型）
-// 从越界名单里正确移出。只 grep `from 'obsidian'` 会得到 14 个直接依赖，
-// 而真实运行时依赖图是 19 个 —— 另外 6 个是经 album-index / ../util / server-client 间接污染的。
-//
-// 棘轮纪律：BASELINE 是**存量债务基线，只能删不能加**。还清一个就从名单里删一行；
-// 新增一行意味着「新写的 core 文件又依赖了 obsidian」——review 时只看这一点。
-// 基线（2026-09-26 实测，T0.1 落地当日）：运行时越界 19 / 干净 23（core 共 42 个 .ts）。
-// 与手册 §8.A 首次验证时的 19/18 相比：queue-note.ts 已还清（改走队列笔记的纯逻辑），
-// probe-pacing.ts 是新债（经 ../util 传导）—— 名单换了成员，数量持平。
+// 口径：沿 import 图传播运行时污点，但 `import type` 不传播 —— 类型边编译后消失，只需 .d.ts 垫片，
+// 不会把被导入文件的 obsidian 依赖带过来（arm-geometry / media-session 只从 player-state 取类型，据此正确移出名单）。
+// 只 grep `from 'obsidian'` 是 14 个直接依赖，真实运行时越界 19（core 共 42 个 .ts，其余经 album-index / ../util 等间接污染）。
+// 棘轮纪律：BASELINE 是**存量债务基线，只能删不能加** —— 还清一个就从名单里删一行；新增一行意味着「新写的
+// core 文件又依赖了 obsidian」，review 时只看这一点。基线（2026-09-26 实测）：越界 19 / 干净 23。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

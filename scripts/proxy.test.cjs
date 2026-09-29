@@ -1,5 +1,4 @@
-// 网关出站代理回归：配置解析（VINYL_PROXY / 常规环境变量 / NO_PROXY）+ HTTP CONNECT 隧道端到端。
-// 端到端用本地假代理 + 本地真源站，不碰外网 —— 覆盖的正是「浏览器能取到封面、网关取不到」的修复面。
+// 网关出站代理回归：配置解析（VINYL_PROXY / 常规环境变量 / NO_PROXY）+ HTTP CONNECT 隧道端到端；端到端用本地假代理 + 本地真源站，不碰外网。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
@@ -34,12 +33,8 @@ async function startOrigin(t, handler) {
   return { server, port, url: `http://127.0.0.1:${port}` };
 }
 
-/**
- * 记录 CONNECT 目标的 HTTP 代理（真隧道，双向 pipe）。
- * - opts.origin：把 CONNECT 的 tunnel.test 映射到本地真源站 —— 这样「请求真的过了隧道」
- *   才是唯一可能的成功路径（直连 tunnel.test 解析不了），弱断言骗不过去；
- * - opts.captureFirst：只收下隧道里的第一批字节就断开，用于验证 https 目标确实在隧道上做 TLS。
- */
+/** 记录 CONNECT 目标的 HTTP 代理（真隧道，双向 pipe）：opts.origin 把 tunnel.test 映射到本地真源站
+ *（直连解析不了 ⇒「真的过了隧道」是唯一可能的成功路径）；opts.captureFirst 只收隧道第一批字节就断开，验证 https 在隧道上做 TLS。 */
 async function startProxy(t, { origin = null, captureFirst = false } = {}) {
   const seen = [];
   const firstBytes = [];
@@ -122,9 +117,7 @@ test('parseProxySpec：DIRECT / PROXY 链 / URL（含认证）/ host:port / SOCK
 });
 
 test('parseProxySpec：SOCKS 的 URL 形态同样按不支持处理（别当成 HTTP 代理去发 CONNECT）', () => {
-  // 空格形态（PROXY 链里）本来就认成 unsupported；URL 形态以前会落进 httpProxyFrom ——
-  // 于是所有请求都往一个 SOCKS 端口发 CONNECT、全线失败，而日志还写着「经代理 host:port」，
-  // 把排查方向带偏（Clash / v2ray 用户在 ALL_PROXY 里常这么写）。不支持 = 直连。
+  // URL 形态的 SOCKS 若当成 HTTP 代理，所有请求都会往 SOCKS 端口发 CONNECT、全线失败，日志还写着「经代理 host:port」（Clash / v2ray 用户在 ALL_PROXY 里常这么写）→ 不支持 = 直连。
   for (const spec of [
     'socks5://127.0.0.1:1080',
     'socks://127.0.0.1:1080',
@@ -137,8 +130,7 @@ test('parseProxySpec：SOCKS 的 URL 形态同样按不支持处理（别当成 
 });
 
 test('parseProxySpec：裸形态带认证（user:pass@host:port）要认，别当成「配置写错」', () => {
-  // curl 系的 HTTPS_PROXY 常这么写（不带 scheme）。以前它落在形状检查外 → unsupported
-  //（代理静默失效，还把那串连同口令一起写进日志），现在按 http 代理解析。
+  // curl 系的 HTTPS_PROXY 常这么写（不带 scheme）：认不出就会静默失效，还把口令一起写进日志——按 http 代理解析
   const bare = parseProxySpec('user:pass@10.0.0.2:8080', 'HTTPS_PROXY');
   assert.equal(bare.mode, 'http');
   assert.equal(bare.host, '10.0.0.2');

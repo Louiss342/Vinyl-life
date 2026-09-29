@@ -1,11 +1,7 @@
 // 转盘盘面的马达回归（假 DOM + 假时钟）：暂停时盘面滑停、停在原地不摆正，复播时从原角度起转。
-// 盯住的坑（都是「只看代码看不出来」的那种）：
-//   ① 暂停不再把 is-spinning 摘掉就完事 —— 摘掉 = transform 归零 = 用户报的「迅速跳帧摆正」；
-//   ② 滑停 / 起转期间角度归 JS（--vinyl-spin-angle），逐帧走的必须是 core/motor 的同一条曲线
-//      （角度 = ∫rate 换算成转角，与引擎写元素的那条是同一个积分）；
-//   ③ 滑停结束停在原地：角度、类、延迟三者都不许再动；起转到位才交还 CSS 动画（负延迟续相位）；
-//   ④ 停住时手按上去（搓碟起手）要接着那个角度走，不能跳回 0；
-//   ⑤ 换曲的间隙（loading）什么都不动 —— 盘上还是同一张碟。
+// 盯住的坑（只看代码看不出来的那种）：① 暂停不能靠摘 is-spinning —— 摘掉 = transform 归零 = 用户报的「迅速跳帧摆正」；
+// ② 滑停 / 起转期间角度归 JS（--vinyl-spin-angle），逐帧必须走 core/motor 的同一条曲线（角度 = ∫rate 换算成转角）；
+// ③ 停住时角度 / 类 / 延迟都不许再动，起转到位才交还 CSS 动画（负延迟续相位）；④ 停住时手按上去要接着走；⑤ 换曲间隙不动。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -247,7 +243,6 @@ function makeView(mod, settings = {}) {
   return { view, calls };
 }
 
-/** 推一帧（取最早排队的那个回调） */
 function runFrame(raf, clock) {
   const [id, fn] = [...raf.entries()][0] || [];
   if (!fn) return false;
@@ -292,10 +287,8 @@ test('暂停：盘面滑停 —— 逐帧减速，最后停在原地（角度不
   assert.equal(view.els.vinyl.classes.has('is-spin-held'), true, '停住：还归 JS 扶着');
   const stopped = angleOf(view);
   assert.ok(stopped > a250, '最后一段还在往前走');
-  // 滑停总共走 ∫rate = 130ms×(1−e^(−350/130)) ≈ 0.121s 的角 → 24.2°（不到一圈的十四分之一）
   assert.ok(Math.abs(stopped - degOf(0.1212)) < 0.05, `滑停总共约 24.2°（实得 ${stopped}）`);
 
-  // 引擎随后发来「斜坡收完」的快照（状态早已是暂停）→ 什么都不该动
   view.update(snap({ status: 'paused' }));
   assert.equal(angleOf(view), stopped, '角度留在停下的那一刻（不摆正、也不归零）');
   assert.equal(view.els.vinyl.classes.has('is-spin-held'), true);

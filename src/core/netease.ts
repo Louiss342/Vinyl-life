@@ -24,8 +24,7 @@ export class NeteaseService {
     if (!ok) throw new Error(this.gatewayError() || t('auth.gatewayNotReadyNetease'));
   }
 
-  /** 专辑曲目表：会话级缓存（见 session-cache）。它是起播链上的第一段网络（实测 100~150ms），
-   *  一次会话里又不会变 —— 悬停预热拨的正是这一份，预热过的专辑点下去时这里是命中。 */
+  /** 专辑曲目表：会话级缓存（见 session-cache）—— 悬停预热拨的正是这一份，预热过的专辑点下去时命中 */
   private albumCache = new SessionCache<NeteaseAlbumResponse>(32);
 
   async album(id: number): Promise<NeteaseAlbumResponse> {
@@ -60,7 +59,7 @@ export class NeteaseService {
       try {
         return await this.web.songUrl(id, level);
       } catch {
-        // 网页会话通道失败 → 落到下面的网关兜底
+        // 网页会话通道失败 → 网关兜底（见 fetchAlbum）
       }
     }
     await this.ensureGatewayReady();
@@ -72,7 +71,7 @@ export class NeteaseService {
       try {
         return await this.web.searchAlbums(keywords, page);
       } catch {
-        // 网页会话通道失败 → 落到下面的网关兜底
+        // 网页会话通道失败 → 网关兜底（见 fetchAlbum）
       }
     }
     await this.ensureGatewayReady();
@@ -84,7 +83,7 @@ export class NeteaseService {
       try {
         return await this.web.searchSongs(keywords, page);
       } catch {
-        // 网页会话通道失败 → 落到下面的网关兜底
+        // 网页会话通道失败 → 网关兜底（见 fetchAlbum）
       }
     }
     await this.ensureGatewayReady();

@@ -114,7 +114,6 @@ test('media-session：同步元数据、播放状态与进度，并登记媒体�
   assert.equal(h.session.position.duration, 240);
   assert.equal(h.session.position.position, 12);
 
-  // 暂停 / 清空
   h.mod.syncMediaSession(snap({ status: 'paused' }), hooks);
   assert.equal(h.session.playbackState, 'paused');
   h.mod.syncMediaSession(snap({ current: undefined }), hooks);

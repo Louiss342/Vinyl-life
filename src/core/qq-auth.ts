@@ -1,6 +1,4 @@
-// QQ 音乐登录态与 Cookie 管理（与 Auth 同语义）：
-//   扫码 803 → 网关校验后落盘 .qq-cookie（登录只有这一条路径）。
-//   凭据仅存本机插件目录，不进笔记/日志/git。
+// QQ 音乐登录态与 Cookie 管理（与 Auth 同语义）：凭据仅存本机插件目录，不进笔记 / 日志 / git。
 import { Plugin } from 'obsidian';
 import * as fs from 'fs';
 import { ServerManager } from './server-manager';

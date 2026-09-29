@@ -1,21 +1,16 @@
 // 宿主中立的命令注册表。
 //
-// 为什么要有这一层：同一条能力要喂三个宿主 —— Obsidian 的 addCommand（含默认快捷键）、
-// 独立壳的应用菜单与键位表、以及测试。前两个宿主各自接线，第三个直接调 run(host)：
-// 于是「写感想」「换封面」「整段上移」这些**只有鼠标路径**的动作第一次可以被断言
-//（此前的测试全是扫源码文本，只能证明「代码里有这段模式」，证明不了「点了会发生什么」）。
+// 为什么要有这一层：同一条能力要喂三个宿主 —— Obsidian 的 addCommand、独立壳的应用菜单与键位表、
+// 以及测试（测试直接调 run(host)：于是「写感想」「换封面」这些**只有鼠标路径**的动作第一次可以被
+// 断言，此前的测试只能扫源码文本，证明不了点了会发生什么）。
 //
-// 纪律：
-//   · 本文件不 import obsidian —— 命令只声明「我要做什么」，动作由宿主交出 CommandHost 实现；
-//   · id 一旦发布不得改动（用户绑定的快捷键挂在 id 上）。现有 10 条是老入口，见 main.ts 的注释。
-//   · **不给默认快捷键**：Obsidian 的插件规范（以及本仓库的 obsidianmd/* lint 闸门）明确建议
-//     插件别设默认键 —— 可能撞上用户自己绑的键或宿主自带的键。命令面板里全都能搜到，
-//     想用键的读者照 README「命令与快捷键」那一节绑一次即可（十秒的事）。
+// 纪律：本文件不 import obsidian（命令只声明做什么，动作由宿主的 CommandHost 实现）；id 一旦发布不得
+//   改动（用户绑的快捷键挂在 id 上；现有 10 条是老入口，见 main.ts）；**不给默认快捷键**：插件规范与
+//   本仓库的 obsidianmd/* lint 闸门都建议别设默认键（会撞上用户或宿主已绑的键），键照 README 自己绑。
 //
-// 与方案文档 §8.E 的差异：那里的 CommandContext 写的是 HostUi / StoragePort / MediaPort / HttpPort
-// 四个端口。那四个端口是脱壳阶段（T0.5/T0.7）的事，此刻还不存在；这里先按「命令真正用得着的动作」
-// 收一个窄接口，端口落地后把 CommandHost 实现换成端口组合即可，命令表本身不用动。
-// 同理，§8.E 里的 keys?: KeyChord[] 暂时不进接口：既然一条都不配，留着就是死字段。
+// 与方案文档 §8.E 的差异：那里的四个端口（HostUi / StoragePort / MediaPort / HttpPort）属脱壳阶段
+// （T0.5/T0.7）才有 —— 这里先按「命令用得着的动作」收窄接口，端口落地后换掉 CommandHost 实现即可，
+// 命令表不动；§8.E 的 keys?: KeyChord[] 同理不进接口（一条都不配，死字段）。
 
 /** 宿主交给命令的动作集合。命令不关心它背后是插件、独立壳还是假实现。 */
 export interface CommandHost {
@@ -28,8 +23,8 @@ export interface CommandHost {
   /** 本地导入：**只**给当前专辑（没在播就如实报错，不开一个没有目标的导入面板） */
   importLocalToCurrent(): void;
   insertNowPlaying(): void | Promise<void>;
-  // 落盘类动作声明成 Promise（不是 void | Promise）：二者都写会让调用方以为可以不等它，
-  // 而 lint 的 no-misused-promises 也会盯着「拿了 Promise 却不 await」的那一处
+  // 落盘类动作声明成 Promise（不是 void | Promise）：写两可会让调用方以为可以不等它，lint 的
+  // no-misused-promises 也盯着「拿了 Promise 却不 await」的那一处
   saveQueueNote(): Promise<void>;
   loadQueueNote(): Promise<void>;
   playerToggle(): void;

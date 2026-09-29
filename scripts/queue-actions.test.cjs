@@ -1,7 +1,6 @@
-// 队列动作回归：
-//   A 引擎：随机可逆（进随机前的顺序在退出随机时还回来；期间增删过 / 手动拖过就放弃还原）
-//   B 视图：队列行末尾的「移除这首」（点击走 removeRange(i,1) 且不落到「切歌」那条路上）
-//   C 接线：Delete / Backspace 的键盘等价、Vinyl order 的定位钮、跟随播放的判据
+// 队列动作回归：A 引擎随机可逆（退随机时把进随机前的顺序还回来；期间增删过 / 手动拖过就放弃还原）；
+// B 视图：队列行末尾的「移除这首」点击走 removeRange(i,1)，且不落到「切歌」那条路上；
+// C 接线（行为难直接驱动，只锁源码写法）：Delete / Backspace 等价、Vinyl order 的定位钮、跟随播放的判据。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -74,8 +73,6 @@ function loadModule(entry, globals = {}) {
   });
   return mod.exports;
 }
-
-// ============ A. 引擎：随机可逆 ============
 
 const audioInstances = [];
 class AudioStub {
@@ -201,8 +198,6 @@ test('随机期间手动拖过：以用户的顺序为准，退出随机不吃�
   engine.cyclePlayMode(); // 退出随机
   assert.deepEqual(ids(engine), moved, '手动调整之后那份「原序」作废');
 });
-
-// ============ B. 视图：移除这首 ============
 
 function fakeEl(tag = 'div') {
   const el = {
@@ -332,8 +327,6 @@ test('每行都有「移除这首」：点击走 removeRange(i,1)，并挡住「
   fire(removes[1], 'pointerdown');
   assert.equal(removes[1].listeners.get('pointerdown').length, 1, '行可拖拽：按钮上要挡住起拖');
 });
-
-// ============ C. 接线（行为难直接驱动，锁住关键写法） ============
 
 test('接线：Delete / Backspace 是「移除这首」的键盘等价，焦点跟着挪到同位置的行', () => {
   const src = read('src/views/player-view.ts');

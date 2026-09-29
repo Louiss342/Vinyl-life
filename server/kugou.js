@@ -6,15 +6,14 @@
 //     deps = { route, log, fetch, makeStore, msg, timeout, crypto, cookieFile, deviceFile }
 //   允许直接用的只有纯全局：Buffer / URL / URLSearchParams / Math / Date / JSON。
 //
-// 三条链路（2026-09-24 实机验证，见 tmp/kugou-probe*.js 的探测记录）：
-//   ① 设备身份：设备指纹 dfid 必须先注册（POST userservice.kugou.com/risk/v2/r_register_dev）——
-//      body 是 AES-128-CBC 密文、`p` 参数是 RSA-PKCS1v1.5 加密的会话信息；响应可能是明文 JSON，
-//      也可能是同一会话 key 加密的密文，两种都要认。dfid 缺了取流会被判「本次请求需要验证」。
-//   ② 匿名曲库：mobilecdn.kugou.com/api/v3 的搜索 / 专辑 / 曲目接口——无签名、无登录、字段稳定，
-//      第三方客户端（Meting 血统）多年都在用这条。搜索的 /v2/search/song 路对匿名返回 error_code 152，
-//      不要走。
-//   ③ 取流：优先 /v5/url（android 签名 + signKey + dfid；url 为空时看 fail_process），
-//      退 trackercdn i/v2（key = md5(hash + 'kgcloudv2')，纯匿名老链）。两条都不需要 DRM。
+// 三条链路（2026-09-24 实机验证）：
+//   ① 设备身份：dfid 必须先注册（POST userservice.kugou.com/risk/v2/r_register_dev）—— body 是
+//      AES-128-CBC 密文、`p` 是 RSA-PKCS1v1.5 加密的会话信息；响应明文 / 同会话 key 加密都要认。
+//      dfid 缺了取流会被判「本次请求需要验证」。
+//   ② 匿名曲库：mobilecdn.kugou.com/api/v3 的搜索 / 专辑 / 曲目——无签名无登录、字段稳定（Meting
+//      血统的第三方客户端多年在用）；/v2/search/song 对匿名返回 error_code 152，不要走。
+//   ③ 取流：优先 /v5/url（android 签名 + signKey + dfid；url 为空时看 fail_process），退 trackercdn
+//      i/v2（key = md5(hash + 'kgcloudv2')，纯匿名老链）；两条都不需要 DRM。
 //   登录：扫码三步（/v2/qrcode → 前端渲染 qrcode_img → 轮询 /v2/get_userinfo_qrcode），web 签名；
 //      状态码 0 过期 / 1 待扫 / 2 待确认 / 4 成功（带 token + userid）→ 归一化 800 / 801 / 802 / 803。
 //      登录后 token/userid 会带进取流请求（决定能否拿到 VIP 音质与完整曲目）。
@@ -40,14 +39,11 @@ MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDIAG7QOELSYoIJvTFJhMpe1s/gbjDJX51HBNnEl5HX
   const H5_BASE = 'http://mobilecdn.kugou.com';
   const GW_BASE = 'https://gateway.kugou.com';
   const LOGIN_BASE = 'https://login-user.kugou.com';
-  // 搜索结果一页多少条（专辑与歌曲共用）。插件侧按同样的页大小换算页码 ——
-  // 两边必须一致，否则第 2 页会从半截开始漏掉或重复（album-discovery 的 SEARCH_PAGE_SIZE）。
+  // 搜索结果一页多少条（专辑与歌曲共用）；必须与插件侧换算页码的页大小一致（album-discovery 的 SEARCH_PAGE_SIZE），否则第 2 页会从半截开始漏掉或重复。
   const SEARCH_PAGE = 30;
   // 封面占位尺寸：上游 imgurl 里的 {size} 需要替换（参照第三方客户端取 480）
   const COVER_SIZE = 480;
-  // 音质档位：插件四档 → 酷狗 quality 参数（flac 为无损；'high' 在酷狗语义里不是 320）。
-  // br 只给兜底的 trackercdn 旧链用（实测它一律回 128k，不认 br；v5 链走 quality）。
-  // 2026-09-24 实机核对：quality 128/320/flac → bitRate 128000/320000/595000、ext mp3/mp3/flac。
+  // 音质档位：插件四档 → 酷狗 quality 参数（flac 为无损；'high' 在酷狗语义里不是 320）；br 只给兜底的 trackercdn 旧链用（实测它一律回 128k，不认 br），quality flac 实测 bitRate 595000。
   const LEVELS = {
     standard: { quality: '128', br: '128' },
     higher: { quality: '320', br: '320' },
@@ -55,9 +51,7 @@ MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDIAG7QOELSYoIJvTFJhMpe1s/gbjDJX51HBNnEl5HX
     lossless: { quality: 'flac', br: 'flac' },
   };
 
-  /** 把「实际到手的音质」报回给插件（与 qq.js 的 ladder 口径一致）：
-   *  请求 lossless 但上游只回了 128k mp3 时，播放器读数不该显示「无损」。
-   *  flac 无法再分 exhigh / lossless（两档请求的都是 flac），按请求档位回报。 */
+  /** 把「实际到手的音质」报回插件（与 qq.js 的 ladder 口径一致）：请求 lossless 却只回了 128k mp3 时播放器读数不该显示「无损」；flac 分不出 exhigh / lossless（两档请求的都是 flac），按请求档位回报 */
   function actualLevel(requested, br, ext) {
     const isFlac = String(ext).toLowerCase() === 'flac' || Number(br) >= 500000;
     if (isFlac) return requested;
@@ -195,14 +189,13 @@ MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDIAG7QOELSYoIJvTFJhMpe1s/gbjDJX51HBNnEl5HX
     return Buffer.concat([decipher.update(Buffer.from(b64, 'base64')), decipher.final()]).toString('utf8');
   }
 
-  /** 注册设备并拿 dfid。响应两种形态（明文 / 同会话 key 加密）都要认。 */
+  /** 注册设备并拿 dfid（响应明文 / 同会话 key 加密两种形态都要认，见文件头） */
   async function registerDevice() {
     const guid = md5(uuidv4());
     const mid = calculateMid(guid);
     const device = { guid, mid, dfid: '-', dev: randomString(10).toUpperCase() };
     const sessionKey = randomString(6).toLowerCase();
-    // 设备字段必须给「像真机」的全量（实测：只给 brand/device/imei/uuid 的精简载荷会被回空 data，
-    // 拿不到 dfid；补全电池/传感器等字段后稳定返回）。值本身不敏感，照抄参考实现即可。
+    // 设备字段必须给「像真机」的全量：只给 brand/device/imei/uuid 的精简载荷会被回空 data（实测），补全电池 / 传感器等字段才稳定返回 dfid。值本身不敏感，照抄参考实现即可。
     const payload = {
       availableRamSize: 4983533568,
       availableRomSize: 48114719,
@@ -333,9 +326,7 @@ MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDIAG7QOELSYoIJvTFJhMpe1s/gbjDJX51HBNnEl5HX
 
   // ==================== 专辑曲目补齐 ====================
 
-  /** mobilecdn 的 album/song 行**没有** songname / singername / album_name（只有 filename，
-   *  酷狗约定「歌手 - 歌名」；单曲搜索那条链才有完整字段）。不补的话队列里一整列都是
-   *  「周杰伦 - 龙战骑士」这种拼接名、歌手栏还是空的。补齐顺序：专辑信息 → filename 拆分。 */
+  /** mobilecdn 的 album/song 行**没有** songname / singername / album_name（只有 filename，酷狗约定「歌手 - 歌名」；单曲搜索那条链才有完整字段）。不补的话队列里一整列都是拼接名、歌手栏是空的。 */
   function enrichAlbumSong(row, album) {
     const song = mapSong(row);
     if (!row.songname && row.filename) {
@@ -358,7 +349,7 @@ MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDIAG7QOELSYoIJvTFJhMpe1s/gbjDJX51HBNnEl5HX
 
   // ==================== 取流 ====================
 
-  /** 主链：/v5/url（android 签名 + signKey + dfid + 登录态）。返回 {url, br, type, level} 或 {msg} */
+  /** 主链：/v5/url（android 签名 + signKey + dfid + 登录态） */
   async function streamUrlV5(device, song, level) {
     const spec = LEVELS[level] || LEVELS.standard;
     const hash = String(song.hash || '').toLowerCase();
@@ -407,8 +398,7 @@ MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDIAG7QOELSYoIJvTFJhMpe1s/gbjDJX51HBNnEl5HX
     };
   }
 
-  /** 兜底链：trackercdn i/v2（key = md5(hash + 'kgcloudv2')，纯匿名、无签名）。
-   *  实测 https 同样可用，且这条链一律回 128k mp3（br 参数被忽略）—— 只当取流兜底。 */
+  /** 兜底链：trackercdn i/v2（key = md5(hash + 'kgcloudv2')，纯匿名无签名；实测 https 同样可用，且一律回 128k mp3、br 参数被忽略 —— 只当取流兜底） */
   async function streamUrlLegacy(song, level) {
     const spec = LEVELS[level] || LEVELS.standard;
     const hash = String(song.hash || '').toLowerCase();
@@ -433,13 +423,10 @@ MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDIAG7QOELSYoIJvTFJhMpe1s/gbjDJX51HBNnEl5HX
   const HASH_RE = /^[0-9a-f]{32}$/;
 
   // ==================== 歌词 ====================
-  // 两步链（2026-09-26 实机验证，探针见 tmp/kugou-lyric-probe.cjs）：
-  //   ① krcs.kugou.com/search —— 关键词 + hash + duration(ms) + album_audio_id 换候选（实测一次回 20 条）
-  //   ② lyrics.kugou.com/download —— id + accesskey 换正文；content 是 **base64**，
-  //      charset=utf8 时解出来就是 UTF-8 的 LRC。要 lrc 不要 krc：krc 是加密格式，还得再解一层。
-  // 为什么不能「取第一条」：上游的 candidates 按 **score** 排序，而 score 排的是歌词本身的热度，
-  // 不是「与这首歌的匹配度」——实测同一首歌里 score 最高的那条是 UGC 上传（歌手字段是上传者昵称、
-  // 正文头部还写着别人的名字）。所以由 pickLyricCandidate 按曲名 / 歌手 / 时长重排。
+  // 两步链（2026-09-26 实机验证）：① krcs.kugou.com/search（关键词 + hash + duration(ms) + album_audio_id
+  // 换候选）② lyrics.kugou.com/download（id + accesskey 换正文；content 是 **base64**，charset=utf8 时解
+  // 出来就是 LRC —— 要 lrc 不要 krc：krc 是加密格式，还得再解一层）。
+  // 不能「取第一条」：candidates 按 **score** 排序，而 score 排的是歌词本身的热度、不是匹配度 —— 实测最高分的常是 UGC 上传（歌手字段是上传者昵称）；由 pickLyricCandidate 按曲名 / 歌手 / 时长重排。
   const LRC_SEARCH_BASE = 'https://krcs.kugou.com';
   const LRC_DOWNLOAD_BASE = 'https://lyrics.kugou.com';
 
@@ -450,9 +437,7 @@ MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDIAG7QOELSYoIJvTFJhMpe1s/gbjDJX51HBNnEl5HX
       .replace(/[\s\-_·、，,。.()（）[\]【】'"]/g, '');
   }
 
-  /** 候选打分（纯函数，便于用例直接喂样本）。判据权重：曲名 40 > 歌手 30 > 时长（每 0.5 秒扣 1 分，
-   *  最多扣 20）> 上游 score（每 10 分折 1 分，最多 10）。
-   *  时长只作辅助：曲库给的是整秒，候选给的是毫秒，本来就有系统性误差，压过曲名就本末倒置了。 */
+  /** 候选打分（纯函数，便于用例直接喂样本）：权重曲名 40 > 歌手 30 > 时长（每 0.5 秒扣 1 分、上限 20）> 上游 score（10 分折 1、上限 10）。时长只作辅助：曲库给整秒、候选给毫秒，本就压不过曲名。 */
   function pickLyricCandidate(candidates, want) {
     const list = (Array.isArray(candidates) ? candidates : []).filter(
       (c) => c && c.id && c.accesskey

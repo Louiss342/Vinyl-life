@@ -1,9 +1,6 @@
-// 专辑墙「唱片离墙」回归（列表模式 / 专辑队列模式）：
-//   A 纯函数：queuedAlbumPaths —— 队列里排着哪些专辑；
-//   B 视图：updatePlaying 的进出队列动画 —— 排进列表时唱片飞离墙面，
-//     退出列表模式（队列收敛回当前专辑）时滑回封套，首帧只回写状态不播动画；
-//   C 样式真值：离墙态覆盖「播放中 / 已排入列表」两种卡片，悬停不把已离墙的唱片勾回来；
-//     播放中的卡片不再着色（2026-09-27：用户不要「选中」那套视觉，离墙与播放器已经报得够清楚）。
+// 专辑墙「唱片离墙」回归（列表模式 / 专辑队列模式）：A 纯函数 queuedAlbumPaths（队列涉及哪些专辑）；
+// B 视图 updatePlaying 的进出队列动画（排进列表飞离墙面、退出列表模式滑回封套、首帧只回写状态不播动画）；
+// C 样式真值（离墙态覆盖「播放中 / 已排入列表」，悬停不把离墙的勾回来，播放中的卡片不再着色）。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -81,7 +78,7 @@ test('queuedAlbumPaths：队列涉及哪些专辑（去重、跳过没有 albumN
   const { queuedAlbumPaths } = loadModule('src/core/queue.ts');
   const paths = queuedAlbumPaths([
     { albumNotePath: 'Albums/叶惠美.md' },
-    { albumNotePath: 'Albums/叶惠美.md' }, // 同一张的第二首
+    { albumNotePath: 'Albums/叶惠美.md' },
     { albumNotePath: 'Albums/七里香.md' },
     {}, // 没归属的曲目（理论上不该有，但别把 undefined 塞进集合）
   ]);
@@ -95,8 +92,7 @@ test('queuedAlbumPaths：空队列 → 空集合（播放停止时所有唱片�
 
 // ============ B. 视图：进出队列的动画 ============
 
-/** 假卡片：够 updatePlaying / playDiscReturn / animateDiscLiftOff 走完
- *（classList + Obsidian 的 addClass/removeClass + querySelector('.vinyl-shelf-disc')） */
+/** 假卡片：够 updatePlaying / playDiscReturn / animateDiscLiftOff 走完（classList + Obsidian 的 addClass/removeClass + querySelector('.vinyl-shelf-disc')） */
 function makeCard() {
   const classes = new Set();
   const disc = {
@@ -179,7 +175,6 @@ test('播放状态：首帧只回写状态，队列里的专辑唱片离墙但�
 
 test('排进列表：唱片飞离墙面（列表模式下点专辑的即时反馈）', () => {
   const { view, a, b } = makeViewPair();
-  // 第一帧：B 还在墙上（A 在播）
   view.updatePlaying(snap([track('Albums/A.md')], 'Albums/A.md'));
   assert.equal(b.classList.contains('is-queued'), false);
   // 列表模式下点了 B → 排到队尾

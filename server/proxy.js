@@ -1,33 +1,23 @@
-// 出口代理（HTTP CONNECT）—— 网关自己跑在用户机器的 Node / Electron 里，
-// 内置 fetch（undici）**不读系统代理**：于是出现「浏览器能打开封面、插件下载不了」这类
-// 「同一台机器两个链路一个好一个坏」的怪象（见 README 的问题排查）。这里给网关补上同一条出口。
-//
-// 配置来源（按优先级）：
-//   ① VINYL_PROXY —— 插件每次启动网关时写入「系统代理」（Electron session.resolveProxy 的结果）；
-//      手动调试也可以直接指定：'http://127.0.0.1:7890'、'PROXY host:port'、'DIRECT'。
-//   ② HTTPS_PROXY / HTTP_PROXY / ALL_PROXY —— 常规环境变量（值可以是 URL 或 host:port）。
-//   ③ 都没有 → 直连。NO_PROXY（逗号分隔，支持 * 与后缀匹配）命中的主机一律直连。
-//
-// 只支持 HTTP 代理（CONNECT 隧道）；SOCKS / 无法识别的配置会记一条日志后按直连处理 ——
-// 不支持的形态显式留痕，不做「静默半生效」。
-// 手写隧道而不是引三方依赖：需要的就是「CONNECT + 把 socket 交给 http.request」这点代码。
+// 出口代理（HTTP CONNECT）：网关跑在用户的 Node / Electron 里，内置 fetch（undici）不读系统代理，
+// 于是出现「浏览器能打开封面、插件下载不了」这类同机双链路不一致的怪象，这里补上同一条出口。
+// 配置优先级：VINYL_PROXY（启动网关时写入 Electron session.resolveProxy 的结果）→
+// HTTPS_PROXY / HTTP_PROXY / ALL_PROXY → 直连；NO_PROXY 命中的一律直连。
+// 只支持 HTTP 代理（CONNECT 隧道）：SOCKS / 认不出的配置记日志后按直连（显式留痕，不「静默半生效」）。
 const net = require('net');
 const tls = require('tls');
 const http = require('http');
 
-/** 代理阶段的失败：带 vinylProxy 标记 —— 调用方（网关）据此原样上抛，不当作「目标不可达」 */
+/** 代理阶段的失败：带 vinylProxy 标记，调用方（网关）据此原样上抛，不当作「目标不可达」 */
 function proxyError(msgFn, key, params) {
   const err = new Error(msgFn(key, params));
   err.vinylProxy = true;
   return err;
 }
 
-/** 单个地址（'http://user:pass@host:port' / 'host:port' / 'user:pass@host:port'）→ http 代理配置 */
+/** 单个地址（URL / `host:port` / `user:pass@host:port`）→ http 代理配置 */
 function httpProxyFrom(value, source, raw) {
   const isUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(value);
-  // 裸形态先过一道形状检查：认不出的值（配置写错）显式标记，别当成国际化主机名去连。
-  // 两种裸形态都认：`host:port` 与 `user:pass@host:port` —— 后者是 curl 系工具的常规写法
-  //（不支持它的话，用户配了代理却一路走 direct，还会被当成「配置写错」记进日志）。
+  // 裸形态先过形状检查：认不出的显式标记（别当主机名去连）；`user:pass@host:port` 也要认 —— curl 系工具的常规写法，不认就一路 direct 还被记成「配置写错」。
   const bareHost = /^[A-Za-z0-9.\-_]+(:\d+)?$/;
   const bareWithAuth = /^[^@\s/]+@[A-Za-z0-9.\-_]+(:\d+)?$/;
   if (!isUrl && !bareHost.test(value) && !bareWithAuth.test(value)) {
@@ -39,9 +29,8 @@ function httpProxyFrom(value, source, raw) {
   } catch (_) {
     return { mode: 'unsupported', source, raw };
   }
-  // 只认 http/https：隧道（CONNECT）那套实现只对这两种协议成立。SOCKS 一律按不支持处理 ——
-  // 不支持 = 直连，用户立刻看得出「代理没生效」；照 HTTP 代理解析则会把所有请求都往一个
-  // SOCKS 端口发 CONNECT，全线失败，而日志还写着「经代理」，把排查带偏。
+  // 只认 http/https：CONNECT 隧道只对这两种协议成立。SOCKS 按不支持处理 = 直连，用户立刻看得出
+  //「代理没生效」；照 HTTP 代理解析会把请求全发往一个 SOCKS 端口，日志却写着「经代理」，带偏排查。
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     return { mode: 'unsupported', source, raw };
   }
@@ -49,7 +38,7 @@ function httpProxyFrom(value, source, raw) {
   if (!url.hostname || !Number.isInteger(port) || port <= 0 || port > 65535) {
     return { mode: 'unsupported', source, raw };
   }
-  // 代理需要认证时：把 user:pass 变成 CONNECT 的 Proxy-Authorization 头
+  // 代理要认证时：user:pass → CONNECT 的 Proxy-Authorization 头
   const auth = url.username
     ? 'Basic ' +
       Buffer.from(`${decodeURIComponent(url.username)}:${decodeURIComponent(url.password)}`).toString('base64')
@@ -57,12 +46,12 @@ function httpProxyFrom(value, source, raw) {
   return { mode: 'http', host: url.hostname, port, auth, source, raw };
 }
 
-/** 代理配置字符串 → 配置对象。形态：'DIRECT' / 'PROXY host:port' / 'PROXY a:1; PROXY b:2; DIRECT' / 'http://h:p' / 'h:p' */
+/** 代理配置字符串 → 配置对象。形态：DIRECT / `PROXY host:port` / `PROXY a:1; PROXY b:2; DIRECT` / `http://h:p` / `h:p` */
 function parseProxySpec(raw, source) {
   const text = String(raw || '').trim();
   if (!text) return null;
   if (/^direct$/i.test(text)) return { mode: 'direct', source, raw: text };
-  // Electron resolveProxy 的「代理链」形态：取第一个可用条目（DIRECT 即直连，SOCKS 暂不支持）
+  // Electron resolveProxy 的「代理链」形态：取第一个可用条目（DIRECT 即直连）
   if (/(^|;)\s*(PROXY|SOCKS5?|HTTPS?|DIRECT)\s/i.test(text)) {
     for (const part of text.split(';')) {
       const m = /^\s*(PROXY|SOCKS5?|HTTPS?|DIRECT)\s*(.*)$/i.exec(part);
@@ -151,7 +140,7 @@ function connectViaProxy(proxy, host, port, signal, msg) {
         done(reject, proxyError(msg, 'gw.proxyRejected', { status: status || '?' }));
         return;
       }
-      // 头之后的字节属于隧道数据：塞回流里，别丢；握手监听器摘掉，后续数据归消费者
+      // 头之后的字节属于隧道数据：塞回流里别丢；摘掉握手监听器，后续数据归消费者
       const rest = Buffer.from(buf.slice(end + 4), 'latin1');
       if (rest.length) sock.unshift(rest);
       sock.removeListener('data', onHandshakeData);
@@ -165,12 +154,7 @@ function connectViaProxy(proxy, host, port, signal, msg) {
   });
 }
 
-/**
- * 把已建好的隧道 socket 交给 http 客户端。
- * 必须挂在 Agent 的 createConnection 上：http.request 的「agent: false + 每请求 createConnection」
- * 组合会被忽略（Node 只为 agent: false 造了个默认 Agent），结果 socket 直连出去 ——
- * 表现就是「明文打到 443 端口」（源站回 `The plain http request was sent to https port`）。
- */
+/** 把隧道 socket 交给 http 客户端：必须挂在 Agent 的 createConnection 上 —— http.request 的「agent: false + 每请求 createConnection」会被忽略（Node 给它造了默认 Agent），socket 直连出去，表现是「明文打到 443 端口」。 */
 function tunnelAgent(stream) {
   const agent = new http.Agent({ keepAlive: false, maxSockets: 1 });
   agent.createConnection = () => stream;
@@ -204,13 +188,13 @@ function adaptResponse(res) {
     json: () => collect().then((b) => JSON.parse(b.toString('utf8'))),
     arrayBuffer: () =>
       collect().then((b) => {
-        // 复制成精确长度的 ArrayBuffer：Buffer.concat 的底层池子可能更大
+        // 复制成精确长度：Buffer.concat 的底层池子可能更大
         const out = new Uint8Array(b.length);
         out.set(b);
         return out.buffer;
       }),
     body: {
-      // qq.js 的 CDN 探测会先判 typeof cancel==='function' 再调；给它一个同形的实现
+      // qq.js 的 CDN 探测会先判 typeof cancel==='function' 再调：给个同形实现
       cancel: () => {
         res.destroy();
         return Promise.resolve();
@@ -281,13 +265,13 @@ async function proxiedOnce(target, options, config, msg) {
         port,
         path: `${target.pathname}${target.search}`,
         method: (options.method || 'GET').toUpperCase(),
-        // 显式写 Host：隧道里 http 客户端不知道自己在跟 https 目标说话，默认会带上 :443
+        // 显式写 Host：隧道里 http 客户端不知道目标其实是 https，默认会带上 :443
         headers: { ...(options.headers || {}), Host: target.host },
         agent: tunnelAgent(stream),
         signal,
       },
       (res) => {
-        // 请求结束后一并回收隧道（非 keep-alive；每次请求一条隧道，语义最直白）
+        // 请求结束后一并回收隧道（非 keep-alive：每请求一条隧道，语义最直白）
         res.once('close', () => {
           try {
             stream.destroy();
@@ -310,7 +294,7 @@ async function proxiedFetch(target, options, config, msg) {
     const location = res.headers.get('location');
     const redirect = options.redirect !== 'manual';
     if (redirect && res.status >= 300 && res.status < 400 && location) {
-      // 丢弃这一跳的响应体（destroy 隧道），按 Location 继续
+      // 丢弃这一跳的响应体（销毁隧道），按 Location 继续
       try {
         await res.body.getReader().cancel();
       } catch (_) {}
@@ -323,11 +307,8 @@ async function proxiedFetch(target, options, config, msg) {
 }
 
 /**
- * 可代理的 fetch 封装：签名与 fetch 同形 —— (url, options) => Promise<Response 同形对象>。
- * - 直连配置（或 NO_PROXY 命中）→ 原样转发给 baseFetch（网关传内置 fetch），行为与从前完全一致，
- *   测试里对 fetch 的桩也照样生效；
- * - 有代理 → CONNECT 隧道（https 目标在隧道上再套 TLS），此模式下不经 baseFetch。
- * 代理**自身**的失败带 vinylProxy 标记，调用方原样上抛（别当成「目标不可达」吞掉原因）。
+ * 可代理的 fetch 封装（签名同 fetch）：直连 / NO_PROXY 命中时原样转发 baseFetch（测试里的 fetch 桩照旧生效），有代理时
+ * 走 CONNECT 隧道（https 再套 TLS）而不经 baseFetch。代理自身的失败带 vinylProxy 标记 —— 调用方原样上抛，别当「目标不可达」。
  */
 function createProxyFetch(baseFetch, config, deps = {}) {
   const msg = deps.msg || ((key) => key);

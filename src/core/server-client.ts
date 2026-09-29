@@ -157,8 +157,8 @@ export class ServerClient {
     });
   }
 
-  // 封面代理下载（避开浏览器 CORS）。失败时透传网关给的原因（图床超时 / 404 / 被拦等），
-  // 而不是只留一个 HTTP 500 —— 导入提示与控制台要靠它分流病因。
+  // 封面代理下载（避开浏览器 CORS）；失败时透传网关给的原因（图床超时 / 404 / 被拦等）而不是只留一个
+  // HTTP 500 —— 导入提示与控制台要靠它分流病因。
   async fetchCover(url: string): Promise<ArrayBuffer> {
     const res = await withRequestTimeout(
       requestUrl({ url: this.url('/api/cover', { url }), headers: this.authHeaders(), throw: false })

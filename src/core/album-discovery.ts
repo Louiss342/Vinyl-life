@@ -55,8 +55,8 @@ export interface AlbumDiscoveryContext {
   kugou: Pick<KugouService, 'search'>;
 }
 
-// scalarText 而非 String(value)：上游字段缺省时可能是对象，String() 会得到 "[object Object]"
-// 这种看似有效实则无意义的取值，scalarText 对非标量一律给空串（与 import.ts / album-index.ts 同一口径）
+// scalarText 而非 String()：非标量（缺省字段可能是对象）给空串，而 String() 会得到
+// "[object Object]" 这种看似有效实则无意义的取值（与 import.ts / album-index.ts 同一口径）
 function text(value: unknown): string {
   return scalarText(value).trim();
 }
@@ -215,19 +215,15 @@ function dedupe(items: AlbumSearchCandidate[]): AlbumSearchCandidate[] {
 }
 
 // ============ 本地相关度（模糊重排） ============
-// 上游只按自己的索引给结果：拼写差一两个字、词序颠倒、只记得标题后半截的查询，
-// 它要么把对的那张排到很后面（前 10 条里根本没有），要么干脆塞一堆沾边的充数。
-// 拿到更大的候选池后，本地按「文本上有多像」重排一遍，才能真正把对的捞上来。
-// 分档（也是剪尾阈值的依据）：
-//   ≥60 确有文本关联：标题 / 艺人 / 歌名整体命中，或分词全中
-//   30..59 勉强关联：分词中了一部分，或拼写差一两个字（编辑距离近似）
-//   <30 看不出关联：只是上游觉得沾边
+// 上游只按自己的索引排：差一两个字、词序颠倒、只记得半截的查询，对的那张常被排到页外。
+// 拿到更大的候选池后在本地按「文本有多像」重排，才能真正把它捞上来。分档（也是剪尾阈值的依据）：
+//   ≥60 确有文本关联（整体命中，或分词全中）；30..59 勉强（分词中一部分 / 近似拼写）；<30 看不出关联
 
 const SPLIT_RE = /[\s\p{P}\p{S}]+/u;
 const FOLD_RE = /[\s\p{P}\p{S}]+/gu;
 
-/** 折叠：NFKC（全角→半角、兼容字符归位）+ 小写 + 去空白标点，用于「是否相等 / 是否包含」的比对。
- *  中文没有大小写，但中英混排、全角括号、书名号在曲名里很常见，折一下能省掉一堆假阴性。 */
+/** 折叠：NFKC（全角→半角）+ 小写 + 去空白标点，用于「是否相等 / 是否包含」的比对 ——
+ *  曲名里中英混排、全角括号、书名号很常见，折一下能省掉一堆假阴性。 */
 function fold(value: string): string {
   return String(value || '').normalize('NFKC').toLocaleLowerCase().replace(FOLD_RE, '');
 }
@@ -272,8 +268,8 @@ function similarity(a: string, b: string): number {
   return distance > budget ? 0 : 1 - distance / longest;
 }
 
-/** 词级模糊命中：整串近似，或字段里存在一段长度相近的近似片段
- *（「叶慧美」要能命中《叶惠美 2003 演唱会》这种带尾巴的标题）。 */
+/** 词级模糊命中：整串近似，或字段里有一段长度相近的近似片段
+ *（「叶慧美」要能命中《叶惠美 2003 演唱会》这种带尾巴的标题） */
 function fuzzyHit(token: string, field: string): boolean {
   const budget = typoBudget(token.length);
   if (!field || !budget) return false;
@@ -295,10 +291,9 @@ function scoreCandidate(item: AlbumSearchCandidate, query: string): number {
   const fields = [title, artist, track].filter(Boolean);
   const parts = tokenize(query);
   const multi = parts.length > 1;
-  // ① 整体命中：相等 > 前缀 > 包含。歌名要单独给高分：搜歌名找专辑是主要用法之一，
-  //    而专辑标题里压根不会有歌名（「晴天」→《叶惠美》），只能靠歌曲命中把它捞上来。
-  //    多词查询里「整串嵌进标题」要打折：它会奖励《周杰伦《叶惠美》吉他翻唱版》这种
-  //    把查询词整个嵌住的名字，而用户多半在找专辑本身 —— 多词查询的分词命中（②）才是真信号。
+  // ① 整体命中：相等 > 前缀 > 包含。歌名单独给高分：「搜歌名找专辑」是主要用法，而专辑标题
+  //    里压根不会有歌名（「晴天」→《叶惠美》）。多词查询里整串命中要打折 —— 它会奖励
+  //    《周杰伦《叶惠美》吉他翻唱版》这种把查询整个嵌住的名字，而分词命中（②）才是真信号
   if (title && title === q) return 100;
   if (track && track === q) return 96;
   if (artist && artist === q) return 90;
@@ -307,17 +302,16 @@ function scoreCandidate(item: AlbumSearchCandidate, query: string): number {
   if (title.includes(q)) return multi ? 66 : 80;
   if (track.includes(q)) return multi ? 64 : 76;
   if (artist.includes(q)) return 70;
-  // ② 分词：多词查询（「周杰伦 叶惠美」「jay chou」）不分先后，全中才算强命中。
-  //    其中「有一个词正好就是歌手名」再加一档：这是「专辑名 + 歌手」的典型写法，
-  //    靠它才能把翻唱版、同名合辑挡在后面
+  // ② 分词：多词查询（「周杰伦 叶惠美」「jay chou」）不分先后，全中才算强命中；
+  //    其中一个词正好是歌手名再加一档 ——「专辑名 + 歌手」的典型写法，靠它把翻唱版挡在后面
   if (multi) {
     const hits = parts.filter((part) => fields.some((field) => fuzzyHit(part, field))).length;
     if (hits === parts.length) return parts.some((part) => part === artist) ? 74 : 66;
     if (hits > 1) return 46;
     if (hits === 1) return 34;
   }
-  // ③ 整串近似：拼写差一两个字。上限压在 60 以下 —— 剪尾的「确有关联」线是 60，
-  //    光靠近似不该够到那条线（否则一条近似命中就能把整池的兜底项全剪掉）。
+  // ③ 整串近似：拼写差一两个字。上限压在 60 以下 —— 剪尾的「确有关联」线就是 60，
+  //    光靠近似够到那条线，一条近似命中就能把整池的兜底项全剪掉。
   //    标题 / 歌名上的近似比歌手名上的可信：「叶慧美」要找的是专辑，不是名字像的那个歌手
   const bestName = Math.max(similarity(q, title), similarity(q, track));
   if (bestName > 0) return Math.round(30 + bestName * 28);
@@ -329,10 +323,9 @@ function scoreCandidate(item: AlbumSearchCandidate, query: string): number {
 
 // ============ 关联已有：拿搜索结果去库里找最像的那几张 ============
 
-/** 把库里的专辑按「与这张搜索结果有多像」排序（关联弹窗用）。
- *  标题是主信号 —— 同名版本（原版 / 重制版 / 现场版）必须排在一起，这正是容易选错的地方；
- *  歌手与年份各给一档加分（同名不同歌手、差了十年的不该混进第一梯队）。
- *  只用于排序，界面不展示分数。 */
+/** 把库里的专辑按「与这张搜索结果有多像」排序（关联弹窗用）。标题是主信号 —— 同名版本
+ *（原版 / 重制版 / 现场版）必须排在一起，这正是容易选错的地方；歌手与年份各给一档加分
+ *（同名不同歌手、差了十年的不该混进第一梯队）。只用于排序，界面不展示分数。 */
 export function rankLibraryMatches(
   candidate: Pick<AlbumSearchCandidate, 'title' | 'artists' | 'releaseDate'>,
   albums: AlbumInfo[]
@@ -370,8 +363,8 @@ export function rankLibraryMatches(
     .map((entry) => entry.album);
 }
 
-/** 模糊筛选（关联弹窗的搜索框）：与在线搜索同一套容错 —— 错字、词序颠倒、只记得半截都能命中。
- *  查询为空 = 全通过（列表按相关度排好即可）。 */
+/** 模糊筛选（关联弹窗的搜索框）：与在线搜索同一套容错（错字、词序颠倒、只记得半截都能命中）；
+ *  查询为空 = 全通过（列表已按相关度排好） */
 export function fuzzyMatches(query: string, ...fields: Array<string | undefined>): boolean {
   const q = fold(query);
   if (!q) return true;
@@ -383,8 +376,8 @@ export function fuzzyMatches(query: string, ...fields: Array<string | undefined>
   return pool.some((field) => fuzzyHit(q, field));
 }
 
-/** 剪尾：池子里只要有一条名副其实的命中（≥60），就把「看不出关联」的（<30）整段去掉。
- *  上游对模糊查询会塞一堆勉强沾边的结果，留着它们不光难看，还会把真想要的那张挤下去。 */
+/** 剪尾：池子里只要有一条名副其实的命中（≥60），就把「看不出关联」的（<30）整段去掉 ——
+ *  上游对模糊查询塞的那堆勉强沾边的结果会把真想要的那张挤下去。 */
 const CUT_FLOOR = 30;
 const CUT_KEEP = 60;
 
@@ -395,23 +388,22 @@ function cutTail(ranked: AlbumSearchCandidate[]): AlbumSearchCandidate[] {
 
 function rank(pool: AlbumSearchCandidate[], query: string): AlbumSearchCandidate[] {
   for (const item of pool) item.score = scoreCandidate(item, query);
-  // 稳定排序：同分保持「上游给的先后」（跨页也是先来先得）——上游的相关度里带着它自己的热度信息，
-  // 拿它当平手的次序，比随便排一个要强
+  // 稳定排序（同分保持上游给的先后，跨页也是先来先得）：上游的相关度里带着它自己的热度信息，
+  // 拿它当平手的次序比随便排一个强
   return [...pool].sort((a, b) => (b.score || 0) - (a.score || 0));
 }
 
-// ============ 已在库中：直接从结果里隐去 ============
-// 需求：已经导入过的专辑不再出现在搜索结果里。索引是现算的（不是搜索时打快照），
-// 所以刚导入一张、或者删掉一张笔记，下一次搜索立刻就能反映出来。
+// ============ 已在库中：标注（不再隐去，见 present） ============
+// 索引是现算的（不是搜索时打快照）：刚导入一张、或删掉一张笔记，下一次搜索立刻反映出来。
 //
 // 判定分两层：
-//   ① 来源 id（neteaseId / qqId）—— 权威，但只管自己那个平台
-//   ② 「标题 + 艺人」指纹 —— 两个平台的目录高度重合，同一张专辑两边都搜得到；
-//      只认 id 的话，刚从网易云导完，QQ 那版还挂在结果里，点下去就是第二张重复笔记
-//  ② 的两边都必须非空，且是折叠后的完全相等（不做模糊）：宁可漏认一张，也不能把别的专辑认成同一张。
-//  笔记的标题就是笔记文件名，用户改过名（「叶惠美 (2003)」）时指纹对不上 —— 那就只剩 ① 兜着。
-//  拼接用换行当分隔符：折叠已经把空白全去掉了，标题 / 艺人里再出现换行的可能性为零，
-//  于是「叶惠美 + 周杰伦」与「叶惠 + 美周杰伦」不会拼成同一个指纹（用空格或斜杠就会有这种歧义）
+//   ① 来源 id（neteaseId / qqId / kugouId）—— 权威，但只管自己那个平台
+//   ② 「标题 + 艺人」指纹 —— 两平台目录高度重合，只认 id 的话刚从网易云导完，QQ 那版
+//      还挂在结果里，点下去就是第二张重复笔记
+//  ② 必须两边都非空且折叠后完全相等（不做模糊）：宁可漏认一张，也不能把别的专辑认成同一张；
+//  笔记标题就是文件名，用户改过名（「叶惠美 (2003)」）时指纹对不上 —— 那就只剩 ① 兜着。
+//  拼接口用换行当分隔符：折叠已去掉所有空白，标题 / 艺人里再出现换行的可能性为零，
+//  于是「叶惠美 + 周杰伦」与「叶惠 + 美周杰伦」不会撞成同一个指纹（用空格或斜杠就会有歧义）
 function nameKey(title: unknown, artist: unknown): string {
   const t = fold(text(title));
   const a = fold(text(artist));
@@ -434,11 +426,11 @@ function libraryIndex(app: App): { ids: Set<string>; names: Set<string> } {
 }
 
 // ============ 搜索节流 ============
-// 搜索框每敲一次字就是一轮「双源 × 网易云两次」的请求，而网易云对短时间内的重复搜索相当敏感
-//（旧端点甚至会直接回 405「操作频繁」）。三层防护，从便宜到昂贵：
-//   ① 缓存：同一个 query 60 秒内只发一次网（回删重打、按回车重复触发都落在这里）
-//   ② 最小间隔：连续搜索之间至少隔 MIN_INTERVAL，避免「敲-停-敲」把请求打散成连发
-//   ③ 冷却：上游明确说限流（HTTP 429）时，该来源暂停 COOLDOWN —— 对着限流重试只会一直撞
+// 敲一次字就是一轮「多源 × 网易云两次」的请求，而网易云对短时间内的重复搜索相当敏感
+//（旧端点甚至直接回 405「操作频繁」）。三层防护，从便宜到昂贵：
+//   ① 缓存 CACHE_TTL：同一个 query 60 秒内只发一次网（回删重打、按回车重复触发都落这里）
+//   ② 最小间隔 MIN_INTERVAL：避免「敲-停-敲」把请求打散成连发
+//   ③ 冷却 COOLDOWN：上游明确说限流（HTTP 429）时该来源暂停 —— 对着限流重试只会一直撞
 const CACHE_TTL = 60_000;
 const MIN_INTERVAL = 600;
 const COOLDOWN = 20_000;
@@ -464,7 +456,7 @@ function cooldownWarning(source: MusicSource): AlbumSearchResult['warnings'][num
 const SOURCES: MusicSource[] = ['netease', 'qq', 'kugou'];
 
 /** 在线搜索的来源范围（「添加」面板的搜索选择）：聚合（默认，与旧行为一致）/ 仅网易云 / 仅 QQ / 仅酷狗。
- *  单源不只是少打请求 —— 另一个来源的限流冷却、未登录提示也一并绕开。 */
+ *  单源不只是少打请求 —— 另一个来源的限流冷却、未登录提示也一并绕开 */
 export type SearchScope = 'all' | 'netease' | 'qq' | 'kugou';
 
 /** 分段控件的档位顺序（界面按这个顺序排） */
@@ -481,9 +473,9 @@ export function scopeSources(scope: SearchScope | undefined): MusicSource[] {
 }
 
 // ============ 结果池 & 翻页 ============
-// 「只有二十条」的解法不是把上限调大一点，而是让池子能一直长：一页 30 条/类型/来源，
-// 首屏只画一部分，剩下的本地展开；展开完了再按 offset 问上游要下一页，并进同一个池子重排。
-// 池子按 query 存（就是原来那份搜索缓存，只是多长了几页），TTL 内同一个词不再打网。
+// 「只有二十条」的解法不是调大上限，而是让池子能一直长：每页 SEARCH_PAGE_SIZE 条/类型/来源，
+// 首屏只画一部分、剩下的本地展开；展开完了再按 offset 问上游要下一页，并进同一个池子重排。
+// 池子按「范围 + 词」存（就是原来那份搜索缓存，只是多长了几页），TTL 内同一个词不再打网。
 
 /** 每类每源一页要多少条：上游给得太少会把对的排到页外，给得太多是在招限流 */
 export const SEARCH_PAGE_SIZE = 30;
@@ -507,8 +499,8 @@ interface SearchSession {
 
 const sessions = new Map<string, SearchSession>();
 
-/** 池子的键 = 范围 + 词：同一个词换个范围必须另起一池 —— 否则「仅 QQ」会端出上一轮聚合的
- *  网易云结果（或反过来，聚合里少一半），而池子里的翻页页码还各自属于不同的来源。 */
+/** 池子的键 = 范围 + 词：换个范围必须另起一池，否则「仅 QQ」会端出上一轮聚合的网易云结果
+ *（或反过来，聚合里少一半），而池子里的翻页页码还各自属于不同的来源。 */
 function sessionKey(scope: SearchScope, query: string): string {
   return `${scope}|${query.toLocaleLowerCase()}`;
 }
@@ -526,8 +518,8 @@ function emptyResult(): AlbumSearchResult {
 }
 
 /** 池子 → 展示列表：本地重排 → 剪尾 → 标注已在库中的。
- *  工具栏方案 2026-09-18：不再隐去 —— 明确入库的同平台专辑照常出现、就地标「已在收藏」；
- *  只凭同名命中的另记一笔（nameInLibrary），界面上给一句弱提示而不是当成同一张。 */
+ *  工具栏方案（2026-09-18）起不再隐去：明确入库的同平台专辑照常出现、就地标「已在收藏」，
+ *  只凭同名命中的另记一笔（nameInLibrary），给弱提示而不是当成同一张。 */
 function present(app: App, query: string, session: SearchSession): AlbumSearchResult {
   const ranked = cutTail(rank(session.pool, query));
   const library = libraryIndex(app);
@@ -614,8 +606,8 @@ async function loadPage(
   const targets = session.sources.filter(
     (source) => !session.exhausted.has(source) && Date.now() >= cooldownUntil[source]
   );
-  // 已经没有可要的东西（都翻到底了 / 都在冷却）：一个请求都不发，也不动池子与页码。
-  // 冷却中的来源还是要留个说法，否则用户会把「没发请求」当成「没有结果」。
+  // 都翻到底 / 都在冷却：一个请求都不发，也不动池子与页码；冷却中的来源仍要留个说法
+  //（否则用户会把「没发请求」当成「没有结果」，同 cooldownWarning）
   if (!targets.length) {
     session.warnings = session.sources
       .filter((source) => !session.exhausted.has(source))
@@ -643,8 +635,8 @@ async function loadPage(
     }
     const { items, raw } = result.value;
     const added = mergeInto(session.pool, items);
-    // 「这个来源还有没有下一页」：网易云的 offset 翻页是准的（给少于要的即到底）；
-    // QQ / 酷狗的页码端点对页大小有夹取，只有「这一页没带来新东西」才可靠 —— 两条一起用，谁先到算谁
+    // 有没有下一页：网易云 offset 翻页准（给少于要的即到底）；QQ / 酷狗的页码端点对页大小
+    // 有夹取，只有「这一页没带来新东西」可靠 —— 两条一起用，谁先到算谁
     if (raw === 0 || added === 0 || (source === 'netease' && raw < SEARCH_PAGE_SIZE)) {
       session.exhausted.add(source);
     }
@@ -660,7 +652,7 @@ async function loadPage(
   session.at = Date.now();
 }
 
-/** 首屏搜索：池子里没有这个词（或上一轮带错、已过期）时重打网络，否则直接复用池子。
+/** 首屏搜索：池子里有这个词且没过期、上一轮没带错时直接复用，否则重打网络。
  *  scope 是「搜索来源」选择，默认聚合（老调用方不传就是旧行为）。 */
 export async function discoverAlbums(
   ctx: AlbumDiscoveryContext,
@@ -686,15 +678,15 @@ export async function discoverAlbums(
     dirty: false,
   };
   // 池子建起来之后才登记：先登记的话，连按两次回车时第二次会命中一个还没有内容的池子，
-  // 于是「搜到了」和「没搜到」同时出现在屏幕上（后者还盖着前者）
+  // 于是「搜到了」和「没搜到」同时出现在屏幕上（后者盖着前者）
   await loadPage(ctx, query, session);
   sessions.set(key, session);
   trimSessions();
   return present(ctx.app, query, session);
 }
 
-/** 「加载更多」：把上游更深处的一页拉进池子，再按同一套逻辑重排后返回整个池子。
- *  池子已经翻到底（或有来源在冷却）时不发请求，如实返回现有的池子。 */
+/** 「加载更多」：把上游更深处的一页拉进池子，按同一套逻辑重排后返回整个池子；
+ *  已翻到底（或有来源在冷却）时不发请求，如实返回现有池子。 */
 export async function loadMoreAlbums(
   ctx: AlbumDiscoveryContext,
   rawQuery: string,

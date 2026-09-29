@@ -1,8 +1,6 @@
 // 收藏健康检查：静态扫描（失效引用 / 封面 / 音源）+ 可选的在线试播 + 「仅收藏」标记。
-//
-// 分两档列：**错误**（真的坏了：库外路径失效、指定音源不可用、播放失败）
-// 与**提示**（无音源、无封面 —— 很可能是有意只收着的乐评）。标了 collectOnly 的专辑
-// 连提示都不出；「标记为仅收藏」按钮把 collectOnly 写进笔记 frontmatter（数据归笔记）。
+// 分两档：**错误**（真的坏了：库外路径失效、指定音源不可用、播放失败）与**提示**（无音源、无封面 ——
+// 很可能是有意只收着的乐评）。collectOnly 的专辑连提示都不出，「标记为仅收藏」写进笔记 frontmatter。
 import { EventRef, Modal, TFile } from 'obsidian';
 import type VinylLifePlugin from '../main';
 import {
@@ -59,8 +57,7 @@ export class SourceSwitchModal extends Modal {
   }
 }
 
-/** 重新定位库外音频：给一条失效的库外引用挑个新文件夹（或手填绝对路径），
- *  把**笔记里写着的引用**改过去 —— 库外的文件归用户自己管，插件不搬文件。 */
+/** 重新定位库外音频：给一条失效的库外引用挑个新文件夹（或手填绝对路径），只把**笔记里写着的引用**改过去 —— 库外的文件归用户自己管，插件不搬文件。 */
 export class RelocateAudioModal extends Modal {
   private value = '';
   private input: HTMLInputElement | null = null;
@@ -110,8 +107,8 @@ export class RelocateAudioModal extends Modal {
     }
     button.disabled = true;
     const oldRef = this.issue.detail.trim();
-    // scalarText 而非 String(v)：旧数据里这一项可能是对象，String() 会得到 "[object Object]"
-    // 这种看似有效实则匹配不上的取值（scalarText 对非标量一律给空串，同 import.ts 的口径）
+    // scalarText 而非 String(v)：旧数据里这一项可能是对象，String() 会得到 "[object Object]" 这种
+    // 看似有效实则匹配不上的取值（scalarText 对非标量给空串，同 import.ts 的口径）
     const norm = (v: unknown) => scalarText(v).trim().replace(/^\[\[|\]\]$/g, '');
     const sep = next.includes('\\') ? '\\' : '/';
     let changed = 0;
@@ -159,8 +156,7 @@ export class LibraryHealthModal extends Modal {
   }
 
   onOpen(): void {
-    // 「检查一遍」的语义：音源检测的缓存先作废，这次扫描看到的是此时此刻的结论
-    // （库外目录的改动没有事件可听，只有这里与专辑墙的「刷新」能把它捞回来）
+    // 「检查一遍」的语义：先作废音源检测的缓存 —— 库外目录的改动没有事件可听，只有这里与专辑墙的「刷新」能把它捞回来
     invalidateSourceCache();
     this.render();
   }
@@ -220,9 +216,7 @@ export class LibraryHealthModal extends Modal {
         row.createEl('button', { text: t('health.switch') }).onclick = () =>
           new SourceSwitchModal(this.plugin, issue.album.path).open();
       }
-      // 分档之外再往前一步：这份列表要能直接修，而不只是看得见
       if (issue.kind === 'external') {
-        // 改完等元数据缓存更新再重画：立刻重画会读到旧引用，列表照旧（以为没生效）
         row.createEl('button', { text: t('health.relocate'), cls: 'mod-cta' }).onclick = () =>
           new RelocateAudioModal(this.plugin, issue, () =>
             this.refreshOnMetadataChange(issue.album.path)
@@ -252,8 +246,7 @@ export class LibraryHealthModal extends Modal {
     }
   }
 
-  /** 「重试并清除」：按那条失败记录的音源策略再试一次。
-   *  成功 → 删掉失败记录（列表里也就没有这一条了）；失败 → 刷新时间戳并如实报原因。 */
+  /** 「重试并清除」：按那条失败记录的音源策略再试一次；成功删掉记录（列表里也就没有这一条了），失败刷新时间戳并如实报原因。 */
   private async retryPlayback(
     album: AlbumInfo,
     source: ActiveSource | 'auto',
@@ -293,7 +286,6 @@ export class LibraryHealthModal extends Modal {
     const file = this.plugin.app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile)) return;
     try {
-      // 回调参数显式标注（理由同 import.ts）：不标注则 fm 是 any，写属性算不安全访问
       await this.plugin.app.fileManager.processFrontMatter(
         file,
         (fm: Record<string, unknown>) => {
@@ -301,8 +293,7 @@ export class LibraryHealthModal extends Modal {
         }
       );
       notice(t('health.markedNotice'));
-      // 元数据缓存是异步更新的：立刻重画会照旧读到旧属性（用户以为没生效）。
-      // 等这条笔记的缓存更新事件再重画；弹窗关掉时 Component 的清理会自动摘掉监听。
+      // 等这条笔记的 changed 事件再重画（理由见 refreshOnMetadataChange；监听由 onClose 摘掉）
       this.markRef = this.plugin.app.metadataCache.on('changed', (changed) => {
         if (changed.path !== path) return;
         if (this.markRef) {

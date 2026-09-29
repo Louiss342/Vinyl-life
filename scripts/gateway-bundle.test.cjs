@@ -1,7 +1,6 @@
 // 网关内联载荷：构建期把 server.js 压成 GATEWAY_GZIP 塞进 main.js，运行时 gunzipSync 还原。
-// 这份载荷坏了 / 落后一版时，插件照常启动、只有在线音源整块不可用 —— 属于「用户先发现」的故障，
-// 所以两处都钉住：① 构建脚本自己在写出产物前解压回验；② 产物与 server.js 逐字节一致。
-// ② 挡的是构建期校验挡不住的那种状态：改了 server.js 却没重新构建（工作区里产物是旧的）。
+// 载荷坏了 / 落后一版属于「用户先发现」的故障（插件照常启动，只有在线音源整块不可用），所以钉两处：
+// ① 构建脚本写出产物前解压回验；② 产物与 server.js 逐字节一致（挡「改了 server.js 却没重新构建」）。
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

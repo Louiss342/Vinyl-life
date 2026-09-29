@@ -58,9 +58,7 @@ function loadModule(entry, globals = {}) {
   return runBundle(source, globals);
 }
 
-/** 把多个模块打进同一个 bundle（并从这里取出 setLanguage）。
- *  entryPoints 是「一个入口一个包」，各包各持一份 i18n 实例——切语言必须切到 bundle 内部那一份
- *  （与 i18n.test.cjs 末尾的 provider 测试同款做法）。 */
+/** 多模块打进同一 bundle 并从中取 setLanguage —— entryPoints 是「一个入口一个包」、各包各持一份 i18n 实例，切语言必须切到 bundle 内部那一份（同 i18n.test.cjs 末尾的 provider 测试）。 */
 function loadBundle(entries, globals = {}) {
   const source = esbuild.buildSync({
     stdin: {
@@ -192,7 +190,6 @@ test('queue: qq policy resolves via qq service; auto order is local→netease→
     data: { songs: [{ mid: '001n4C3p1yv0FU', mediaMid: 'm', name: 'S', interval: 100 }] },
   };
 
-  // 显式 qq
   let res = await buildAlbumQueue(album({ sourcePref: 'qq', qqId: '000MkMni19ClKG' }), {
     local,
     netease: null,
@@ -208,7 +205,6 @@ test('queue: qq policy resolves via qq service; auto order is local→netease→
   assert.equal(res.qqSongs, 1);
   assert.equal(res.tracks[0].source, 'qq');
 
-  // auto + 仅 qqId
   res = await buildAlbumQueue(album({ qqId: '000MkMni19ClKG' }), {
     local,
     netease: null,

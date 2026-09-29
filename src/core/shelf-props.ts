@@ -1,14 +1,12 @@
-// 卡片属性：专辑笔记 frontmatter 键 → 卡片显示值。
-// 依赖方向：util ← 本模块 ← album-index（单向；禁止反向 import album-index 的运行时导出，否则成环）。
-// 所有「显示什么属性」的规则都集中在这里：黑名单 / 预设别名 / 值格式化 / 旧设置迁移 / 有序变更。
-// 本模块不依赖 album-index（连类型也不依赖）：属性发现的入参只要求结构上有 displayProps。
+// 卡片属性：专辑笔记 frontmatter 键 → 卡片显示值，所有「显示什么属性」的规则都集中在这里
+//（黑名单 / 预设别名 / 值格式化 / 旧设置迁移 / 有序变更）。
+// 依赖方向 util ← 本模块 ← album-index 单向：禁止从本模块 import album-index（连类型也不依赖，入参只要求结构上有 displayProps）。
 
 import { scalarText } from '../util';
 import { t } from './i18n';
 
 /** 默认卡片属性（顺序即显示顺序）；同时是旧 boolean 结构迁移时的键序真值。
- *  freeze 是护栏：设置里的数组与默认值可能共享引用（DEFAULT_SETTINGS 浅拷贝），
- *  所有变更函数一律返回新数组，设置只整表替换，防止「默认值」被就地改写后永久错乱。 */
+ *  freeze 是护栏：设置里的数组与默认值可能共享引用（DEFAULT_SETTINGS 浅拷贝），故变更函数一律返回新数组、设置只整表替换。 */
 export const DEFAULT_SHELF_PROPS: readonly string[] = Object.freeze([
   'artist',
   'year',
@@ -16,9 +14,8 @@ export const DEFAULT_SHELF_PROPS: readonly string[] = Object.freeze([
   'rating',
 ]);
 
-/** 不参与卡片显示的键：Obsidian 系统键 + 插件功能键。
- *  功能键在卡片上已由封面图 / 右键菜单 / 播放器承载，显示出来会是长 URL 或本机绝对路径。
- *  新增功能字段时在此登记（漏登记只是候选区多一个未勾选项，无害）。 */
+/** 不参与卡片显示的键：Obsidian 系统键 + 插件功能键（后者已由封面图 / 右键菜单 / 播放器承载，
+ *  显示出来会是长 URL 或本机绝对路径）。新增功能字段时在此登记（漏登记只是候选区多一个未勾选项）。 */
 export const SHELF_PROP_BLACKLIST: readonly string[] = Object.freeze([
   'tags',
   'aliases',
@@ -40,9 +37,8 @@ export const SHELF_PROP_BLACKLIST: readonly string[] = Object.freeze([
   'collectOnly',
 ]);
 
-/** 预设别名与值前缀；用户自定义别名（settings.shelfPropLabels）优先。
- *  别名存的是**词典键**而不是文案：卡片属性名是用户可见文案，必须随语言走（词典里的 props.* 一组）。
- *  表刻意精简——猜错比不猜更糟；未覆盖的键回退键名（中文键名如「厂牌:」天然可读）。 */
+/** 预设别名与值前缀；用户自定义别名（settings.shelfPropLabels）优先。别名存的是**词典键**而非文案 ——
+ *  属性名是用户可见文案，必须随语言走（props.* 一组）。表刻意精简：猜错比不猜更糟，未覆盖的键回退键名。 */
 export const PROP_META: Record<string, { labelKey: string; prefix?: string }> = {
   artist: { labelKey: 'props.artist' },
   year: { labelKey: 'props.year' },
@@ -67,7 +63,6 @@ export function propLabel(key: string, overrides?: Record<string, string>): stri
   return meta ? t(meta.labelKey) : key;
 }
 
-/** 值前缀（评分星号等；不改名也不丢失） */
 export function propPrefix(key: string): string {
   return PROP_META[key]?.prefix ?? '';
 }
@@ -101,8 +96,7 @@ function isDate(v: unknown): v is Date {
   return Object.prototype.toString.call(v) === '[object Date]';
 }
 
-// wikilink 显示语义：[[目标|别名]] → 别名（Obsidian 的显示约定），[[目标]] → 目标。
-// 注意与 util.stripWikilink 的路径语义不同——路径解析需要「目标」，卡片显示需要「用户看到的文字」。
+// wikilink 显示语义：[[目标|别名]] → 别名（Obsidian 的显示约定），[[目标]] → 目标。与 util.stripWikilink 的路径语义不同 —— 那要「目标」，卡片要「用户看到的文字」。
 const WIKILINK_DISPLAY_RE = /^\[\[([^\]|#]+)(?:\|([^\]|]*))?\]\]$/;
 
 function unwrapWikilinkForDisplay(raw: string): string {
@@ -129,9 +123,8 @@ export interface PropUsage {
   count: number;
 }
 
-/** 属性发现：聚合已在内存中的专辑（不吃盘，与屏幕所见一致）。
- *  count 只统计「格式化后非空」的专辑——保证勾了至少能看到东西；
- *  显式排序（count desc → 键名），不依赖对象键序（整数样键名会被提前）。 */
+/** 属性发现：聚合已在内存中的专辑（不吃盘，与屏幕所见一致）；count 只统计「格式化后非空」的专辑，
+ *  保证勾了至少能看到东西；按 count desc → 键名显式排序（不依赖对象键序，整数样键名会被提前）。 */
 export function collectShelfPropKeys(
   albums: Array<{ displayProps?: Record<string, string> }>
 ): PropUsage[] {
@@ -190,8 +183,7 @@ export function toggleShelfProp(cur: readonly string[], key: string, on: boolean
   return cur.filter((k) => k !== key);
 }
 
-/** 拖拽落点 → 结果下标：drop 落在 dropKey 行之前/之后。
- *  被拖项先移除、其后的行左移一位，故落点在其后时要减一；落到自己身上返回原位（无副作用）。 */
+/** 拖拽落点 → 结果下标（drop 落在 dropKey 行之前 / 之后）：被拖项先移除、其后的行左移一位，故落点在其后时要减一；落到自己身上返回原位。 */
 export function resolveDropIndex(
   cur: readonly string[],
   dragKey: string,
@@ -205,8 +197,7 @@ export function resolveDropIndex(
   return from < to ? to - 1 : to;
 }
 
-/** 拖拽排序内核：把 key 移到结果数组的 toIndex 位（越界 clamp；返回新数组）。
- *  调用方（视图）负责把「落点行」换算成结果下标——移除被拖项后，其后的行会左移一位。 */
+/** 拖拽排序内核：把 key 移到结果数组的 toIndex 位（越界 clamp；返回新数组）；「落点行 → 结果下标」的换算由调用方负责（见 resolveDropIndex）。 */
 export function reorderShelfProp(cur: readonly string[], key: string, toIndex: number): string[] {
   const from = cur.indexOf(key);
   if (from < 0) return [...cur];

@@ -1,10 +1,8 @@
 // 歌词页视图回归（驱动真实 player-view + 假 DOM）：
 //   ① 三面翻转：歌词面向左、唱片区向右，几何互为镜像、尺寸一致（都是绝对定位填满）
-//   ② 一帧的完整链路：时间 → scrollPlan → 像素（scrollTop）→ 当前行的类、景深与卡拉OK填充
-//      （滚动是**连续**的：两行之间一直在走，换行那一刻正好落在新行中心）
-//   ③ 手动滚动接管：自己写 scrollTop 不算用户意图；用户滚过之后不再被拽回
-//   ④ 视觉中心（位置说了算）：滚到哪哪句亮，正在唱的那句留着填充；停手 4 秒平滑回位
-//   ⑤ 点某一行 = 跳到那句（走引擎的 seekTo）
+//   ② 一帧链路：时间 → scrollPlan → scrollTop → 当前行的类 / 景深 / 卡拉OK填充（滚动是**连续**的：两行之间一直在走，换行那刻落在新行中心）
+//   ③ 手动滚动接管：自己写 scrollTop 不算用户意图，用户滚过之后不再被拽回
+//   ④ 视觉中心由位置说了算（滚到哪哪句亮、正在唱的那句留填充、停手 4 秒平滑回位）；⑤ 点行 = 走引擎的 seekTo 跳那句
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -190,7 +188,6 @@ function loadView(timers) {
       cancelAnimationFrame: () => {},
       matchMedia: (q) => ({ matches: reduceMotion && String(q).includes('reduced-motion') }),
     },
-    // 回位动画按时间插值：时钟归用例管（不然「中途某一帧在哪」没法断言）
     Date: FakeDate,
     document: { hidden: false },
     AbortSignal,
@@ -223,8 +220,7 @@ const LINES = [
   { at: 10000, text: '', },
 ];
 
-/** 造一个只装歌词页需要的部分：行容器 + 滚动容器 + 引擎桩。
- *  liveSeconds 传函数时每帧现取 —— 连续滚动要在一帧里推进时间，得能改。 */
+/** 造一个只装歌词页需要的部分：行容器 + 滚动容器 + 引擎桩。liveSeconds 传函数时每帧现取 —— 连续滚动要在一帧里推进时间。 */
 function makeView({ liveSeconds } = {}) {
   const seeked = [];
   const plugin = {
@@ -246,7 +242,7 @@ function makeView({ liveSeconds } = {}) {
   v.lyricsForKey = 'ne:1';
   v.lyricsState = 'ready';
   v.renderLyricsLines();
-  // 行位置：每行 40px，中心依次 60 / 100 / 140（真机由 measureLyrics 量出来）
+  // 行位置：每行 40px，中心依次 60 / 100 / 140（真机由 measureLyrics 量出来）；容器半高 100
   v.lyricsOffsets = [60, 100, 140];
   return { v, seeked, plugin };
 }
@@ -300,7 +296,6 @@ test('一帧：两行之间一直在走（连续滚动，换行前才动的静�
   let t = 6;
   const { v } = makeView({ liveSeconds: () => t });
   v.syncLyricsScroll();
-  // 第二句中心 100、第三句中心 140，容器半高 100；已唱 (6000-5000)/5000 = 1/5
   assert.equal(v.lyricsScrollEl.scrollTop, 8, '100 + 40×0.2 − 100 = 8 —— 旧版这一刻纹丝不动');
   assert.equal(v.lyricsLineEls[1].classes.has('is-active'), true, '第二句亮起');
   assert.equal(
@@ -378,7 +373,7 @@ test('一帧：间奏行不做填充，行内进度停在 1', () => {
 });
 
 test('引擎缺失（极简依赖）：退回快照里的播放位置，不报错', () => {
-  const { v } = makeView(); // 没有 liveSeconds
+  const { v } = makeView();
   v.lastSnapshot = { currentTime: 5.2 };
   v.syncLyricsScroll();
   assert.equal(v.lyricsLineEls[1].classes.has('is-active'), true);
@@ -388,14 +383,13 @@ test('引擎缺失（极简依赖）：退回快照里的播放位置，不报�
 
 test('手动滚动：用户滚过之后不再被拽回；自己写的 scrollTop 不算用户意图', () => {
   const { v } = makeView({ liveSeconds: 2 });
-  v.lyricsScrollEl.scrollTop = 500; // 用户滚远了
+  v.lyricsScrollEl.scrollTop = 500;
   fire(v.lyricsScrollEl, 'scroll');
   assert.equal(v.lyricsFollow, false, '用户滚过：先不跟着走');
   const writes = v.lyricsScrollEl.scrollWrites;
   v.syncLyricsScroll();
   assert.equal(v.lyricsScrollEl.scrollWrites, writes, '暂停跟随时不再写 scrollTop');
 
-  // 点某一行 = 跳到那句并立刻恢复跟随
   fire(v.lyricsLineEls[1], 'click');
   assert.equal(v.lyricsFollow, true, '点行之后恢复跟随');
 });
@@ -484,7 +478,7 @@ test('停手 4 秒：从停下的地方平滑滑回正在唱的那一句（不�
   assert.equal(v.lyricsScrollEl.scrollTop, 8, '跟随时停在两行之间的对应位置');
   const followTop = 8;
 
-  v.lyricsScrollEl.scrollTop = 120; // 用户滚走
+  v.lyricsScrollEl.scrollTop = 120;
   fire(v.lyricsScrollEl, 'scroll');
   assert.equal(v.lyricsFollow, false);
 
@@ -493,13 +487,13 @@ test('停手 4 秒：从停下的地方平滑滑回正在唱的那一句（不�
   assert.equal(v.lyricsFollow, true);
   assert.equal(v.lyricsScrollEl.scrollTop, 120, '第一帧还没动（缓动从 0 开始）');
 
-  nowMs = 5000 + 210; // 半程
+  nowMs = 5000 + 210;
   v.syncLyricsScroll();
   const mid = v.lyricsScrollEl.scrollTop;
   assert.ok(mid < 120 && mid > followTop, `半程落在起终点之间（实际 ${mid}）—— 不是瞬移`);
   assert.equal(v.lyricsLineEls[2].classes.has('is-active'), true, '回位途中视觉中心仍跟着画面走');
 
-  nowMs = 5000 + 420; // 走完
+  nowMs = 5000 + 420;
   v.syncLyricsScroll();
   assert.equal(v.lyricsScrollEl.scrollTop, followTop, '落回跟随时该在的位置');
   assert.equal(v.lyricsReturn, null, '动画收尾');
@@ -534,7 +528,7 @@ test('暂停时滚走再停手：回位动画也有帧可跑（循环要为它�
   const { v } = makeView({ liveSeconds: 6 });
   v.face = 'lyrics';
   v.lyricsScrollEl.scrollTop = 120;
-  fire(v.lyricsScrollEl, 'scroll'); // 暂停中用户滚走
+  fire(v.lyricsScrollEl, 'scroll');
   nowMs = 5000;
   flushTimers(); // 4 秒到：回位被起
   assert.ok(v.lyricsReturn, '回位动画已起');
@@ -680,8 +674,7 @@ test('接线：滚动只碰位置视觉，位置本身归 rAF（CSS 不能给行
     '卡拉OK填充靠 background-clip: text'
   );
   assert.match(css, /--vinyl-lyric-fill/, '填充进度是个 CSS 变量（视图每帧写一个数）');
-  // 填充挂「正在唱」（时间）而不是「视觉中心」（位置）：用户翻去别的段落时，
-  // 高亮跟着手走、填充灯留在正在唱的那一句上 —— 一眼找回播放位置
+  // 填充挂「正在唱」（时间）而不是「视觉中心」（位置）：用户翻去别的段落时，高亮跟着手走、填充灯留在正在唱的那一句上 —— 一眼找回播放位置
   assert.doesNotMatch(
     css,
     /\.vinyl-lyric-line\.is-active \.vinyl-lyric-text/,
@@ -708,8 +701,7 @@ test('景深：CSS 按 --vinyl-lyric-d 算渐淡与略小，当前行与焦点�
 });
 
 test('歌词行不上模糊（用户明确去掉的）：整段歌词相关的规则里不许再出现 filter', () => {
-  // 模糊试过 0.3px/档：滤镜会关掉次像素抗锯齿，整片词都发虚 —— 观感上只有「糊」没有「深」。
-  // 这条是防回归的闸门：景深只由 opacity / transform 表达。
+  // 模糊试过 0.3px/档：滤镜会关掉次像素抗锯齿，整片词都发虚 —— 观感上只有「糊」没有「深」。这条是防回归的闸门：景深只由 opacity / transform 表达。
   const block = css.slice(css.indexOf('.vinyl-lyric-line {'), css.indexOf('.vinyl-lyric-text {'));
   assert.ok(block.length > 0, '找不到歌词行的样式段（选择器改名了？）');
   assert.doesNotMatch(block, /filter\s*:/, '歌词行不许再加 filter（模糊已被去掉）');

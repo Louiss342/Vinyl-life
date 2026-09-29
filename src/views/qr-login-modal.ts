@@ -1,5 +1,5 @@
-// 网易云登录弹窗：qrimg 自带 data: 前缀（勿重复拼接）→ 2s 轮询 800/801/802/803。
-// 登录只有扫码这一条路径（网页登录与手动粘贴已移除）。
+// 扫码登录弹窗（网易云 / QQ 音乐 / 酷狗音乐共用，provider 给文案与临时图名）：登录只有扫码一条路径。
+// qrimg 可能自带 data: 前缀（勿重复拼接），2s 轮询 800/801/802/803。
 import { App, Modal } from 'obsidian';
 import { ServerManager } from '../core/server-manager';
 import type { LoginState } from '../core/auth';
@@ -17,7 +17,7 @@ export interface QrLoginDeps {
   auth: QrAuthLike;
 }
 
-// 音源登录文案配置（netease 默认值保证既有文案与测试不变）
+// 音源登录文案配置（netease 作默认值，既有文案与测试因此不变）
 export interface QrProvider {
   id: 'netease' | 'qq' | 'kugou';
   title: string;
@@ -25,18 +25,18 @@ export interface QrProvider {
   appHint: string;
   /** CSP 兜底临时图片文件名（每位源独立，避免并发冲突） */
   tempPng: string;
-  /** 「802 已授权但没拿到会话」这个失败态的指引（默认给重试建议） */
+  /** 「已授权但没拿到会话」失败态的指引（默认给重试建议） */
   noSessionHint?: string;
 }
 
-// 用函数而不是常量：语言在设置里切换后，文案要跟着变（常量在模块加载时就定型了）
+// 用函数而非常量：语言切换后文案要跟着变（常量在模块加载时就定型了）
 export function neteaseQrProvider(): QrProvider {
   return {
     id: 'netease',
     title: t('login.netease.title'),
     appHint: t('login.netease.appHint'),
     tempPng: 'qr-login-tmp.png',
-    // 新用户首次扫码时网关会现场注册匿名设备身份，该接口可能限流 → 失败态给出重试指引
+    // 首次扫码时网关现场注册匿名设备身份，该接口可能限流 → 失败态给重试指引
     noSessionHint: t('login.netease.noSessionHint'),
   };
 }
@@ -65,9 +65,8 @@ export class QrLoginModal extends Modal {
   private pollTimer: number | null = null;
   private qrGeneration = 0;
   private onLogin?: (state: LoginState) => void | Promise<void>;
-  /** 插件目录（vault 相对，形如 plugins/vinyl-life）：二维码兜底要往这里写临时 PNG。
-   *  由调用方从 manifest.dir 传进来 —— 写死 'plugins/vinyl-life' 的话，用户重命名插件目录
-   *  之后这条路会指向一个不存在的目录（配置目录已经没写死，见下面拼 tmpPath 处的注释）。 */
+  /** 插件目录（vault 相对，形如 plugins/vinyl-life）：二维码兜底往这里写临时 PNG；由调用方从
+   *  manifest.dir 传进来 —— 写死的话用户重命名插件目录后就指向不存在的目录（见 tmpPath 处）。 */
   private pluginDir: string;
 
   constructor(
@@ -96,9 +95,8 @@ export class QrLoginModal extends Modal {
 
     const qrSec = c.createDiv({ cls: 'vinyl-qr-section' });
     qrSec.createEl('h4', { text: t('login.qrSection') });
-    // 二维码图片本身对读屏软件没有意义，但不能留成一张无名的图：用扫码提示当替代文本
-    // （「请用 XX App 扫码」），并把状态行标成 status —— 生成中 / 已扫码 / 已过期这条链路
-    // 全靠它播报（登录只有扫码这一条路径，读屏用户至少要知道现在轮到哪一步）。
+    // 二维码图对读屏没意义，但不能留成无名的图：alt 用扫码提示（「请用 XX App 扫码」）；状态行标
+    // status —— 生成中 / 已扫码 / 已过期全靠它播报（登录只有扫码一条路径，读屏要知道轮到哪一步）。
     const img = qrSec.createEl('img', {
       attr: { width: '220', height: '220', alt: this.provider.appHint },
     });
@@ -127,8 +125,7 @@ export class QrLoginModal extends Modal {
             const b64 = qrimg.replace(/^data:image\/\w+;base64,/, '');
             const buf = Buffer.from(b64, 'base64');
             const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
-            // 配置目录与插件目录都可能被用户改名：前者走 Vault#configDir，后者由调用方
-            // 从 manifest.dir 传进来（两边都不写死）
+            // 配置目录与插件目录都可能被改名：前者走 Vault#configDir，后者由调用方传（都不写死）
             const tmpPath = `${this.app.vault.configDir}/${this.pluginDir}/${this.provider.tempPng}`;
             await this.app.vault.adapter.writeBinary(tmpPath, ab);
             if (generation !== this.qrGeneration) return;
@@ -154,8 +151,7 @@ export class QrLoginModal extends Modal {
 
   private poll(key: string, statusEl: HTMLElement, restart: () => Promise<void>, generation: number) {
     if (generation !== this.qrGeneration) return;
-    // 异步轮询体抽到 tick：定时器回调不接收 Promise 返回，故回调里只「点火」不等待
-    // （void 明确表达「有意不 await」）。下一轮的安排由 tick 自己在结束时完成。
+    // 回调只「点火」不等待：定时器回调不接收 Promise 返回，void 表示有意不 await；下一轮由 tick 结束时自己安排
     this.pollTimer = window.setTimeout(() => {
       this.pollTimer = null;
       void this.tick(key, statusEl, restart, generation);
@@ -184,8 +180,7 @@ export class QrLoginModal extends Modal {
         statusEl.textContent = t('login.scannedConfirm');
       } else if (code === 803) {
         statusEl.textContent = t('login.authorizing');
-        // 803 已带回验证过的账号 → 直接复用，避免紧接着重复请求远端导致假失败
-        // （只在拿到数字返回值、或响应里没有 state 时才回落到 getStatus）。
+        // 803 已带回验证过的账号：直接复用以免重复请求远端造成假失败（只在拿到数字返回值、或响应里没有 state 时才回落到 getStatus）
         const st = typeof result === 'number' || !result.state
           ? await this.deps.auth.getStatus()
           : result.state;
