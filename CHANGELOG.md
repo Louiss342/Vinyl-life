@@ -1,6 +1,6 @@
 # 更新日志 / Changelog
 
-Vinyl Life（Obsidian 专辑墙 + 唱机播放器）的全部已发布版本，最新在前。本文件覆盖 `versions.json` 收录的 **29 个版本**：0.6.0、1.0.0–1.0.19、1.1.0、1.2.0、1.3.0、1.3.1、1.4.0–1.4.3。
+Vinyl Life（Obsidian 专辑墙 + 唱机播放器）的全部已发布版本，最新在前。本文件覆盖 `versions.json` 收录的 **30 个版本**：0.6.0、1.0.0–1.0.19、1.1.0、1.2.0、1.3.0、1.3.1、1.4.0–1.4.4。
 
 > 条目依据：**无标记** = 维护者的发布说明原稿；`（据提交记录）` = 据 git 提交说明重建；`（据源码推断）` = 推测。
 > 0.6.0–1.3.1 的颗粒度低于 1.3.0 之后；**1.0.14 / 1.0.15 在仓库里无提交也无标签**，内容无从重建。
@@ -18,7 +18,27 @@ Vinyl Life（Obsidian 专辑墙 + 唱机播放器）的全部已发布版本，�
 
 ## [未发布]
 
-无。HEAD 即 1.4.3 的发布提交。
+无。HEAD 即 1.4.4 的发布提交。
+
+---
+
+## [1.4.4] - 2026-09-30
+
+**开箱默认改为雪域白；README 整版复核（锚点目录、§10.5 相关文档、两张截图） / Snow white as the out-of-the-box finish; README overhaul (anchored contents, §10.5, two screenshots)**
+
+一句话：出厂配色从胡桃木换成雪域白 —— README 与代码一并改、测试期望值跟上；顺带把 README 整版复核了一遍：目录改成能点的锚点、补上 §10.5「相关文档」、专辑墙截图挪到文首并补一张导入截图。**除开箱默认一条外，其余为文字补记，不是行为变更。**
+
+### 变更
+
+- **开箱默认唱机配色改为雪域白**（原为胡桃木）：`core/appearance` 的 `DEFAULT_DECK_STYLE` 与 `settings` 的 `DEFAULT_SETTINGS.playerDeck` 同步改，`appearance.test.cjs` 的期望值跟上。四个方案与类名机制不变 —— 胡桃木仍是基类本体（`.vinyl-flip-face.is-deck` 的基色，没有 `is-deck-walnut` 规则），雪域白走 `.is-deck-shell` 覆盖。**已装用户不受影响**：`loadSettings` 归一化的是存档里的原值，存过的 `playerDeck` 一律原样保留；只有新装、或存档里没有这个键的档会拿到雪域白。
+- `styles.css` 一处把胡桃木称作「默认方案」的注释改成「基类本体」，与测试注释同一口径。
+
+### 文档
+
+- **README 整版复核**：目录从纯文本清单改成可点的锚点链接、每个小节前补 `<div id>` 锚点（给 GitHub 的中文标题锚点用）；新增 **§10.5 相关文档**（CHANGELOG / BEHAVIOR-LIMITS / CONTEXT / I18N / CONTRIBUTING / DATA_MIGRATION 六份的去处）；§10.4 补上发布链路说明（tag 必须与 `manifest.json` 一致，分支与 PR 跑 build / typecheck / lint / test）；专辑墙截图挪到正文最前、§6.3.2 补 `import-modal` 截图；其余是文案收紧与追平已发布代码（本地优先、界面总览、工具栏、添加、收藏健康检查、唱机与搓碟、歌词、frontmatter 表等小节）。
+- `assets/screenshots/album-shelf.zh.webp` 更新（雪域白开箱态）；新增 `assets/screenshots/import-modal.zh.webp`；`scripts/i18n.test.cjs` 的 README 小节清单同步补 `10.5`。
+
+**体积**：main.js 568.7 KB（预算 600 KB，余量 31.3 KB），无新增运行时依赖；测试 991 条全过。
 
 ---
 

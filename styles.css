@@ -1918,7 +1918,7 @@
   gap: 10px;
 }
 
-/* 「播放器配色」之二：哑光黑 = 无高光的炭黑面板（默认方案 = .vinyl-flip-face.is-deck 上的胡桃木） */
+/* 「播放器配色」之二：哑光黑 = 无高光的炭黑面板（基类本体 = .vinyl-flip-face.is-deck 上的胡桃木，没有 is-deck-walnut 规则） */
 .vinyl-player.is-deck-black .vinyl-flip-face.is-deck,
 .vinyl-player.is-deck-black .vinyl-flip-face.is-crate,
 .vinyl-player.is-deck-black .vinyl-flip-face.is-lyrics {
@@ -4676,7 +4676,7 @@
   .vinyl-link-panes { flex-direction: column; }
 }
 
-/*! vinyl-life styles v1.4.3 — 由 npm run version-bump 维护，勿手改这一行：
+/*! vinyl-life styles v1.4.4 — 由 npm run version-bump 维护，勿手改这一行：
    插件启动时核对版本（见 src/core/style-fallback.ts）；缺失或与 main.js 不符会自动挂上内置副本。 */
 
 
