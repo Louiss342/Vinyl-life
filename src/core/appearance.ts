@@ -10,7 +10,7 @@ export const DECK_STYLES: readonly DeckStyle[] = ['walnut', 'shell', 'black', 'c
 export type RecordColor = 'black' | 'yellow' | 'blue' | 'white';
 export const RECORD_COLORS: readonly RecordColor[] = ['black', 'yellow', 'blue', 'white'];
 
-export const DEFAULT_DECK_STYLE: DeckStyle = 'walnut';
+export const DEFAULT_DECK_STYLE: DeckStyle = 'shell';
 export const DEFAULT_RECORD_COLOR: RecordColor = 'black';
 
 export function deckClass(v: DeckStyle): string {

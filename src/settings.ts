@@ -150,7 +150,7 @@ export const DEFAULT_SETTINGS: VinylSettings = {
   quality: 'higher',
   autoPlay: true,
   playerLocation: 'sidebar',
-  playerDeck: 'walnut',
+  playerDeck: 'shell',
   recordColor: 'black',
   shelfColumns: 'auto',
   discDirection: 'right',

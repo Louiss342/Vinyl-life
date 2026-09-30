@@ -28,9 +28,9 @@ vm.runInNewContext(source, {
 const mod = module_.exports;
 const i18n = mod.i18n;
 
-test('播放器配色：四个方案、默认胡桃木，类名 is-deck-*', () => {
+test('播放器配色：四个方案、默认雪域白，类名 is-deck-*', () => {
   assert.deepEqual([...mod.DECK_STYLES], ['walnut', 'shell', 'black', 'coral']);
-  assert.equal(mod.DEFAULT_DECK_STYLE, 'walnut');
+  assert.equal(mod.DEFAULT_DECK_STYLE, 'shell');
   assert.equal(mod.deckClass('black'), 'is-deck-black');
   assert.equal(mod.deckClass('walnut'), 'is-deck-walnut');
   assert.equal(mod.deckClass('shell'), 'is-deck-shell');
@@ -92,7 +92,7 @@ test('工具栏位置：六档（顶部 / 底部 × 左 / 中 / 右），默认�
 
 test('归一化：脏值 / 旧值回落默认，合法值原样通过', () => {
   for (const raw of [undefined, null, '', 42, true, {}, 'follow', 'dark', 'sepia']) {
-    assert.equal(mod.normalizeDeckStyle(raw), 'walnut', `deck raw=${String(raw)}`);
+    assert.equal(mod.normalizeDeckStyle(raw), 'shell', `deck raw=${String(raw)}`);
   }
   assert.equal(mod.normalizeDeckStyle('black'), 'black');
 
@@ -105,7 +105,7 @@ test('归一化：脏值 / 旧值回落默认，合法值原样通过', () => {
 test('类名与方案表同源：不会出现「设置里能选、样式里没有」的配色', () => {
   const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'styles.css'), 'utf8');
   for (const v of mod.DECK_STYLES) {
-    if (v === mod.DEFAULT_DECK_STYLE) continue; // 默认方案是 .vinyl-deck 本体，没有额外规则
+    if (v === 'walnut') continue; // 胡桃木是基类本体（.vinyl-flip-face.is-deck 的基色），没有 is-deck-walnut 规则
     assert.ok(css.includes(`is-deck-${v}`), `styles.css 缺少 .is-deck-${v}`);
   }
   for (const v of mod.RECORD_COLORS) {
